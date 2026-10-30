@@ -1,0 +1,16 @@
+{
+  "name": "@paws/provider-codex",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paws/contracts": "workspace:*",
+    "@paws/provider-core": "workspace:*",
+    "effect": "catalog:"
+  }
+}

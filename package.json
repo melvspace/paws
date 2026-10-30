@@ -1,0 +1,25 @@
+{
+  "name": "paws",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @paws/server --filter @paws/web dev",
+    "dev:desktop": "pnpm --filter @paws/desktop dev",
+    "build": "pnpm --filter @paws/web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vp test run && pnpm --filter @paws/web test:browser",
+    "lint": "vp lint",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "check": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=24.14.0"
+  },
+  "packageManager": "pnpm@12.14.0"
+}

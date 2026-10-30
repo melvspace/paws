@@ -1,0 +1,37 @@
+packages:
+  - apps/*
+  - packages/*
+
+allowBuilds:
+  "@tsc-rs/typescript": true
+  electron: false
+
+catalog:
+  effect: 4.0.5
+  react: 19.3.0
+  react-dom: 19.3.0
+  "@types/react": ~19.3.0
+  "@types/react-dom": ~19.3.0
+  "@types/node": 24.12.4
+  "@types/ws": 8.18.2
+  "@tailwindcss/vite": 4.3.3
+  tailwindcss: 4.3.3
+  typescript: npm:@tsc-rs/typescript@0.8.0
+  vite-plus: 1.4.0
+  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
+  ws: 8.22.0
+
+overrides:
+  vite: "catalog:"
+
+# Drop-in forks retain their own version numbers rather than upstream majors.
+peerDependencyRules:
+  allowedVersions:
+    typescript: "0.8.0"
+    vite: "1.4.0"
+
+permissions:
+  "@tanstack/react-router":
+    skills: false
+  "@tanstack/router-plugin":
+    skills: false

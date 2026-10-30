@@ -1,0 +1,22 @@
+{
+  "name": "@paws/provider-native",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.276",
+    "@cursor/sdk": "1.0.38",
+    "@muse-code/sdk": "1.4.6",
+    "@opencode-ai/sdk": "^1.19.5",
+    "@opencode/client": "2.0.28",
+    "@paws/contracts": "workspace:*",
+    "@paws/provider-codex": "workspace:*",
+    "@paws/provider-core": "workspace:*",
+    "effect": "catalog:"
+  }
+}

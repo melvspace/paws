@@ -1,0 +1,22 @@
+{
+  "name": "@paws/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/main.ts",
+    "start": "node src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paws/contracts": "workspace:*",
+    "@paws/provider-codex": "workspace:*",
+    "@paws/provider-core": "workspace:*",
+    "@paws/provider-native": "workspace:*",
+    "@paws/runtime": "workspace:*",
+    "effect": "catalog:",
+    "ws": "catalog:"
+  },
+  "devDependencies": {
+    "@types/ws": "catalog:"
+  }
+}

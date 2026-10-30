@@ -1,0 +1,94 @@
+/* T3 Code's small composer controls: 28px controls, 20px meter, 32px send. */
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+.composer-model-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.composer-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 28px;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in oklab, var(--foreground) 80%, transparent);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.composer-control:is(:hover, [data-popup-open]):not(:disabled) {
+  background: transparent;
+  color: var(--foreground);
+}
+.composer-control svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.composer-control.model-picker-trigger {
+  min-width: 0;
+  flex-shrink: 1;
+}
+.model-picker-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.composer-control.reasoning-picker-trigger {
+  margin-left: -4px;
+  padding-left: 0;
+  color: var(--muted-foreground);
+}
+.reasoning-picker-trigger svg {
+  width: 12px;
+  height: 12px;
+}
+.composer-control.composer-context-meter {
+  width: 28px;
+  padding: 0;
+}
+.composer-context-meter svg {
+  width: 20px;
+  height: 20px;
+  stroke: color-mix(in oklab, var(--muted-foreground) 40%, transparent);
+}
+.composer-send-button {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.composer-send-button:disabled {
+  opacity: 1;
+  background: color-mix(in oklab, var(--foreground) 12%, transparent);
+  color: var(--muted-foreground);
+}
+.composer-send-button svg {
+  width: 18px;
+  height: 18px;
+}
+@media (max-width: 640px) {
+  .composer-control {
+    font-size: 16px;
+  }
+  .composer-send-button {
+    width: 36px;
+    height: 36px;
+  }
+}

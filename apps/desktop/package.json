@@ -1,0 +1,13 @@
+{
+  "name": "@paws/desktop",
+  "private": true,
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "dev": "electron .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "electron": "44.10.0"
+  }
+}
