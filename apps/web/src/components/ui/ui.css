@@ -89,12 +89,12 @@
   font-size: 14px;
   font-weight: 500;
 }
-.ui-button-outline {
+.ui-button.ui-button-outline {
   border: 1px solid var(--input);
   background: var(--card);
   color: var(--foreground);
 }
-.ui-button-outline:hover:not(:disabled) {
+.ui-button.ui-button-outline:hover:not(:disabled) {
   background: var(--accent);
 }
 .ui-button-destructive {

@@ -1,0 +1,38 @@
+.context-window-popup {
+  width: min(320px, calc(100vw - 24px));
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--popover);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  box-shadow: 0 8px 24px #0002;
+}
+.context-window-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.context-window-track {
+  height: 6px;
+  margin-top: 12px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--accent);
+}
+.context-window-track > div {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--muted-foreground);
+}
+.context-window-popup p {
+  margin: 16px 0;
+  line-height: 1.5;
+}
+.context-window-popup .ui-button {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+}

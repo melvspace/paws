@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vp dev",
     "build": "vp build",
+    "serve": "vp preview",
     "typecheck": "tsc --noEmit",
     "test:browser": "vp test run --config vite.browser.config.ts"
   },
@@ -16,11 +17,18 @@
     "@paws/contracts": "workspace:*",
     "@paws/provider-core": "workspace:*",
     "@tanstack/react-router": "^1.160.2",
+    "@tiptap/core": "^3.32.1",
+    "@tiptap/markdown": "^3.32.1",
+    "@tiptap/pm": "^3.32.1",
+    "@tiptap/react": "^3.32.1",
+    "@tiptap/starter-kit": "^3.32.1",
     "class-variance-authority": "^0.7.1",
     "effect": "catalog:",
     "lucide-react": "^0.564.0",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {

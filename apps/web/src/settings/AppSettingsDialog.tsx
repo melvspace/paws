@@ -2,7 +2,13 @@ import { Input } from "../components/ui/input.tsx";
 import { Button } from "../components/ui/button.tsx";
 // Adapted from T3 Code AppRouteModal, SettingsContentLayout, and SettingsSidebarNav (MIT).
 import { Fragment, useRef, useState } from "react";
-import { PaintbrushIcon, PlugIcon, SearchIcon, XIcon } from "lucide-react";
+import {
+  PaintbrushIcon,
+  PlugIcon,
+  SearchIcon,
+  XIcon,
+  MessageSquareIcon,
+} from "lucide-react";
 import { ThemeSelect } from "../ThemeSelect.tsx";
 import {
   Dialog,
@@ -12,13 +18,14 @@ import {
 } from "../components/ui/dialog.tsx";
 import "./settings.css";
 import { ProviderSettings } from "./ProviderSettings.tsx";
+import { ChatSettings } from "./ChatSettings.tsx";
 
 export function AppSettingsDialog({
   onDismiss,
   initialPage = "Appearance",
 }: {
   onDismiss: () => void;
-  initialPage?: "Appearance" | "Providers";
+  initialPage?: "Appearance" | "Chat" | "Providers";
 }) {
   const [page, setPage] = useState(initialPage);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -28,6 +35,12 @@ export function AppSettingsDialog({
       name: "Appearance" as const,
       keywords: "appearance color scheme theme system light dark",
       Icon: PaintbrushIcon,
+    },
+    {
+      name: "Chat" as const,
+      keywords:
+        "chat follow-ups queue steer running turn send default behavior composer",
+      Icon: MessageSquareIcon,
     },
     {
       name: "Providers" as const,
@@ -104,6 +117,8 @@ export function AppSettingsDialog({
                 <section aria-label="Appearance">
                   <ThemeSelect />
                 </section>
+              ) : page === "Chat" ? (
+                <ChatSettings />
               ) : (
                 <ProviderSettings />
               )}

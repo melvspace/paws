@@ -38,6 +38,7 @@ describe("workspace persistence", () => {
     const changed = {
       ...original,
       draft: "Review the latest changes",
+      attachments: [],
       sidebarOpen: false,
       bottomOpen: true,
     };

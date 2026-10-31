@@ -6,12 +6,14 @@
     "dev": "pnpm --parallel --filter @paws/server --filter @paws/web dev",
     "dev:desktop": "pnpm --filter @paws/desktop dev",
     "build": "pnpm --filter @paws/web build",
+    "serve:web": "pnpm --filter @paws/web serve",
     "typecheck": "pnpm -r typecheck",
     "test": "vp test run && pnpm --filter @paws/web test:browser",
     "lint": "vp lint",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
-    "check": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "runtime:build": "docker build -t paws-chat-runtime:1 packages/runtime/docker"
   },
   "devDependencies": {
     "@types/node": "catalog:",

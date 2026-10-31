@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import type { ProviderSnapshot } from "@paws/contracts";
 import { render } from "../../test/render.tsx";
 import { codexFixture } from "../../test/providerFixtures.ts";
@@ -224,4 +224,51 @@ it("adds an absent provider for setup with consistent link-button styling", asyn
   expect(guide.getBoundingClientRect().right).toBeLessThanOrEqual(
     guide.closest(".provider-panel")!.getBoundingClientRect().right,
   );
+});
+
+it("blurs account emails until explicitly revealed and conceals changed accounts", async () => {
+  mockProviders();
+  await using _screen = await render(
+    <AppSettingsDialog initialPage="Providers" onDismiss={() => {}} />,
+  );
+  await expect
+    .element(page.getByRole("textbox", { name: "Display name" }))
+    .toHaveValue("Codex");
+  const showAccount = (email: string) =>
+    appAtomRegistry.set(providersAtom, {
+      providers: [
+        {
+          ...codexFixture,
+          account: { email, label: "ChatGPT Pro 100 Subscription" },
+        },
+      ],
+      error: null,
+    });
+  showAccount("test@example.com");
+  const reveal = page.getByRole("button", {
+    name: "Click to reveal email",
+    exact: true,
+  });
+  await expect.element(reveal).toHaveAttribute("aria-pressed", "false");
+  const text = document.querySelector(".sensitive-text > span")!;
+  expect(getComputedStyle(text).filter).toBe("blur(5px)");
+  expect(text.getAttribute("aria-hidden")).toBe("true");
+  await reveal.click();
+  await expect
+    .element(
+      page.getByRole("button", {
+        name: "test@example.com. Click to hide email",
+        exact: true,
+      }),
+    )
+    .toHaveAttribute("aria-pressed", "true");
+  expect(getComputedStyle(text).filter).toBe("none");
+  await userEvent.keyboard("{Enter}");
+  await expect.element(reveal).toHaveAttribute("aria-pressed", "false");
+  await reveal.click();
+  showAccount("other@example.com");
+  await expect.element(reveal).toHaveAttribute("aria-pressed", "false");
+  expect(
+    getComputedStyle(document.querySelector(".sensitive-text > span")!).filter,
+  ).toBe("blur(5px)");
 });

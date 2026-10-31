@@ -6,6 +6,10 @@ import { AppSettingsDialog } from "./AppSettingsDialog.tsx";
 import { AgentDialog } from "../AgentDialog.tsx";
 import { Button } from "../components/ui/button.tsx";
 import type { Agent } from "@paws/contracts";
+import {
+  followUpStorageKey,
+  messageDisplayStorageKey,
+} from "./chatPreferences.ts";
 
 const agent: Agent = {
   id: "ada",
@@ -14,6 +18,40 @@ const agent: Agent = {
   status: "configured",
   createdAt: "2026-10-31T00:00:00.000Z",
 };
+
+it("stores the follow-up default in Settings Chat and keeps it after reopening", async () => {
+  localStorage.removeItem(followUpStorageKey);
+
+  try {
+    {
+      await using _screen = await render(
+        <AppSettingsDialog onDismiss={() => {}} />,
+      );
+      await page.getByRole("button", { name: "Chat", exact: true }).click();
+      await expect
+        .element(page.getByRole("heading", { name: "Follow-ups" }))
+        .toBeVisible();
+      await page
+        .getByRole("button", { name: "Follow-up behavior", exact: true })
+        .click();
+      await page
+        .getByRole("menuitemradio", { name: "Queue for next turn" })
+        .click();
+      expect(localStorage.getItem(followUpStorageKey)).toBe("queue");
+    }
+
+    await using _screen = await render(
+      <AppSettingsDialog initialPage="Chat" onDismiss={() => {}} />,
+    );
+    await expect
+      .element(
+        page.getByRole("button", { name: "Follow-up behavior", exact: true }),
+      )
+      .toHaveTextContent("Queue");
+  } finally {
+    localStorage.removeItem(followUpStorageKey);
+  }
+});
 
 function Settings({ agentSettings = false }: { agentSettings?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -113,4 +151,40 @@ it("confirms deletion in an alert dialog and defaults focus to Cancel", async ()
   expect(fetchMock).toHaveBeenCalledWith("/api/agents/ada", {
     method: "DELETE",
   });
+});
+
+it("defaults to whole messages and remembers streaming after reopening settings", async () => {
+  localStorage.removeItem(messageDisplayStorageKey);
+
+  try {
+    {
+      await using _screen = await render(
+        <AppSettingsDialog initialPage="Chat" onDismiss={() => {}} />,
+      );
+      const picker = page.getByRole("button", {
+        name: "Agent message display",
+        exact: true,
+      });
+      await expect.element(picker).toHaveTextContent("Whole messages");
+      await picker.click();
+      await page
+        .getByRole("menuitemradio", { name: "Streaming", exact: true })
+        .click();
+      expect(localStorage.getItem(messageDisplayStorageKey)).toBe("streaming");
+    }
+
+    await using _screen = await render(
+      <AppSettingsDialog initialPage="Chat" onDismiss={() => {}} />,
+    );
+    await expect
+      .element(
+        page.getByRole("button", {
+          name: "Agent message display",
+          exact: true,
+        }),
+      )
+      .toHaveTextContent("Streaming");
+  } finally {
+    localStorage.removeItem(messageDisplayStorageKey);
+  }
 });

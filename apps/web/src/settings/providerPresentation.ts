@@ -1,22 +1,25 @@
 import type { ProviderSnapshot } from "@paws/contracts";
 
-export function providerStatus(
-  provider: ProviderSnapshot,
-  detail = false,
-): string {
+export function providerEmail(provider: ProviderSnapshot): string | undefined {
+  if (
+    !provider.config.enabled ||
+    ["checking", "missing", "error"].includes(provider.status) ||
+    provider.auth !== "authenticated"
+  )
+    return undefined;
+
+  return provider.account?.email;
+}
+
+export function providerStatus(provider: ProviderSnapshot): string {
   if (!provider.config.enabled) return "Disabled";
   if (provider.status === "checking") return "Checking…";
   if (provider.status === "missing") return "Not installed";
   if (provider.status === "error") return "Check failed";
   if (provider.auth === "authenticated") {
-    const identity =
-      detail && provider.account?.email
-        ? `Authenticated as ${provider.account.email}`
-        : "Authenticated";
-
     return provider.account?.label
-      ? `${identity} · ${provider.account.label}`
-      : identity;
+      ? `Authenticated · ${provider.account.label}`
+      : "Authenticated";
   }
   if (provider.auth === "unauthenticated") return "Not authenticated";
 

@@ -1,3 +1,4 @@
+import { isAllowedRequestOrigin } from "./requestOrigin.ts";
 import * as Http from "node:http";
 import * as Path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -7,22 +8,50 @@ import { CreateAgent, UpdateAgent } from "@paws/contracts";
 import { makeAgentService } from "./AgentService.ts";
 import { makeProviderService } from "./ProviderService.ts";
 import { providerHttp } from "./providerHttp.ts";
+import { makeChatService } from "./ChatService.ts";
+import { makeChatRunner } from "./chatRunner.ts";
+import { chatHttp } from "./chatHttp.ts";
+import type { RunChatTurn } from "@paws/provider-core";
 
-export function createServer(root: string) {
+export function createServer(
+  root: string,
+  options: {
+    runChat?: RunChatTurn;
+    discoverProviders?: Parameters<typeof makeProviderService>[1];
+  } = {},
+) {
   const agents = makeAgentService(root);
-  const providers = makeProviderService(root, undefined, () => {
+  const providers = makeProviderService(root, options.discoverProviders, () => {
     void broadcast().catch(() => {});
   });
+  const chat = makeChatService(
+    root,
+    providers.list,
+    options.runChat ?? makeChatRunner(root, providers),
+    () => {
+      void broadcast().catch(() => {});
+    },
+  );
   const snapshot = () =>
     Effect.runPromise(agents.list()).then((items) => ({
       agents: items,
       providers: providers.list(),
+      conversations: chat.list(),
     }));
   const server = Http.createServer(async (request, response) => {
     response.setHeader("Content-Type", "application/json");
 
+    if (!isAllowedRequestOrigin(request.headers)) {
+      response
+        .writeHead(403)
+        .end(JSON.stringify({ error: "Origin not allowed" }));
+
+      return;
+    }
+
     try {
       if (await providerHttp(request, response, providers)) return;
+      if (await chatHttp(request, response, chat)) return;
 
       if (request.method === "GET" && request.url === "/api/agents") {
         response.end(JSON.stringify(await snapshot()));
@@ -33,6 +62,12 @@ export function createServer(root: string) {
       const agentId = /^\/api\/agents\/([^/]+)$/.exec(request.url ?? "")?.[1];
 
       if (request.method === "DELETE" && agentId) {
+        const exists = (await Effect.runPromise(agents.list())).some(
+          (agent) => agent.id === agentId,
+        );
+
+        if (exists) await chat.remove(agentId);
+
         const removed = await Effect.runPromise(agents.remove(agentId));
 
         if (!removed) {
@@ -120,12 +155,7 @@ export function createServer(root: string) {
   }
 
   sockets.on("connection", (socket, request) => {
-    const origin = request.headers.origin;
-
-    if (
-      origin &&
-      !["http://localhost:5173", "http://127.0.0.1:5173"].includes(origin)
-    ) {
+    if (!isAllowedRequestOrigin(request.headers)) {
       socket.close(1008, "Origin not allowed");
 
       return;
@@ -143,6 +173,7 @@ export function createServer(root: string) {
   return {
     server,
     providers,
+    chat,
     close: async () => {
       for (const client of sockets.clients) {
         client.terminate();
@@ -150,6 +181,7 @@ export function createServer(root: string) {
 
       sockets.close();
       server.close();
+      await chat.close();
       await providers.close();
       agents.close();
     },

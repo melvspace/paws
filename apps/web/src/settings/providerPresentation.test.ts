@@ -1,6 +1,10 @@
 import { expect, it } from "vite-plus/test";
 import { codexFixture } from "../../test/providerFixtures.ts";
-import { providerStatus, relativeChecked } from "./providerPresentation.ts";
+import {
+  providerEmail,
+  providerStatus,
+  relativeChecked,
+} from "./providerPresentation.ts";
 import {
   formatLaunchArguments,
   parseLaunchArguments,
@@ -17,9 +21,8 @@ it("uses auth-aware status and account labels without reporting stale auth as re
   expect(providerStatus(provider)).toBe(
     "Authenticated · ChatGPT Pro 100 Subscription",
   );
-  expect(providerStatus(provider, true)).toBe(
-    "Authenticated as test@example.com · ChatGPT Pro 100 Subscription",
-  );
+  expect(providerEmail(provider)).toBe("test@example.com");
+  expect(providerEmail({ ...provider, status: "checking" })).toBeUndefined();
   expect(providerStatus({ ...provider, status: "checking" })).toBe("Checking…");
   expect(
     providerStatus({

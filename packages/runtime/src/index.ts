@@ -38,3 +38,5 @@ export interface RuntimeLease {
   readonly tools: ReadonlyArray<string>;
   dispose(): Promise<void>;
 }
+
+export { leaseCodexRuntime, leaseToolRuntime } from "./container.ts";

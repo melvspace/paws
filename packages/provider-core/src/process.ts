@@ -12,6 +12,16 @@ export class ProbeError extends Error {
   }
 }
 
+// An explicit RPC rejection is distinguishable from a lost/ambiguous response.
+export class RpcRejectedError extends ProbeError {
+  constructor() {
+    super(
+      "protocol",
+      "Provider rejected the request. Check authentication and CLI version.",
+    );
+  }
+}
+
 async function terminate(child: ChildProcessWithoutNullStreams) {
   if (!child.pid) return;
 
@@ -42,9 +52,10 @@ export interface ProbeLaunch {
   cwd: string;
   signal: AbortSignal;
   env?: NodeJS.ProcessEnv;
+  maxFrameBytes?: number;
 }
 
-// One owner per probe. Never open an agent session or send a user prompt here.
+// One owner per process. Discovery rejects client operations; chat opts in explicitly.
 export async function withProcess<T>(
   launch: ProbeLaunch,
   use: (
@@ -136,14 +147,19 @@ export async function withJsonRpc<T>(
   launch: ProbeLaunch,
   use: (rpc: JsonRpc) => Promise<T>,
   protocol: "jsonrpc" | "pi" = "jsonrpc",
+  onRequest?: (method: string, params: unknown) => Promise<unknown>,
 ): Promise<T> {
   return withProcess(launch, async (child, failure) => {
     const closed = new Promise<never>((_resolve, reject) => {
       child.once("close", () =>
-        reject(new ProbeError("exit", "Provider exited during discovery.")),
+        reject(new ProbeError("exit", "Provider process exited.")),
       );
     });
-    const ioFailure = Promise.race([failure, closed]);
+    let rejectFrame: (error: Error) => void = () => {};
+    const frameFailure = new Promise<never>((_resolve, reject) => {
+      rejectFrame = reject;
+    });
+    const ioFailure = Promise.race([failure, closed, frameFailure]);
     const listeners = new Set<(method: string, params: unknown) => void>();
     let counter = 0;
     let buffer = "";
@@ -157,14 +173,13 @@ export async function withJsonRpc<T>(
     child.stdout.on("data", (text: string) => {
       buffer += text;
 
-      if (Buffer.byteLength(buffer) > MAX_OUTPUT) {
-        for (const request of pending.values())
-          request.reject(
-            new ProbeError(
-              "protocol",
-              "Provider response exceeded the size limit.",
-            ),
-          );
+      if (Buffer.byteLength(buffer) > (launch.maxFrameBytes ?? MAX_OUTPUT)) {
+        rejectFrame(
+          new ProbeError(
+            "protocol",
+            "Provider response exceeded the size limit.",
+          ),
+        );
         buffer = "";
 
         return;
@@ -189,15 +204,20 @@ export async function withJsonRpc<T>(
         }
 
         if (message.method && message.id !== undefined) {
-          send({
-            jsonrpc: "2.0",
-            id: message.id,
-            error: {
-              code: -32601,
-              message:
-                "Read-only catalog probe: client operations unavailable.",
-            },
-          });
+          const id = message.id;
+          const method = String(message.method);
+          const handle = onRequest
+            ? Promise.resolve().then(() => onRequest(method, message.params))
+            : Promise.reject(new Error("Client operations unavailable."));
+          void handle.then(
+            (result) => send({ jsonrpc: "2.0", id, result }),
+            () =>
+              send({
+                jsonrpc: "2.0",
+                id,
+                error: { code: -32601, message: "Client operation rejected." },
+              }),
+          );
 
           continue;
         }
@@ -209,18 +229,23 @@ export async function withJsonRpc<T>(
           continue;
         }
 
+        if (
+          protocol === "pi" &&
+          typeof message.type === "string" &&
+          message.type !== "response"
+        ) {
+          for (const listener of listeners) listener(message.type, message);
+
+          continue;
+        }
+
         const request = pending.get(String(message.id));
 
         if (!request) continue;
         pending.delete(String(message.id));
 
         if (message.error || message.success === false) {
-          request.reject(
-            new ProbeError(
-              "protocol",
-              "Provider rejected catalog discovery. Check authentication and CLI version.",
-            ),
-          );
+          request.reject(new RpcRejectedError());
         } else {
           request.resolve(protocol === "pi" ? message.data : message.result);
         }
@@ -228,9 +253,7 @@ export async function withJsonRpc<T>(
     });
     child.on("close", () => {
       for (const request of pending.values())
-        request.reject(
-          new ProbeError("exit", "Provider exited during discovery."),
-        );
+        request.reject(new ProbeError("exit", "Provider process exited."));
     });
 
     return Promise.race([

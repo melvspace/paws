@@ -1,0 +1,25 @@
+.ui-button.sensitive-text {
+  display: inline;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  font: inherit;
+  line-height: inherit;
+  color: inherit;
+  background: transparent;
+  vertical-align: baseline;
+  overflow-wrap: anywhere;
+}
+.ui-button.sensitive-text:hover:not(:disabled) {
+  background: transparent;
+  color: inherit;
+}
+.sensitive-text > span[data-revealed="false"] {
+  filter: blur(5px);
+  user-select: none;
+}
+.sensitive-text:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}

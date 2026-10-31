@@ -25,3 +25,5 @@ export function codexLaunch(home: string) {
 export { discoverCodex } from "./discovery.ts";
 
 export { signInCodex } from "./auth.ts";
+export { runCodexTurn, type ChatCredentials } from "./chat.ts";
+export { recoverCodexHistory } from "./recoverHistory.ts";

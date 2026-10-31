@@ -17,6 +17,7 @@
     "@paws/contracts": "workspace:*",
     "@paws/provider-codex": "workspace:*",
     "@paws/provider-core": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "zod": "^4.6.7"
   }
 }

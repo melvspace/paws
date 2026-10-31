@@ -20,3 +20,6 @@ export interface ProviderAdapter {
 }
 
 export * from "./catalog.ts";
+export * from "./chat.ts";
+
+export { chatInstructions, chatHarnessRevision } from "./instructions.ts";

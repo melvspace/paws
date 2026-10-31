@@ -34,7 +34,8 @@ export async function discoverProvider(
   const versionText =
     config.driver === "acpRegistry" ||
     config.driver === "antigravity" ||
-    config.driver === "cursor"
+    config.driver === "cursor" ||
+    config.driver === "opencode"
       ? ""
       : await runCommand({ ...launch, args: [...launch.args, "--version"] });
   const version =
@@ -55,8 +56,7 @@ export async function discoverProvider(
       discovery = await discoverMuse(launch);
       break;
     case "opencode":
-      discovery = await discoverOpenCode(launch, version ?? "1");
-      break;
+      return discoverOpenCode(launch);
     case "grok":
       discovery = await discoverGrok(launch);
       break;
@@ -108,3 +108,14 @@ export async function discoverProvider(
 }
 
 export { signInProvider } from "./auth.ts";
+
+export { runClaudeTurn } from "./claudeChat.ts";
+export { providerLaunch } from "./launch.ts";
+
+export { runCursorTurn } from "./cursorChat.ts";
+
+export { runOpenCodeTurn } from "./opencodeChat.ts";
+export { runPiTurn } from "./piChat.ts";
+
+export { runAcpTurn } from "./acpChat.ts";
+export { runMuseTurn } from "./museChat.ts";

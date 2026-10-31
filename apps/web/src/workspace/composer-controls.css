@@ -65,7 +65,7 @@
   height: 20px;
   stroke: color-mix(in oklab, var(--muted-foreground) 40%, transparent);
 }
-.composer-send-button {
+.ui-button.composer-send-button {
   flex-shrink: 0;
   width: 32px;
   height: 32px;
@@ -74,20 +74,43 @@
   background: var(--primary);
   color: var(--primary-foreground);
 }
-.composer-send-button:disabled {
+.ui-button.composer-send-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 90%, var(--background));
+}
+.ui-button.composer-send-button[data-action="stop"] {
+  background: color-mix(in srgb, var(--foreground) 12%, transparent);
+  color: var(--foreground);
+}
+.ui-button.composer-send-button[data-action="stop"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--foreground) 20%, transparent);
+}
+.ui-button.composer-send-button:disabled {
   opacity: 1;
-  background: color-mix(in oklab, var(--foreground) 12%, transparent);
+  background: color-mix(in srgb, var(--foreground) 12%, transparent);
   color: var(--muted-foreground);
 }
 .composer-send-button svg {
-  width: 18px;
-  height: 18px;
+  pointer-events: none;
 }
 @media (max-width: 640px) {
   .composer-control {
-    font-size: 16px;
+    height: 36px;
+    padding-inline: 4px;
+    gap: 4px;
+    font-size: 13px;
   }
-  .composer-send-button {
+  .composer-actions {
+    gap: 4px;
+  }
+  .composer-model-controls {
+    gap: 2px;
+  }
+  .composer-toolbar .composer-attach-button {
+    width: 36px;
+    height: 36px;
+    padding: 8px;
+  }
+  .ui-button.composer-send-button {
     width: 36px;
     height: 36px;
   }

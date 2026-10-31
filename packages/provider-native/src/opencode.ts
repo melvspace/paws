@@ -1,3 +1,4 @@
+import { probeOpenCodeProtocol } from "./openCodeProtocol.ts";
 import { randomBytes } from "node:crypto";
 import { OpenCode } from "@opencode/client";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2";
@@ -6,7 +7,7 @@ import { selectOption } from "@paws/provider-core";
 import type { ProviderModel } from "@paws/contracts";
 
 // T3 uses a temporary, password-protected loopback helper for inventory discovery.
-export async function discoverOpenCode(launch: ProbeLaunch, version: string) {
+export async function discoverOpenCode(launch: ProbeLaunch) {
   const password = randomBytes(24).toString("hex");
   const headers = {
     Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`,
@@ -36,9 +37,14 @@ export async function discoverOpenCode(launch: ProbeLaunch, version: string) {
         child.on("close", () => reject(new Error("OpenCode helper exited.")));
       });
       const baseUrl = await Promise.race([ready, failure]);
+      const protocol = await probeOpenCodeProtocol(
+        baseUrl,
+        headers,
+        launch.signal,
+      );
       let models: ProviderModel[];
 
-      if (Number(version.split(".")[0]) >= 2) {
+      if (protocol.generation === "v2") {
         const client = OpenCode.make({ baseUrl, headers });
         const catalog = await client.model.list(
           { location: { directory: launch.cwd } },
@@ -89,7 +95,7 @@ export async function discoverOpenCode(launch: ProbeLaunch, version: string) {
           );
       }
 
-      return { auth: "unknown" as const, models };
+      return { auth: "unknown" as const, models, version: protocol.version };
     },
   );
 }

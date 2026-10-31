@@ -5,7 +5,7 @@ import { playwright } from "@vitest/browser-playwright";
 
 export default defineConfig({
   plugins: [react(), tailwind()],
-  optimizeDeps: { include: ["@base-ui/react/menu"] },
+  optimizeDeps: { include: ["@base-ui/react/menu", "@base-ui/react/select"] },
   test: {
     include: ["src/**/*.browser.test.tsx"],
     browser: {

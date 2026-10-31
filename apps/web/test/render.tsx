@@ -3,8 +3,9 @@ import { RegistryContext } from "@effect/atom-react";
 import { appAtomRegistry } from "../src/lib/atomRegistry.ts";
 import { createRoot } from "react-dom/client";
 import { TooltipProvider } from "../src/components/ui/tooltip.tsx";
-import "../src/styles.css";
+// Keep the stylesheet order identical to the application entry point.
 import "../src/components/ui/ui.css";
+import "../src/styles.css";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;

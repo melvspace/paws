@@ -94,7 +94,7 @@
   color: var(--muted-foreground);
   font-size: 12px;
 }
-.chat-history p,
+.chat-empty p,
 .panel-placeholder p,
 .terminal-content p {
   margin: 0;
@@ -125,6 +125,7 @@
   resize: none;
   font-size: 14px;
   background: transparent;
+  line-height: 1.65;
 }
 .chat-composer textarea:focus-visible {
   outline: none;
@@ -251,10 +252,35 @@
 }
 @media (max-width: 640px) {
   .chat-composer-lane {
-    padding: 0 12px 16px;
+    padding: 0 8px max(8px, env(safe-area-inset-bottom));
   }
   .workspace-header {
-    padding: 0 12px;
+    gap: 4px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .workspace-title {
+    margin-left: 4px;
+  }
+  .workspace-title h1 {
+    font-size: 15px;
+  }
+  .workspace-header > .sidebar-icon-button,
+  .panel-layout-controls .sidebar-icon-button {
+    width: 36px;
+    height: 40px;
+    padding: 8px;
+  }
+  .panel-layout-controls {
+    gap: 0;
+  }
+  .chat-composer {
+    padding: 10px 12px;
+    border-radius: 14px;
+  }
+  .composer-toolbar {
+    gap: 4px;
+    margin-top: 4px;
   }
   .chat-composer textarea {
     min-height: 56px;

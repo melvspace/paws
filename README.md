@@ -12,6 +12,7 @@ Use Node 24.14+ and pnpm 12.14.0 (`npx pnpm@12.14.0` also works).
 
 ```sh
 pnpm install
+pnpm runtime:build  # once, with Docker running, to enable Codex chat
 pnpm dev
 ```
 
@@ -48,9 +49,9 @@ copy of T3 Code's mobile, cloud, or full coding-agent feature set.
 | `packages/contracts`       | Validated agent and transport schemas                           |
 | `packages/client-runtime`  | Connection lifecycle and shared client state                    |
 | `packages/provider-core`   | Provider/session abstractions                                   |
-| `packages/provider-codex`  | Codex app-server discovery and device-code sign-in              |
-| `packages/provider-native` | Native SDK/CLI discovery and model capability translation       |
-| `packages/runtime`         | Workspace provisioning and container lease contract             |
+| `packages/provider-codex`  | Codex discovery, sign-in, thread execution and messenger tools  |
+| `packages/provider-native` | Native SDK/CLI discovery, execution and capability translation  |
+| `packages/runtime`         | Workspace provisioning and per-agent Docker runtime leases      |
 | `packages/shared`          | Shared validation helpers                                       |
 
 Clients consume contracts; the server owns lifecycle and persistence. Runtime
@@ -63,17 +64,67 @@ You can create, rename, and delete agents, see updates over WebSocket, and recov
 after a restart.
 Selecting an agent opens its chat workspace, with independently collapsible
 files sidebar and terminal panel. Drafts and panel preferences are saved per
-agent in browser storage. Chat sending, file browsing, and terminal execution
-remain unavailable until their runtime integrations are connected.
-Deleting an agent removes its record but preserves its workspace files on disk.
-Each agent gets dedicated workspace, home, Codex home, skills, and browser
-profile directories under `.paws/agents/<uuid>/`.
+agent in browser storage. Conversations persist on the server and update over
+WebSocket. Enter sends a message; Shift+Enter adds a newline; Stop cancels the
+current reply. The first message creates a native provider session, and later messages
+resume it, including after a server restart. Each agent has independent history
+and a dedicated working folder at `.paws/agents/<uuid>/workspace`.
 
-These directories provide organization, **not a security sandbox**. No agent
-commands run yet. The next execution layer must supply a container per agent,
-explicit filesystem mounts, a filtered shell environment, tool grants, and an
-isolated browser process/profile. The runtime lease is the contract for that
-boundary. Skills installation, tool configuration, browser control, conversations, approvals, and run history are not implemented.
+Agents can call `paws_send_message` to send short message bubbles, action buttons,
+and forms with text, multiline, or select fields. Button clicks and validated form
+submissions arrive as structured Paws harness events in the native session;
+they do not create user-authored chat bubbles. The original card records the
+response. Controls are plain data, never executable HTML. Each interactive
+message accepts one response.
+Duplicate HTTP retries do not start duplicate turns; only one turn runs per agent.
+
+During a turn, messages and interactive responses can steer the running adapter
+or wait in its queue. Steering is an optional capability of the shared provider
+interface; adapters without it queue automatically. An explicit rejection falls
+back to the queue, while uncertain delivery is never replayed. Stop cancels queued
+work too. Queue and delivery states appear alongside messages and cards. Secret
+responses queue for a fresh turn so their temporary files have a clear lifetime.
+Choose the default in Settings → Chat → Follow-ups. The composer shows Stop with
+an empty draft, and Steer or Queue when typing during a turn. Hold Ctrl/Cmd to
+preview the opposite action; Ctrl/Cmd-click or Ctrl/Cmd+Enter sends it.
+
+`request_secret` displays a private input with Save securely and Decline. Values
+are not persisted in chat, broadcasts, or model input. A saved secret is delivered
+through stdin to an owner-only file in the next turn's container tmpfs; the agent
+receives only its path. The file disappears with that container. This explicitly
+allows the agent to use the value in commands, so commands must not print or copy
+it. Older native threads use a reserved `paws_secret` field on `paws_send_message`
+to request the same private input without replacing their conversation history.
+
+Chat execution requires Linux and Docker. Run `pnpm runtime:build` once to build
+the runtime image. Codex additionally requires its native Linux distribution
+(including adjacent tool helpers) and a ChatGPT subscription login stored by the
+CLI in `auth.json`. Other adapters use their configured native SDK/CLI credentials;
+OpenCode also offers free models without a provider login. Missing installations,
+authentication requirements, and account restrictions must be resolved in the
+provider itself. Other operating systems have not been verified.
+
+Each turn leases a container with only that agent's workspace and home mounted,
+plus read-only executables for Codex turns. Its working directory is `/workspace`. The
+container has a read-only root filesystem, dropped Linux capabilities, resource
+limits, and no Docker socket or host home mount. Provider credentials stay in the
+host's private provider home; a host helper refreshes authentication without
+receiving user prompts, and external tokens are supplied to the container harness
+in memory. They are not mounted or placed in its environment. Containers retain
+normal outbound network access. Within its container the agent can run commands
+and edit its own files without approval prompts. Other native adapters keep their
+SDK/CLI control process on the host and expose Paws tools backed by the same
+container boundary. Built-in host tools are disabled or denied; ACP file and
+terminal requests are routed to the container. Private session metadata stays
+outside agent mounts. Use trusted provider executables: Paws does not sandbox the
+host provider process itself.
+
+Deleting an agent cancels its active reply and removes the app's conversation
+record while preserving workspace and home files, including native thread logs.
+Stopping or shutting down the server cleans up owned runtime containers. An
+unexpected server crash marks an interrupted reply on the next startup; it does
+not automatically replay the user message. File browsing, the interactive terminal,
+skills configuration, browser control, and approval workflows remain unconnected.
 
 ## Providers
 
@@ -101,9 +152,21 @@ Provider discovery runs bounded helper processes, does not submit prompts, and
 rejects client tool requests. ACP catalog discovery creates a temporary native
 session on explicit refresh; native startup behavior belongs to the installed agent.
 
-Chat turn execution, conversation persistence, approvals, and credential brokerage
-into container-isolated agent runtimes remain unimplemented. Provider setup and
-model discovery do not enable host agent execution.
+Chat execution has adapters for Codex, Claude, Cursor, OpenCode, Pi, Muse Code,
+Grok, fx, Antigravity, and generic ACP agents. Model options are translated by each
+adapter; steering and manual compaction depend on its native capabilities.
+Switching provider accounts transfers bounded conversation history to the new
+session while preserving the agent's working folder. Switching back resumes that
+account's session with only new or changed history. Queued switches wait for the
+active reply, and unavailable sessions start fresh with a history handoff. An
+uncertain delivery is never automatically replayed.
+
+Live execution and a round-trip handoff have been verified with Codex 0.166.0 and
+OpenCode 1.18.35 using a free model. Claude reached its API but the test account
+required identity verification. The remaining adapters have protocol or SDK
+coverage where available, but have not all been verified against live accounts.
+Provider environment variables and host credentials are not copied into agent
+containers.
 
 ## Attribution
 

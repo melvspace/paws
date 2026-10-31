@@ -30,7 +30,12 @@ import { Input } from "../components/ui/input.tsx";
 import { Menu, MenuTrigger, MenuPopup } from "../components/ui/menu.tsx";
 import { Menu as BaseMenu } from "@base-ui/react/menu";
 import { ProviderModels } from "./ProviderModels.tsx";
-import { providerStatus, relativeChecked } from "./providerPresentation.ts";
+import { SensitiveText } from "../components/ui/sensitive-text.tsx";
+import {
+  providerEmail,
+  providerStatus,
+  relativeChecked,
+} from "./providerPresentation.ts";
 import "./providers.css";
 
 function ProviderCard({ provider }: { provider: ProviderSnapshot }) {
@@ -60,6 +65,7 @@ function ProviderCard({ provider }: { provider: ProviderSnapshot }) {
       changeProvider(appAtomRegistry, path, "PATCH", { ...config, ...patch }),
     );
   const checking = busy || provider.status === "checking";
+  const email = providerEmail(provider);
 
   return (
     <div className="provider-panel">
@@ -72,7 +78,25 @@ function ProviderCard({ provider }: { provider: ProviderSnapshot }) {
       </header>
       <section className="provider-status-section">
         <h4>Status</h4>
-        <p>{providerStatus(provider, true)}</p>
+        <p>
+          {email ? (
+            <>
+              Authenticated as{" "}
+              <SensitiveText
+                key={`${config.id}:${email}`}
+                value={email}
+                label="email"
+              />
+              {provider.account?.label && (
+                <>
+                  <br />· {provider.account.label}
+                </>
+              )}
+            </>
+          ) : (
+            providerStatus(provider)
+          )}
+        </p>
         {provider.message && <p role="status">{provider.message}</p>}
         {config.enabled &&
           provider.auth !== "authenticated" &&

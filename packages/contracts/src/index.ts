@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { Conversation } from "./chat.ts";
 import { ProviderSnapshot } from "./providers.ts";
 
 export const CreateAgent = Schema.Struct({
@@ -21,7 +22,11 @@ export type Agent = typeof Agent.Type;
 export const Snapshot = Schema.Struct({
   agents: Schema.Array(Agent),
   providers: Schema.optional(Schema.Array(ProviderSnapshot)),
+  conversations: Schema.optional(Schema.Array(Conversation)),
 });
 export type Snapshot = typeof Snapshot.Type;
 
 export * from "./providers.ts";
+
+export * from "./chat.ts";
+export * from "./skills.ts";

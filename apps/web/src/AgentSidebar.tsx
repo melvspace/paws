@@ -9,6 +9,7 @@ import {
   SearchIcon,
   SettingsIcon,
   PlusIcon,
+  XIcon,
 } from "lucide-react";
 import type { Agent } from "@paws/contracts";
 
@@ -19,6 +20,8 @@ interface AgentSidebarProps {
   onCreate: () => void;
   onSettings: (agent: Agent) => void;
   onAppSettings: () => void;
+  onNavigate?: () => void;
+  onClose?: (() => void) | undefined;
 }
 
 export function AgentSidebar({
@@ -28,8 +31,11 @@ export function AgentSidebar({
   onCreate,
   onSettings,
   onAppSettings,
+  onNavigate,
+  onClose,
 }: AgentSidebarProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [desktopCollapsed, setCollapsed] = useState(false);
+  const collapsed = !onClose && desktopCollapsed;
   const [query, setQuery] = useState("");
   const search = query.trim().toLocaleLowerCase();
   const visibleAgents = agents.filter((agent) =>
@@ -45,21 +51,31 @@ export function AgentSidebar({
       className={collapsed ? "agent-sidebar collapsed" : "agent-sidebar"}
     >
       <div className="sidebar-heading">
-        <Button
-          type="button"
-          className="sidebar-icon-button"
-          aria-label={toggleLabel}
-          title={toggleLabel}
-          aria-expanded={!collapsed}
-          aria-controls="sidebar-content"
-          render={<Collapsible.Trigger />}
-        >
-          {collapsed ? (
-            <PanelLeft aria-hidden />
-          ) : (
-            <PanelLeftClose aria-hidden />
-          )}
-        </Button>
+        {onClose ? (
+          <Button
+            className="sidebar-icon-button"
+            aria-label="Close navigation"
+            onClick={onClose}
+          >
+            <XIcon aria-hidden />
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            className="sidebar-icon-button"
+            aria-label={toggleLabel}
+            title={toggleLabel}
+            aria-expanded={!collapsed}
+            aria-controls="sidebar-content"
+            render={<Collapsible.Trigger />}
+          >
+            {collapsed ? (
+              <PanelLeft aria-hidden />
+            ) : (
+              <PanelLeftClose aria-hidden />
+            )}
+          </Button>
+        )}
         {!collapsed && (
           <a className="brand" href="/">
             Paws
@@ -104,6 +120,7 @@ export function AgentSidebar({
               >
                 <a
                   href={`#agent-${agent.id}`}
+                  onClick={onNavigate}
                   title={agent.name}
                   aria-current={agent.id === selectedId ? "page" : undefined}
                 >

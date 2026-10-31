@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { conversationsAtom } from "./chat.ts";
 import { providersAtom } from "./providers.ts";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import {
@@ -34,6 +35,9 @@ export function connectAgents(
 
         if (!disposed) {
           registry.set(agentsAtom, { snapshot, connected: true, error: null });
+
+          if (snapshot.conversations)
+            registry.set(conversationsAtom, snapshot.conversations);
 
           if (snapshot.providers) {
             registry.set(providersAtom, {
@@ -113,3 +117,5 @@ export async function deleteAgent(id: string) {
 }
 
 export * from "./providers.ts";
+
+export * from "./chat.ts";

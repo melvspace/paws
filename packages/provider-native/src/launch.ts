@@ -37,7 +37,8 @@ export function providerLaunch(
   }
 
   if (config.driver === "cursor")
-    launch.env!.PAWS_CURSOR_AUTH_FILE = join(cwd, "cursor-auth.json");
+    launch.env!.PAWS_CURSOR_AUTH_FILE =
+      environment.PAWS_CURSOR_AUTH_FILE || join(cwd, "cursor-auth.json");
 
   return launch;
 }

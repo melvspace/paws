@@ -1,4 +1,25 @@
 /* T3 Code modal: 80rem × 60rem cap, 15rem nav, 3rem content header. */
+.chat-settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 20px 0;
+}
+.chat-settings-row > div {
+  flex: 1 1 260px;
+}
+.chat-settings-row h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.chat-settings-row p {
+  margin: 6px 0 0;
+  max-width: 56ch;
+  font-size: 13px;
+}
 .app-settings-dialog {
   width: min(80rem, calc(100vw - 80px));
   height: min(60rem, calc(100dvh - 80px));

@@ -438,6 +438,17 @@ export function makeProviderService(
 
   return {
     list,
+    // Server-only access; never include values in snapshots or HTTP responses.
+    environment(id: string): Record<string, string> {
+      return Object.fromEntries(
+        db
+          .prepare(
+            "SELECT name,value FROM provider_environment WHERE provider_id = ?",
+          )
+          .all(id)
+          .map((row) => [String(row.name), String(row.value)]),
+      );
+    },
     create,
     update,
     remove,

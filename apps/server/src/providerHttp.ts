@@ -14,25 +14,6 @@ export async function providerHttp(
 ): Promise<boolean> {
   if (!request.url?.startsWith("/api/providers")) return false;
 
-  const origin = request.headers.origin;
-
-  if (
-    (origin &&
-      ![
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:4310",
-        "http://127.0.0.1:4310",
-      ].includes(origin)) ||
-    request.headers["sec-fetch-site"] === "cross-site"
-  ) {
-    response
-      .writeHead(403)
-      .end(JSON.stringify({ error: "Origin not allowed" }));
-
-    return true;
-  }
-
   const match =
     /^\/api\/providers(?:\/([^/]+)(?:\/(refresh|environment|signin|cancel-signin))?)?$/.exec(
       request.url,

@@ -1,8 +1,11 @@
+import { Schema } from "effect";
+import { ChatAttachment } from "@paws/contracts";
 import type { Agent } from "@paws/contracts";
 import { modelKey } from "@paws/provider-core";
 
 export interface WorkspaceState {
   draft: string;
+  attachments: readonly ChatAttachment[];
   model: string;
   options: Record<string, string>;
   sidebarOpen: boolean;
@@ -11,6 +14,7 @@ export interface WorkspaceState {
 
 const defaults: WorkspaceState = {
   draft: "",
+  attachments: [],
   model: "",
   options: {},
   sidebarOpen: true,
@@ -38,6 +42,7 @@ export function readWorkspace(
 
     return {
       options: readOptions(value),
+      attachments: readAttachments(value),
       model:
         "model" in value && typeof value.model === "string" && value.model
           ? value.model.includes(":")
@@ -97,4 +102,18 @@ function readOptions(value: object): Record<string, string> {
         }
       : {}),
   };
+}
+
+function readAttachments(value: object): readonly ChatAttachment[] {
+  try {
+    return "attachments" in value
+      ? Schema.decodeUnknownSync(Schema.Array(ChatAttachment))(
+          value.attachments,
+        )
+          .filter((file) => /^[a-f0-9]{64}$/.test(file.id))
+          .slice(0, 4)
+      : [];
+  } catch {
+    return [];
+  }
 }
