@@ -1,4 +1,4 @@
-// Adapted from T3 Code ThemeWireframe (MIT); see LICENSE.t3code.
+// Adapted from T3 Code ThemeWireframe (MIT); see LICENSE.
 export interface ThemeCardPreviewColors {
   canvas: string;
   sidebar: string;

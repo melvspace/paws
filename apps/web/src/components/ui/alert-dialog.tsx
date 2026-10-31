@@ -1,4 +1,4 @@
-// Adapted from T3 Code ui/alert-dialog.tsx (MIT); see LICENSE.t3code.
+// Adapted from T3 Code ui/alert-dialog.tsx (MIT); see LICENSE.
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 import type { ComponentProps } from "react";
 import { cn } from "../../lib/utils.ts";

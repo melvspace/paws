@@ -1,4 +1,4 @@
-// Adapted from T3 Code useResizeDrag.ts (MIT); see LICENSE.t3code.
+// Adapted from T3 Code useResizeDrag.ts (MIT); see LICENSE.
 import { type PointerEvent, useState } from "react";
 
 export interface ResizeBounds {

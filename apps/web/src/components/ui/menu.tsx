@@ -1,4 +1,4 @@
-// Adapted from T3 Code ui/menu.tsx (MIT); see LICENSE.t3code.
+// Adapted from T3 Code ui/menu.tsx (MIT); see LICENSE.
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { cn } from "../../lib/utils.ts";
 

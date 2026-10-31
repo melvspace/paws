@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* T3 Code default light and dark palettes; see LICENSE.t3code. */
+/* T3 Code default light and dark palettes; see LICENSE. */
 :root {
   color-scheme: light dark;
   --background: light-dark(#fcfcfc, #0a0a0a);
