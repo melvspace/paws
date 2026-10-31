@@ -568,3 +568,73 @@ it("shows a send immediately, preserves new typing, and reconciles WebSocket ack
     localStorage.removeItem(`paws.workspace.${agent.id}`);
   }
 });
+
+it("keeps the last message above the composer when opening a saved chat", async () => {
+  localStorage.setItem(
+    `paws.workspace.${agent.id}`,
+    JSON.stringify({
+      sidebarOpen: false,
+      options: {},
+      draft: "Saved draft\n\n".repeat(8),
+    }),
+  );
+  const conversation: Conversation = {
+    agentId: agent.id,
+    revision: 1,
+    status: "idle",
+    error: null,
+    selection: null,
+    messages: Array.from({ length: 20 }, (_, index) => ({
+      id: `message-${index}`,
+      role: "assistant",
+      text: `Reply ${index}\n\nOpen Command Prompt and run:\n\n\`ping 138.68.107.128\``,
+      createdAt: "2026-01-01",
+    })),
+  };
+  appAtomRegistry.set(providersAtom, {
+    providers: [codexFixture],
+    error: null,
+  });
+  appAtomRegistry.set(conversationsAtom, [conversation]);
+  const fetchMock = vi
+    .spyOn(window, "fetch")
+    .mockResolvedValue(Response.json(conversation));
+
+  try {
+    await using _screen = await render(
+      <div style={{ width: 800, height: 600 }}>
+        <AgentWorkspace
+          agent={agent}
+          onSettings={() => {}}
+          onProviderSettings={() => {}}
+        />
+      </div>,
+    );
+    await expect
+      .element(page.getByRole("textbox", { name: "Message Ada" }))
+      .toBeVisible();
+    await expect
+      .poll(() => {
+        const last = [...document.querySelectorAll(".chat-message")].at(-1)!;
+        const history = document.querySelector(".chat-history")!;
+
+        return (
+          last.getBoundingClientRect().bottom -
+          history.getBoundingClientRect().bottom
+        );
+      })
+      .toBeLessThanOrEqual(-12);
+
+    const history = document.querySelector<HTMLElement>(".chat-history")!;
+    const workspace = document.querySelector<HTMLElement>(".agent-workspace")!;
+    history.scrollTop = 0;
+    history.dispatchEvent(new Event("scroll"));
+    const previousHeight = history.clientHeight;
+    workspace.parentElement!.style.height = "500px";
+    await expect.poll(() => history.clientHeight).toBeLessThan(previousHeight);
+    expect(history.scrollTop).toBe(0);
+  } finally {
+    fetchMock.mockRestore();
+    localStorage.removeItem(`paws.workspace.${agent.id}`);
+  }
+});

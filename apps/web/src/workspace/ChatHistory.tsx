@@ -271,6 +271,7 @@ export function ChatHistory({
 }) {
   const history = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
+  const scrollTop = useRef(0);
   const { messageDisplay } = useChatPreferences();
   const heldIds = new Set(
     conversation?.queue
@@ -339,8 +340,26 @@ export function ChatHistory({
       : undefined;
 
   useLayoutEffect(() => {
-    if (follow.current && history.current)
-      history.current.scrollTop = history.current.scrollHeight;
+    const element = history.current;
+
+    if (!element) return;
+
+    // The editor and message content can change size after the initial layout.
+    const followBottom = () => {
+      if (!follow.current) return;
+
+      element.scrollTop = element.scrollHeight;
+      scrollTop.current = element.scrollTop;
+    };
+    const observer = new ResizeObserver(followBottom);
+    observer.observe(element);
+    const messages = element.querySelector(".chat-message-list");
+
+    if (messages) observer.observe(messages);
+
+    followBottom();
+
+    return () => observer.disconnect();
   }, [
     conversation?.revision,
     messageDisplay,
@@ -355,16 +374,23 @@ export function ChatHistory({
       className="chat-history messenger-history"
       ref={history}
       onLoadCapture={() => {
-        if (follow.current && history.current)
+        if (follow.current && history.current) {
           history.current.scrollTop = history.current.scrollHeight;
+          scrollTop.current = history.current.scrollTop;
+        }
       }}
       onScroll={() => {
         const element = history.current;
 
-        if (element)
+        if (!element) return;
+
+        // A delayed programmatic scroll event must not unpin a resized history.
+        if (element.scrollTop !== scrollTop.current) {
           follow.current =
             element.scrollHeight - element.scrollTop - element.clientHeight <
             100;
+          scrollTop.current = element.scrollTop;
+        }
       }}
     >
       {!messages.length &&
