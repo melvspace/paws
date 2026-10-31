@@ -11,6 +11,11 @@ import {
 import { withJsonRpc, type ProbeLaunch } from "@paws/provider-core/process";
 import { openToolBridge } from "./toolBridge.ts";
 import {
+  piLiveContextUsage,
+  piModelContextWindow,
+  piStatsContextUsage,
+} from "./contextUsage.ts";
+import {
   interactionText,
   nativePrompt,
   type ChatToolRuntime,
@@ -72,10 +77,11 @@ export async function runPiTurn(
       },
       async (rpc) => {
         const slash = turn.selection.modelId.indexOf("/");
-        await rpc.request("set_model", {
+        const selectedModel = await rpc.request("set_model", {
           provider: turn.selection.modelId.slice(0, slash),
           modelId: turn.selection.modelId.slice(slash + 1),
         });
+        const contextWindow = piModelContextWindow(selectedModel);
 
         if (turn.selection.options.thinkingLevel)
           await rpc.request("set_thinking_level", {
@@ -92,7 +98,18 @@ export async function runPiTurn(
         void done.catch(() => {});
         let text = "";
         let segment = 0;
+        let lastLiveUsedTokens: number | undefined;
+        let compactedTokens: number | undefined;
         const unsubscribe = rpc.onNotification((method, value) => {
+          if (method === "message_update" || method === "message_end") {
+            const usage = piLiveContextUsage(value, contextWindow);
+
+            if (usage && usage.usedTokens !== lastLiveUsedTokens) {
+              lastLiveUsedTokens = usage.usedTokens;
+              turn.onUsage?.(usage);
+            }
+          }
+
           if (method === "message_end") {
             if (text) turn.onText(`text-${segment}`, text, true);
 
@@ -136,7 +153,13 @@ export async function runPiTurn(
 
         try {
           if (turn.operation === "compact") {
-            await rpc.request("compact");
+            const result = await rpc.request("compact");
+            const compact = z
+              .object({ estimatedTokensAfter: z.number().int().nonnegative() })
+              .safeParse(result);
+            compactedTokens = compact.success
+              ? compact.data.estimatedTokensAfter
+              : undefined;
           } else {
             await rpc.request("prompt", {
               message: nativePrompt(turn, await interactionText(turn, runtime)),
@@ -144,6 +167,25 @@ export async function runPiTurn(
             await done;
           }
         } finally {
+          if (!turn.signal.aborted) {
+            let cancelTimeout = () => {};
+
+            try {
+              const stats = await Promise.race([
+                rpc.request("get_session_stats"),
+                new Promise<undefined>((resolve) => {
+                  const timeout = setTimeout(resolve, 2000);
+                  cancelTimeout = () => clearTimeout(timeout);
+                }),
+              ]).catch(() => undefined);
+              const usage = piStatsContextUsage(stats, compactedTokens);
+
+              if (usage) turn.onUsage?.(usage);
+            } finally {
+              cancelTimeout();
+            }
+          }
+
           unsubscribe();
         }
       },

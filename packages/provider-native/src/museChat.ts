@@ -7,6 +7,7 @@ import {
 } from "@paws/provider-core";
 import type { ProbeLaunch } from "@paws/provider-core/process";
 import { openToolBridge } from "./toolBridge.ts";
+import { museContextUsage } from "./contextUsage.ts";
 import {
   interactionText,
   nativePrompt,
@@ -45,51 +46,6 @@ export async function runMuseTurn(
       );
 
     const sessionId = turn.nativeThreadId ?? host.connection.mintCommandId();
-    const config = {
-      mcpServers: {
-        paws: {
-          transport: "streamableHttp",
-          mode: "optional",
-          url: bridge.url,
-          headers: { Authorization: `Bearer ${bridge.token}` },
-        },
-      },
-    };
-    const started = z
-      .object({ session: z.object({ sessionId: z.string() }) })
-      .parse(
-        await host.connection.command(
-          turn.nativeThreadId ? "session/resume" : "session/start",
-          {
-            sessionId,
-            config,
-            permissionProfile: ":ask-me",
-            ...(turn.nativeThreadId
-              ? { excludeItems: true }
-              : {
-                  workspaceRoot: launch.cwd,
-                  providerId: "meta",
-                  ...(turn.selection.modelId !== "default"
-                    ? { modelId: turn.selection.modelId }
-                    : {}),
-                  approvalMode: "denyUnmatched",
-                }),
-          },
-        ),
-      );
-    turn.onThread(started.session.sessionId);
-    await host.connection.command("session/setApprovalMode", {
-      sessionId,
-      mode: "denyUnmatched",
-    });
-
-    if (turn.selection.modelId !== "default")
-      await host.connection.command("session/setModel", {
-        sessionId,
-        modelId: turn.selection.modelId,
-        providerId: "meta",
-      });
-
     const turnId = host.connection.mintCommandId();
     let complete = () => {};
     let fail = (_error: unknown) => {};
@@ -98,9 +54,20 @@ export async function runMuseTurn(
       fail = reject;
     });
     void done.catch(() => {});
+    let contextMaxTokens: number | null = null;
     host.connection.onNotification((notification) => {
       try {
-        if (
+        if (notification.method === "session/contextUsage") {
+          const { sessionId: reportedSessionId } = z
+            .object({ sessionId: z.string() })
+            .parse(notification.params);
+
+          if (reportedSessionId === sessionId) {
+            const usage = museContextUsage(notification.params);
+            contextMaxTokens = usage.maxTokens ?? contextMaxTokens;
+            turn.onUsage?.({ ...usage, maxTokens: contextMaxTokens });
+          }
+        } else if (
           notification.method === "item/completed" ||
           notification.method === "item/updated"
         ) {
@@ -192,6 +159,51 @@ export async function runMuseTurn(
     void host.connection.closed.then(() =>
       fail(new Error("Muse connection closed")),
     );
+    const config = {
+      mcpServers: {
+        paws: {
+          transport: "streamableHttp",
+          mode: "optional",
+          url: bridge.url,
+          headers: { Authorization: `Bearer ${bridge.token}` },
+        },
+      },
+    };
+    const started = z
+      .object({ session: z.object({ sessionId: z.string() }) })
+      .parse(
+        await host.connection.command(
+          turn.nativeThreadId ? "session/resume" : "session/start",
+          {
+            sessionId,
+            config,
+            permissionProfile: ":ask-me",
+            ...(turn.nativeThreadId
+              ? { excludeItems: true }
+              : {
+                  workspaceRoot: launch.cwd,
+                  providerId: "meta",
+                  ...(turn.selection.modelId !== "default"
+                    ? { modelId: turn.selection.modelId }
+                    : {}),
+                  approvalMode: "denyUnmatched",
+                }),
+          },
+        ),
+      );
+    turn.onThread(started.session.sessionId);
+    await host.connection.command("session/setApprovalMode", {
+      sessionId,
+      mode: "denyUnmatched",
+    });
+
+    if (turn.selection.modelId !== "default")
+      await host.connection.command("session/setModel", {
+        sessionId,
+        modelId: turn.selection.modelId,
+        providerId: "meta",
+      });
+
     const result = await host.connection.command(
       turn.operation === "compact" ? "session/compact" : "turn/start",
       {

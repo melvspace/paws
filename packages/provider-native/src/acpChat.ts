@@ -13,6 +13,7 @@ import {
   type ProbeLaunch,
 } from "@paws/provider-core/process";
 import { openToolBridge } from "./toolBridge.ts";
+import { acpContextUsage } from "./contextUsage.ts";
 import {
   interactionText,
   nativePrompt,
@@ -205,7 +206,7 @@ export async function runAcpTurn(
           const event = z
             .object({
               sessionId: z.string(),
-              update: z.object({
+              update: z.looseObject({
                 sessionUpdate: z.string(),
                 content: z
                   .object({ type: z.string(), text: z.string().optional() })
@@ -215,6 +216,10 @@ export async function runAcpTurn(
             .safeParse(raw);
 
           if (!event.success || event.data.sessionId !== sessionId) return;
+
+          const usage = acpContextUsage(event.data.update);
+
+          if (usage) turn.onUsage?.(usage);
 
           if (
             event.data.update.sessionUpdate === "agent_message_chunk" &&

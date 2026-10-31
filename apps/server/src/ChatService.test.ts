@@ -641,35 +641,43 @@ it("rejects generated image paths that escape the agent home", async () => {
   ).rejects.toThrow("Invalid generated image path");
 });
 
-it("persists context usage and compacts the existing thread without adding a user message", async () => {
-  const operations: (string | undefined)[] = [];
-  await using fixture = await setup(async (turn) => {
-    operations.push(turn.operation);
-    turn.onThread("context-thread");
-    turn.onUsage?.({
-      usedTokens: turn.operation === "compact" ? 1000 : 196000,
-      maxTokens: 258000,
-      totalProcessedTokens: 900000,
+it.each([
+  { maxTokens: 258000, totalProcessedTokens: 900000 },
+  { maxTokens: null },
+])(
+  "persists context usage ($maxTokens) and compacts the existing thread without adding a user message",
+  async (usage) => {
+    const operations: (string | undefined)[] = [];
+    await using fixture = await setup(async (turn) => {
+      operations.push(turn.operation);
+      turn.onThread("context-thread");
+      turn.onUsage?.({
+        usedTokens: turn.operation === "compact" ? 1000 : 196000,
+        ...usage,
+      });
     });
-  });
-  await expect(
-    Effect.runPromise(fixture.chat.compact(fixture.agent.id)),
-  ).rejects.toThrow();
-  await Effect.runPromise(fixture.chat.send(fixture.agent.id, input("usage")));
-  await expect
-    .poll(() => fixture.chat.get(fixture.agent.id).status)
-    .toBe("idle");
-  await fixture.reopen();
-  expect(fixture.chat.get(fixture.agent.id).contextUsage?.usedTokens).toBe(
-    196000,
-  );
-  await Effect.runPromise(fixture.chat.compact(fixture.agent.id));
-  await expect
-    .poll(() => fixture.chat.get(fixture.agent.id).contextUsage?.usedTokens)
-    .toBe(1000);
-  expect(operations).toEqual([undefined, "compact"]);
-  expect(fixture.chat.get(fixture.agent.id).messages).toHaveLength(1);
-});
+    await expect(
+      Effect.runPromise(fixture.chat.compact(fixture.agent.id)),
+    ).rejects.toThrow();
+    await Effect.runPromise(
+      fixture.chat.send(fixture.agent.id, input("usage")),
+    );
+    await expect
+      .poll(() => fixture.chat.get(fixture.agent.id).status)
+      .toBe("idle");
+    await fixture.reopen();
+    expect(fixture.chat.get(fixture.agent.id).contextUsage).toEqual({
+      usedTokens: 196000,
+      ...usage,
+    });
+    await Effect.runPromise(fixture.chat.compact(fixture.agent.id));
+    await expect
+      .poll(() => fixture.chat.get(fixture.agent.id).contextUsage?.usedTokens)
+      .toBe(1000);
+    expect(operations).toEqual([undefined, "compact"]);
+    expect(fixture.chat.get(fixture.agent.id).messages).toHaveLength(1);
+  },
+);
 
 it("hands a conversation to a different provider instead of locking its account", async () => {
   const calls: ChatTurn[] = [];

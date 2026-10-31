@@ -161,7 +161,7 @@ export type ChatInterruptedTurn = typeof ChatInterruptedTurn.Type;
 export const ContextUsage = Schema.Struct({
   usedTokens: Schema.Number,
   maxTokens: Schema.NullOr(Schema.Number),
-  totalProcessedTokens: Schema.Number,
+  totalProcessedTokens: Schema.optional(Schema.Number),
 });
 export type ContextUsage = typeof ContextUsage.Type;
 export const Conversation = Schema.Struct({

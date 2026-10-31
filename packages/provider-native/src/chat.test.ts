@@ -45,6 +45,10 @@ for await (const line of createInterface({input:process.stdin})) {
  }
  if(m.id==='escape') {
   if(!m.error) process.exit(6);
+  send({method:'session/update', params:{sessionId:'other', update:{sessionUpdate:'usage_update',used:999,size:1000}}});
+  send({method:'session/update', params:{sessionId:'session', update:{sessionUpdate:'usage_update',cost:{amount:1}}}});
+  send({method:'session/update', params:{sessionId:'session', update:{sessionUpdate:'usage_update',used:1200,size:200000}}});
+  send({method:'session/update', params:{sessionId:'session', update:{sessionUpdate:'state_update',state:'idle',usage:{totalTokens:1300}}}});
   send({method:'session/update', params:{sessionId:'session', update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Hello from ACP'}}}});
   send({id:promptId,result:{stopReason:'end_turn'}});
   continue;
@@ -67,6 +71,7 @@ for await (const line of createInterface({input:process.stdin})) {
     const texts: string[] = [];
     const cards: string[] = [];
     const commands: string[] = [];
+    const usages: unknown[] = [];
 
     try {
       for (const nativeThreadId of [null, "session"]) {
@@ -79,6 +84,7 @@ for await (const line of createInterface({input:process.stdin})) {
           },
           makeTurn({
             nativeThreadId,
+            onUsage: (usage) => usages.push(usage),
             onText: (_id, text) => texts.push(text),
             onMessage: (_id, card) => {
               cards.push(card.text);
@@ -97,6 +103,12 @@ for await (const line of createInterface({input:process.stdin})) {
 
       expect(texts).toEqual(["Hello from ACP", "Hello from ACP"]);
       expect(cards).toEqual(["Choose", "Choose"]);
+      expect(usages).toEqual([
+        { usedTokens: 1200, maxTokens: 200000 },
+        { usedTokens: 1300, maxTokens: null },
+        { usedTokens: 1200, maxTokens: 200000 },
+        { usedTokens: 1300, maxTokens: null },
+      ]);
       expect(commands).toEqual([
         "cat -- '/workspace/notes.txt'",
         "cat -- '/workspace/notes.txt'",
@@ -116,12 +128,14 @@ it("rejects host paths and traversal for ACP filesystem operations", () => {
   expect(() => containerPath("/home/user/.claude", "/control")).toThrow();
 });
 
-it("Pi receives unsolicited text events, persists a session and disables ambient tools/extensions", async () => {
-  const root = await mkdtemp("/tmp/codex/paws-pi-test-");
-  const script = `${root}/provider.mjs`;
-  await writeFile(
-    script,
-    `
+it.each(["reported", "unsupported", "missing", "timeout", "compact"] as const)(
+  "Pi reports context with %s stats, persists a session and disables ambient tools/extensions",
+  async (scenario) => {
+    const root = await mkdtemp("/tmp/codex/paws-pi-test-");
+    const script = `${root}/provider.mjs`;
+    await writeFile(
+      script,
+      `
 import { createInterface } from 'node:readline';
 const send = value => process.stdout.write(JSON.stringify(value)+'\\n');
 if(!process.argv.includes('--no-tools')||!process.argv.includes('--no-extensions')||!process.argv.includes('--extension')) process.exit(3);
@@ -130,38 +144,54 @@ for await (const line of createInterface({input:process.stdin})) {
  if(m.type==='prompt') {
   if(!m.message.includes('calico cat')) process.exit(4);
   send({type:'message_start'});
-  send({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'Pi reply'}});
+  send({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'Pi reply'},message:{role:'assistant',usage:{totalTokens:1200}}});
   send({type:'agent_end'});
  }
- send({type:'response',id:m.id,command:m.type,success:true,data:{}});
+ if(m.type==='get_session_stats' && ${JSON.stringify(scenario)}==='timeout') continue;
+ const data=m.type==='set_model'?{contextWindow:200000}:m.type==='compact'?{estimatedTokensAfter:400}:m.type==='get_session_stats' && ${JSON.stringify(scenario)}!=='missing'?{contextUsage:{tokens:${scenario === "compact" ? "null" : "1300"},contextWindow:200000},tokens:{input:4000,output:1000}}:{};
+ send({type:'response',id:m.id,command:m.type,success:m.type!=='get_session_stats'||${JSON.stringify(scenario)}!=='unsupported',data});
 }
 `,
-  );
-  const texts: string[] = [];
-  let thread: string | null = null;
-
-  try {
-    await runPiTurn(
-      {
-        command: process.execPath,
-        args: [script],
-        cwd: root,
-        signal: AbortSignal.timeout(3000),
-      },
-      makeTurn({
-        onThread: (id) => {
-          thread = id;
-        },
-        onText: (_id, text) => texts.push(text),
-      }),
-      runtime,
     );
-    expect(thread).toMatch(/^[a-f0-9-]{36}$/);
-    expect(texts).toEqual(["Pi reply"]);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+    const texts: string[] = [];
+    let thread: string | null = null;
+    const usages: unknown[] = [];
+
+    try {
+      await runPiTurn(
+        {
+          command: process.execPath,
+          args: [script],
+          cwd: root,
+          signal: AbortSignal.timeout(3000),
+        },
+        makeTurn({
+          ...(scenario === "compact" ? { operation: "compact" } : {}),
+          onUsage: (usage) => usages.push(usage),
+          onThread: (id) => {
+            thread = id;
+          },
+          onText: (_id, text) => texts.push(text),
+        }),
+        runtime,
+      );
+      expect(thread).toMatch(/^[a-f0-9-]{36}$/);
+      expect(texts).toEqual(scenario === "compact" ? [] : ["Pi reply"]);
+      expect(usages).toEqual(
+        scenario === "compact"
+          ? [{ usedTokens: 400, maxTokens: 200000 }]
+          : [
+              { usedTokens: 1200, maxTokens: 200000 },
+              ...(scenario === "reported"
+                ? [{ usedTokens: 1300, maxTokens: 200000 }]
+                : []),
+            ],
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 it("the tool bridge rejects browser and unauthenticated requests, validates forms and closes", async () => {
   const cards: string[] = [];

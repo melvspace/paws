@@ -4,7 +4,7 @@ import { z } from "zod";
 import { openEventStream } from "./eventStream.ts";
 import { randomBytes } from "node:crypto";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2";
-import { OpenCode } from "@opencode/client";
+import { OpenCode, type TokenUsageInfo } from "@opencode/client";
 import {
   chatInstructions,
   ChatExecutionError,
@@ -132,6 +132,36 @@ export async function runOpenCodeTurn(
             );
 
           turn.onThread(sessionID);
+          // T3 keys limits by directory because project configuration can override them.
+          const catalog = await client.model
+            .list(
+              { location: { directory: launch.cwd } },
+              { signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]) },
+            )
+            .catch(() => undefined);
+          const selectedModel = catalog?.data.find(
+            (entry) =>
+              entry.providerID === model.providerID &&
+              entry.id === model.modelID,
+          );
+          const limit =
+            selectedModel?.limit.input ?? selectedModel?.limit.context;
+          const maxTokens =
+            limit && Number.isFinite(limit) && limit > 0 ? limit : null;
+          let lastStep: TokenUsageInfo | undefined;
+          const reportUsage = () => {
+            if (!lastStep) return;
+
+            turn.onUsage?.({
+              usedTokens:
+                lastStep.input +
+                lastStep.cache.read +
+                lastStep.cache.write +
+                lastStep.output,
+              maxTokens,
+            });
+          };
+
           await client.mcp.add(
             {
               server: "paws",
@@ -183,6 +213,15 @@ export async function runOpenCodeTurn(
                   },
                   { signal },
                 );
+              } else if (
+                event.type === "session.step.ended" ||
+                event.type === "session.step.failed"
+              ) {
+                const tokens = event.data.tokens;
+
+                if (!tokens) continue;
+
+                lastStep = tokens;
               } else if (event.type === "session.execution.succeeded") {
                 resolveDone();
               } else if (event.type === "session.execution.failed") {
@@ -206,6 +245,7 @@ export async function runOpenCodeTurn(
           } finally {
             eventsAbort.abort();
             await listen.catch(() => {});
+            reportUsage();
           }
         } else {
           const client = createOpencodeClient({

@@ -45,10 +45,30 @@ it("Muse accepts completion before acknowledgement, cancels native input and clo
         .parse(params);
       bridgeUrl = input.config.mcpServers.paws.url;
 
+      state.notify({
+        method: "session/contextUsage",
+        params: {
+          sessionId: "native-id",
+          usedTokens: 800,
+          windowTokens: 200000,
+        },
+      });
+
       return { session: { sessionId: "native-id" } };
     }
 
     if (method === "turn/start") {
+      state.notify({
+        method: "session/contextUsage",
+        params: { sessionId: "another-session", usedTokens: 999 },
+      });
+      state.notify({
+        method: "session/contextUsage",
+        params: {
+          sessionId: "native-id",
+          usedTokens: 1200,
+        },
+      });
       state.notify({
         method: "userInput/requested",
         params: { sessionId: "native-id", userInputId: "input" },
@@ -80,6 +100,7 @@ it("Muse accepts completion before acknowledgement, cancels native input and clo
     return {};
   });
   const onText = vi.fn();
+  const onUsage = vi.fn();
   const turn: ChatTurn = {
     agentId: "agent",
     agentName: "Ada",
@@ -89,6 +110,7 @@ it("Muse accepts completion before acknowledgement, cancels native input and clo
     signal: AbortSignal.timeout(5000),
     onThread() {},
     onText,
+    onUsage,
     onMessage() {},
   };
   const launch = {
@@ -100,6 +122,10 @@ it("Muse accepts completion before acknowledgement, cancels native input and clo
   const runtime = { execute: async () => "", deliverSecret: async () => "" };
   await runMuseTurn(launch, turn, runtime);
   expect(onText).toHaveBeenCalledWith("reply", "Hello", true);
+  expect(onUsage.mock.calls).toEqual([
+    [{ usedTokens: 800, maxTokens: 200000 }],
+    [{ usedTokens: 1200, maxTokens: 200000 }],
+  ]);
   expect(state.command).toHaveBeenCalledWith(
     "userInput/cancel",
     expect.objectContaining({ userInputId: "input" }),
