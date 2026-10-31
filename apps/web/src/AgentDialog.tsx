@@ -41,7 +41,6 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
   );
   const saved = useRef({ name: agent?.name ?? "", avatar });
   const [name, setName] = useState(agent?.name ?? "");
-  const [saveStatus, setSaveStatus] = useState("");
   const [pending, setPending] = useState<"save" | "delete" | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +75,6 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
     }
 
     setPending("save");
-    setSaveStatus("Saving…");
     setError(null);
     const request = updateAgent(agent.id, {
       name: nextName,
@@ -85,7 +83,6 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
       .then(() => {
         saved.current = { name: nextName, avatar: nextAvatar };
         setName(nextName);
-        setSaveStatus("Saved");
 
         return true;
       })
@@ -93,7 +90,6 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
         setError(
           cause instanceof Error ? cause.message : "Unable to save agent.",
         );
-        setSaveStatus("");
 
         return false;
       })
@@ -207,7 +203,9 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
         }}
       >
         <div className="dialog-heading">
-          <DialogTitle>{agent ? "Agent settings" : "New agent"}</DialogTitle>
+          <DialogTitle className={agent ? "sr-only" : undefined}>
+            {agent ? "Agent settings" : "New agent"}
+          </DialogTitle>
           <Button
             type="button"
             className="sidebar-icon-button"
@@ -221,6 +219,18 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
         {error && <p role="alert">{error}</p>}
         {!connected && <p role="status">Reconnecting…</p>}
         <Form onSubmit={(event) => void submit(event)}>
+          <AvatarPicker
+            value={avatar}
+            disabled={pending !== null || confirmingDelete || !connected}
+            onChange={(nextAvatar) => {
+              setAvatar(nextAvatar);
+              setError(null);
+
+              if (agent) {
+                void saveAgent(nextAvatar);
+              }
+            }}
+          />
           <div className={agent ? "settings-group" : undefined}>
             <div className={agent ? "settings-row" : undefined}>
               <div className="settings-copy">
@@ -233,7 +243,6 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
                 value={name}
                 onChange={(event) => {
                   setName(event.target.value);
-                  setSaveStatus("");
                   setError(null);
                 }}
                 onBlur={(event) => {
@@ -260,24 +269,8 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
               />
             </div>
           </div>
-          <AvatarPicker
-            value={avatar}
-            disabled={pending !== null || confirmingDelete || !connected}
-            onChange={(nextAvatar) => {
-              setAvatar(nextAvatar);
-              setSaveStatus("");
-              setError(null);
 
-              if (agent) {
-                void saveAgent(nextAvatar);
-              }
-            }}
-          />
-          {agent ? (
-            <p className="autosave-status" role="status">
-              {saveStatus}
-            </p>
-          ) : (
+          {!agent && (
             <div className="actions">
               <Button
                 type="button"

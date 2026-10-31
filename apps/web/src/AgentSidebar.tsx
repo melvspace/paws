@@ -2,6 +2,8 @@ import { Input } from "./components/ui/input.tsx";
 import { Button } from "./components/ui/button.tsx";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { conversationsAtom } from "@paws/client-runtime";
 import {
   PanelLeft,
   PanelLeftClose,
@@ -34,6 +36,13 @@ export function AgentSidebar({
   onNavigate,
   onClose,
 }: AgentSidebarProps) {
+  const conversations = useAtomValue(conversationsAtom);
+  const activities = new Map(
+    conversations.map(
+      ({ agentId, status }) =>
+        [agentId, status === "running" ? "working" : status] as const,
+    ),
+  );
   const [desktopCollapsed, setCollapsed] = useState(false);
   const collapsed = !onClose && desktopCollapsed;
   const [query, setQuery] = useState("");
@@ -126,6 +135,8 @@ export function AgentSidebar({
                 >
                   <AgentAvatar
                     avatar={agent.avatar ?? defaultAgentAvatar(agent.id)}
+                    animated={connected && !collapsed}
+                    activity={activities.get(agent.id) ?? "idle"}
                   />
                   <span>{agent.name}</span>
                 </a>

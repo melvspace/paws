@@ -38,7 +38,11 @@ export function AvatarPicker({
               aria-pressed={value.animal === animal}
               onClick={() => onChange({ ...value, animal })}
             >
-              <AgentAvatar avatar={{ ...value, animal }} size={36} />
+              <AgentAvatar
+                avatar={{ ...value, animal }}
+                size={36}
+                animated={false}
+              />
               <span>{animal}</span>
             </Button>
           ))}

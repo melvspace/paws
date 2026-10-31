@@ -2,7 +2,7 @@ import { AgentAvatar } from "../AgentAvatar.tsx";
 import { defaultAgentAvatar } from "@paws/contracts";
 import { useComposerAttachments } from "./useComposerAttachments.ts";
 import { useAtomValue } from "@effect/atom-react";
-import { providersAtom } from "@paws/client-runtime";
+import { agentsAtom, providersAtom } from "@paws/client-runtime";
 import { modelKey, normalizeModelOptions } from "@paws/provider-core";
 import { useModelPreferences } from "./modelPreferences.ts";
 import { availableModels } from "./models.ts";
@@ -44,6 +44,7 @@ export function AgentWorkspace({
   navigation,
 }: AgentWorkspaceProps) {
   const chat = useConversation(agent.id);
+  const { connected } = useAtomValue(agentsAtom);
   const { followUpMode } = useChatPreferences();
   const [alternateHeld, setAlternateHeld] = useState(false);
   const alternateMode = followUpMode === "steer" ? "queue" : "steer";
@@ -209,6 +210,14 @@ export function AgentWorkspace({
           <div className="workspace-title">
             <AgentAvatar
               avatar={agent.avatar ?? defaultAgentAvatar(agent.id)}
+              animated={connected}
+              activity={
+                running
+                  ? "working"
+                  : chat.conversation?.status === "error"
+                    ? "error"
+                    : "idle"
+              }
             />
             <h1>{agent.name}</h1>
           </div>

@@ -67,7 +67,9 @@ it("autosaves avatar selections, retains failed changes, and retries on dismissa
       <AgentDialog agent={agent} connected onDismiss={dismiss} />,
     );
     await page.getByRole("button", { name: "rabbit", exact: true }).click();
-    await expect.element(page.getByRole("status")).toHaveTextContent("Saved");
+    await expect
+      .element(page.getByRole("button", { name: "pink", exact: true }))
+      .toBeEnabled();
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/agents/avatar-agent",
       expect.objectContaining({

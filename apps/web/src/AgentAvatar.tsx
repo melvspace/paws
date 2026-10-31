@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useAvatarMotion, type AvatarActivity } from "./useAvatarMotion.ts";
 import "./avatars.css";
 import { avatarColors, type AgentAvatar as Avatar } from "@paws/contracts";
 
@@ -51,27 +52,43 @@ const heads: Record<Avatar["animal"], ReactNode> = {
 export function AgentAvatar({
   avatar,
   size = 32,
+  activity = "idle",
+  animated = true,
 }: {
   avatar: Avatar;
   size?: number;
+  activity?: AvatarActivity;
+  animated?: boolean;
 }) {
+  const ref = useAvatarMotion(
+    activity,
+    `${avatar.animal}-${avatar.color}`,
+    animated,
+  );
   const masked = avatar.animal === "raccoon" || avatar.animal === "panda";
 
   return (
     <svg
+      ref={ref}
       className="agent-avatar"
+      data-animated={animated}
+      data-activity={activity}
       viewBox="0 0 64 64"
       width={size}
       height={size}
       fill={avatarColors[avatar.color]}
       aria-hidden="true"
     >
-      {heads[avatar.animal]}
-      <g fill={masked ? "#fff" : "#171717"}>
-        <circle cx="23" cy="34" r="2.5" />
-        <circle cx="41" cy="34" r="2.5" />
+      <g className="agent-avatar-motion">
+        {heads[avatar.animal]}
+        <g className="agent-avatar-face">
+          <g className="agent-avatar-eyes" fill={masked ? "#fff" : "#171717"}>
+            <circle cx="23" cy="34" r="2.5" />
+            <circle cx="41" cy="34" r="2.5" />
+          </g>
+          <ellipse cx="32" cy="44" rx="3" ry="2.5" fill="#171717" />
+        </g>
       </g>
-      <ellipse cx="32" cy="44" rx="3" ry="2.5" fill="#171717" />
     </svg>
   );
 }
