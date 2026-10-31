@@ -1,4 +1,5 @@
 import { probeOpenCodeProtocol } from "./openCodeProtocol.ts";
+import { openCodeError } from "./openCodeError.ts";
 import { join } from "node:path";
 import { z } from "zod";
 import { openEventStream } from "./eventStream.ts";
@@ -225,9 +226,7 @@ export async function runOpenCodeTurn(
               } else if (event.type === "session.execution.succeeded") {
                 resolveDone();
               } else if (event.type === "session.execution.failed") {
-                throw new ChatExecutionError(
-                  "OpenCode could not finish this reply. Check its provider connection.",
-                );
+                throw openCodeError(event.data.error);
               }
             }
 
@@ -378,9 +377,7 @@ export async function runOpenCodeTurn(
               ]);
 
               if (response.data?.info.error)
-                throw new ChatExecutionError(
-                  "OpenCode could not finish this reply. Check its provider connection.",
-                );
+                throw openCodeError(response.data.info.error);
 
               for (const part of response.data?.parts ?? []) {
                 if (part.type === "text") turn.onText(part.id, part.text, true);

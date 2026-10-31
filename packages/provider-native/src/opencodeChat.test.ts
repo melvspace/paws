@@ -6,6 +6,7 @@ import { runOpenCodeTurn } from "./opencodeChat.ts";
 
 const state = vi.hoisted(() => ({
   failed: false,
+  error: undefined as unknown,
   modelFailure: false,
   inputLimit: 160000 as number | undefined,
   aborted: false,
@@ -136,7 +137,7 @@ vi.mock("@opencode/client", () => ({
             type: state.failed
               ? "session.execution.failed"
               : "session.execution.succeeded",
-            data: { sessionID: "session" },
+            data: { sessionID: "session", error: state.error },
           };
 
           if (!signal.aborted)
@@ -152,6 +153,7 @@ vi.mock("@opencode/client", () => ({
 it.each([
   {
     failed: false,
+    error: undefined,
     modelFailure: false,
     inputLimit: 160000,
     operation: undefined,
@@ -159,6 +161,7 @@ it.each([
   },
   {
     failed: false,
+    error: undefined,
     modelFailure: false,
     inputLimit: undefined,
     operation: "compact" as const,
@@ -166,6 +169,7 @@ it.each([
   },
   {
     failed: false,
+    error: undefined,
     modelFailure: true,
     inputLimit: undefined,
     operation: undefined,
@@ -173,6 +177,20 @@ it.each([
   },
   {
     failed: true,
+    error: undefined,
+    modelFailure: false,
+    inputLimit: 160000,
+    operation: undefined,
+    maxTokens: 160000,
+  },
+  {
+    failed: true,
+    error: {
+      type: "provider.free-limit",
+      status: 429,
+      message: "private provider diagnostic",
+      response: { body: "private response" },
+    },
     modelFailure: false,
     inputLimit: 160000,
     operation: undefined,
@@ -208,7 +226,10 @@ it.each([
       { execute: async () => "", deliverSecret: async () => "" },
     );
 
-    if (scenario.failed) await expect(run).rejects.toThrow("could not finish");
+    if (scenario.failed)
+      await expect(run).rejects.toThrow(
+        scenario.error ? "free usage limit" : "could not finish",
+      );
     else await run;
 
     expect(onText).toHaveBeenCalledWith("reply:0", "Hello", true);
