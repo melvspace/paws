@@ -48,6 +48,75 @@ const initial: Conversation = {
   ],
 };
 
+it("removes a stale restoration alert after a successful retry even when the old message is absent", async () => {
+  const model = { providerId: "opencode", modelId: "model", name: "Model" };
+  await using _screen = await render(
+    <ChatHistory
+      conversation={{
+        ...initial,
+        messages: [
+          { id: "retry", role: "user", text: "Hi", createdAt: "2026-01-01" },
+          {
+            id: "retry:reply",
+            role: "assistant",
+            text: "I can see the earlier ZIP.",
+            createdAt: "2026-01-01",
+            model,
+          },
+        ],
+        handoffs: [
+          {
+            id: "old-failure",
+            beforeMessageId: "missing",
+            kind: "session-restoration",
+            from: [model],
+            to: model,
+            status: "failed",
+          },
+          {
+            id: "retry",
+            beforeMessageId: "retry",
+            kind: "session-restoration",
+            from: [model],
+            to: model,
+            status: "completed",
+          },
+        ],
+      }}
+      busy={false}
+      error={null}
+      onReply={async () => true}
+    />,
+  );
+  await expect
+    .element(page.getByText("I can see the earlier ZIP."))
+    .toBeVisible();
+  await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+});
+
+it.each(["running", "failed"] as const)(
+  "shows %s tool activity instead of an unexplained thinking indicator",
+  async (status) => {
+    await using _screen = await render(
+      <ChatHistory
+        conversation={{
+          ...initial,
+          status: "running",
+          toolActivity: { name: "paws_exec", status, count: 8 },
+        }}
+        busy={false}
+        error={null}
+        onReply={async () => true}
+      />,
+    );
+    await expect
+      .element(page.getByRole("status"))
+      .toHaveTextContent(
+        `${status === "failed" ? "Tool failed" : "Running a workspace command"} · 8 calls`,
+      );
+  },
+);
+
 it("collects required form fields and button choices, then disables answered cards", async () => {
   const replies: NonNullable<SendChat["reply"]>[] = [];
 

@@ -105,6 +105,30 @@ it("persists per-agent history and native threads, streams messages, and dedupli
   ).rejects.toThrow();
 });
 
+it("publishes tool progress and clears it after failure without exposing tool arguments", async () => {
+  let finish = () => {};
+  const wait = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  await using fixture = await setup(async (turn) => {
+    turn.onTool?.("paws_exec", "running");
+    turn.onTool?.("paws_exec", "failed");
+    await wait;
+
+    throw new Error("Private provider output");
+  });
+  await Effect.runPromise(fixture.chat.send(fixture.agent.id, input("tools")));
+  await expect
+    .poll(() => fixture.chat.get(fixture.agent.id).toolActivity)
+    .toEqual({ name: "paws_exec", status: "failed", count: 1 });
+  finish();
+  await expect
+    .poll(() => fixture.chat.get(fixture.agent.id).status)
+    .toBe("error");
+  expect(fixture.chat.get(fixture.agent.id).toolActivity).toBeUndefined();
+  expect(fixture.chat.get(fixture.agent.id).error).not.toContain("Private");
+});
+
 it("validates and consumes interactive replies once and sends their contents into the same thread", async () => {
   const calls: ChatTurn[] = [];
   await using fixture = await setup(async (turn) => {
@@ -1682,59 +1706,65 @@ it("uploads user files, persists their message and queue metadata, and scopes im
     .toBe("idle");
 });
 
-it("completes context handoff on the first reply, independently of the remaining turn", async () => {
-  const calls: ChatTurn[] = [];
-  let failReply: (error: Error) => void = () => {};
-  await using fixture = await setup(
-    async (turn) => {
-      calls.push(turn);
-      turn.onThread(`native-${calls.length}`);
+it.each(["reply", "tool"] as const)(
+  "completes context handoff on the first %s, independently of the remaining turn",
+  async (kind) => {
+    const calls: ChatTurn[] = [];
+    let failReply: (error: Error) => void = () => {};
+    await using fixture = await setup(
+      async (turn) => {
+        calls.push(turn);
+        turn.onThread(`native-${calls.length}`);
 
-      if (calls.length === 1) {
-        turn.onText("reply", "Remember this context.", true);
+        if (calls.length === 1) {
+          turn.onText("reply", "Remember this context.", true);
 
-        return;
-      }
+          return;
+        }
 
-      await new Promise<void>((_resolve, reject) => {
-        failReply = reject;
-      });
-    },
-    "codex",
-    [{ ...provider, config: { ...provider.config, id: "other" } }],
-  );
-  await Effect.runPromise(fixture.chat.send(fixture.agent.id, input("seed")));
-  await expect
-    .poll(() => fixture.chat.get(fixture.agent.id).status)
-    .toBe("idle");
-  await Effect.runPromise(
-    fixture.chat.send(fixture.agent.id, {
-      ...input("switch"),
-      selection: { providerId: "other", modelId: "model", options: {} },
-    }),
-  );
-  await expect.poll(() => calls.length).toBe(2);
-  expect(fixture.chat.get(fixture.agent.id).handoffs?.at(-1)?.status).toBe(
-    "pending",
-  );
+        await new Promise<void>((_resolve, reject) => {
+          failReply = reject;
+        });
+      },
+      "codex",
+      [{ ...provider, config: { ...provider.config, id: "other" } }],
+    );
+    await Effect.runPromise(fixture.chat.send(fixture.agent.id, input("seed")));
+    await expect
+      .poll(() => fixture.chat.get(fixture.agent.id).status)
+      .toBe("idle");
+    await Effect.runPromise(
+      fixture.chat.send(fixture.agent.id, {
+        ...input("switch"),
+        selection: { providerId: "other", modelId: "model", options: {} },
+      }),
+    );
+    await expect.poll(() => calls.length).toBe(2);
+    expect(fixture.chat.get(fixture.agent.id).handoffs?.at(-1)?.status).toBe(
+      "pending",
+    );
 
-  try {
-    calls[1]!.onText("reply", "I will inspect the clip.");
-    expect(fixture.chat.get(fixture.agent.id).status).toBe("running");
+    try {
+      if (kind === "reply")
+        calls[1]!.onText("reply", "I will inspect the clip.");
+      else calls[1]!.onTool?.("paws_exec", "running");
+
+      expect(fixture.chat.get(fixture.agent.id).status).toBe("running");
+      expect(fixture.chat.get(fixture.agent.id).handoffs?.at(-1)?.status).toBe(
+        "completed",
+      );
+    } finally {
+      failReply(new Error("Later execution failed"));
+    }
+
+    await expect
+      .poll(() => fixture.chat.get(fixture.agent.id).status)
+      .toBe("error");
     expect(fixture.chat.get(fixture.agent.id).handoffs?.at(-1)?.status).toBe(
       "completed",
     );
-  } finally {
-    failReply(new Error("Later execution failed"));
-  }
-
-  await expect
-    .poll(() => fixture.chat.get(fixture.agent.id).status)
-    .toBe("error");
-  expect(fixture.chat.get(fixture.agent.id).handoffs?.at(-1)?.status).toBe(
-    "completed",
-  );
-});
+  },
+);
 
 it("silently completes without trailing text, cards or attachments and resets silence for the next turn", async () => {
   let count = 0;

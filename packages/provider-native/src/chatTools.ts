@@ -15,7 +15,7 @@ export const toolText = (text: string) => ({
 });
 
 export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
-  return [
+  const entries = [
     {
       name: "paws_finish_turn",
       description:
@@ -168,6 +168,35 @@ export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
       },
     },
   ];
+
+  return entries.map((entry) => ({
+    ...entry,
+    async execute(value: unknown) {
+      turn.signal.throwIfAborted();
+      const blocked = turn.onTool?.(entry.name, "running");
+
+      if (blocked) return { ...toolText(blocked), isError: true };
+
+      try {
+        const result = await entry.execute(value);
+        const checkpoint = turn.onTool?.(
+          entry.name,
+          "isError" in result && result.isError ? "failed" : "completed",
+        );
+
+        return checkpoint
+          ? {
+              ...result,
+              content: [...result.content, ...toolText(checkpoint).content],
+            }
+          : result;
+      } catch (error) {
+        turn.onTool?.(entry.name, "failed");
+
+        throw error;
+      }
+    },
+  }));
 }
 
 export async function interactionText(

@@ -33,6 +33,25 @@ import { SecretRequestForm } from "./SecretRequestForm.tsx";
 
 type Reply = NonNullable<SendChat["reply"]>;
 
+function toolProgress(activity: NonNullable<Conversation["toolActivity"]>) {
+  const labels: Record<string, string> = {
+    paws_exec: "Running a workspace command",
+    paws_read_attachment: "Opening an attachment",
+    paws_view_image: "Viewing an image",
+    paws_send_message: "Sending a message",
+    request_secret: "Requesting private input",
+    paws_finish_turn: "Finishing",
+  };
+  const label =
+    activity.status === "failed"
+      ? "Tool failed"
+      : activity.status === "completed"
+        ? "Tool finished; working on reply"
+        : (labels[activity.name] ?? "Using tools");
+
+  return `${label} · ${activity.count} calls`;
+}
+
 function InteractionReceipt({ interaction }: { interaction: ChatInteraction }) {
   const labels = {
     action_clicked: `Selected: ${interaction.action.label}`,
@@ -508,7 +527,9 @@ export function ChatHistory({
           <div className="chat-working" role="status">
             {conversation?.activity === "compact"
               ? "Compacting context…"
-              : "Thinking…"}
+              : conversation?.toolActivity
+                ? toolProgress(conversation.toolActivity)
+                : "Thinking…"}
           </div>
         )}
         {pending && (

@@ -13,6 +13,7 @@ import {
 import { ChatExecutionError, type RunChatTurn } from "@paws/provider-core";
 import { leaseToolRuntime } from "@paws/runtime";
 import type { makeProviderService } from "./ProviderService.ts";
+import { guardChatTools } from "./chatToolGuard.ts";
 
 export function makeNativeChatRunner(
   root: string,
@@ -23,6 +24,7 @@ export function makeNativeChatRunner(
   driver: Exclude<ProviderDriver, "codex">,
 ): RunChatTurn {
   return async (turn) => {
+    const guarded = guardChatTools(turn);
     const provider = providers
       .list()
       .find((item) => item.config.id === turn.selection.providerId);
@@ -63,13 +65,13 @@ export function makeNativeChatRunner(
                   : (launch, input, tools) =>
                       runAcpTurn(launch, input, tools, driver);
       await execute(
-        providerLaunch(provider.config, control, turn.signal, {
+        providerLaunch(provider.config, control, guarded.signal, {
           ...providers.environment(provider.config.id),
           ...(driver === "cursor"
             ? { PAWS_CURSOR_AUTH_FILE: join(root, "cursor-auth.json") }
             : {}),
         }),
-        turn,
+        guarded,
         {
           execute: lease.execute,
           deliverSecret: async (reference) => {
@@ -82,6 +84,11 @@ export function makeNativeChatRunner(
           },
         },
       );
+    } catch (error) {
+      if (guarded.signal.reason instanceof ChatExecutionError)
+        throw guarded.signal.reason;
+
+      throw error;
     } finally {
       await lease.dispose();
     }

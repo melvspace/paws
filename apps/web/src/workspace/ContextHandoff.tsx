@@ -48,7 +48,7 @@ export function ContextHandoff({
 
     return (
       <div className="chat-error" role="alert">
-        Could not restore conversation context.
+        Could not restore conversation context. Send a new message to retry.
       </div>
     );
   }

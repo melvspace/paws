@@ -67,3 +67,59 @@ it("preserves explicit session boundaries even when message order suggests anoth
     handoffPresentation([handoff], [message("old", first), message("switch")]),
   ).toEqual([handoff]);
 });
+
+it("hides a failed restoration after a later successful restoration to that provider", () => {
+  const failed: ChatHandoff = {
+    ...event("old-missing-message", second),
+    kind: "session-restoration",
+    status: "failed",
+  };
+  const restored: ChatHandoff = {
+    ...event("retry", second),
+    kind: "session-restoration",
+    status: "completed",
+  };
+  expect(handoffPresentation([failed, restored], [message("retry")])).toEqual([
+    restored,
+  ]);
+});
+
+it.each(["pending", "failed"] as const)(
+  "keeps the warning when a later restoration is %s",
+  (status) => {
+    const failed: ChatHandoff = {
+      ...event("failed", second),
+      kind: "session-restoration",
+      status: "failed",
+    };
+    const retry: ChatHandoff = {
+      ...event("retry", second),
+      kind: "session-restoration",
+      status,
+    };
+    expect(handoffPresentation([failed, retry], [])).toEqual([failed, retry]);
+  },
+);
+
+it("keeps failures for another provider and real provider-switch history", () => {
+  const failed: ChatHandoff = {
+    ...event("failed", first),
+    kind: "session-restoration",
+    status: "failed",
+  };
+  const switched: ChatHandoff = {
+    ...event("switch", second),
+    kind: "provider-switch",
+    status: "failed",
+  };
+  const restored: ChatHandoff = {
+    ...event("retry", second),
+    kind: "session-restoration",
+    status: "completed",
+  };
+  expect(handoffPresentation([failed, switched, restored], [])).toEqual([
+    failed,
+    switched,
+    restored,
+  ]);
+});

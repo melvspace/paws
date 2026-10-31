@@ -169,6 +169,13 @@ export const Conversation = Schema.Struct({
   revision: Schema.Number,
   contextUsage: Schema.optional(ContextUsage),
   activity: Schema.optional(Schema.Literals(["reply", "compact"])),
+  toolActivity: Schema.optional(
+    Schema.Struct({
+      name: Schema.String,
+      status: Schema.Literals(["running", "completed", "failed"]),
+      count: Schema.Number,
+    }),
+  ),
   status: Schema.Literals(["idle", "running", "error"]),
   error: Schema.NullOr(Schema.String),
   selection: Schema.NullOr(ChatSelection),

@@ -862,6 +862,7 @@ export function makeChatService(
             15 * 60_000,
           );
           let silent = false;
+          let toolCount = 0;
           const upsert = (
             nativeId: string,
             body: Pick<
@@ -922,6 +923,22 @@ export function makeChatService(
                     ...state,
                     conversation: { ...state.conversation, contextUsage },
                   })),
+                onTool: (name, status) => {
+                  if (abort.signal.aborted || silent) return;
+
+                  if (status === "running") {
+                    toolCount++;
+                    finishHandoff("completed");
+                  }
+
+                  patch(id, (state) => ({
+                    ...state,
+                    conversation: {
+                      ...state.conversation,
+                      toolActivity: { name, status, count: toolCount },
+                    },
+                  }));
+                },
                 nativeThreadId,
                 ...(handoff ? { handoff } : {}),
                 onSteer: (steer) => {
@@ -1087,6 +1104,7 @@ export function makeChatService(
               activeTurn: undefined,
               conversation: {
                 ...state.conversation,
+                toolActivity: undefined,
                 messages: state.conversation.messages.map((message) =>
                   message.streaming
                     ? { ...message, streaming: false }

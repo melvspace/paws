@@ -9,7 +9,7 @@ export function handoffPresentation(
   let previousHandoff: ChatHandoff | undefined;
   let previousBoundary = 0;
 
-  return handoffs.map((handoff) => {
+  const presented = handoffs.map((handoff) => {
     const boundary = messages.findIndex(
       (message) => message.id === handoff.beforeMessageId,
     );
@@ -41,4 +41,17 @@ export function handoffPresentation(
       kind,
     };
   });
+
+  return presented.filter(
+    (handoff, index) =>
+      handoff.kind !== "session-restoration" ||
+      handoff.status !== "failed" ||
+      !presented
+        .slice(index + 1)
+        .some(
+          (later) =>
+            later.status === "completed" &&
+            later.to.providerId === handoff.to.providerId,
+        ),
+  );
 }

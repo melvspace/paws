@@ -65,7 +65,9 @@ it("hides saved same-provider restoration events but exposes failures", async ()
   expect(document.querySelector(".chat-handoff")).toBeNull();
   await expect
     .element(page.getByRole("alert"))
-    .toHaveTextContent("Could not restore conversation context.");
+    .toHaveTextContent(
+      "Could not restore conversation context. Send a new message to retry.",
+    );
 });
 
 it("distinguishes different provider instances offering the same model", async () => {

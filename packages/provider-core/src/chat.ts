@@ -40,6 +40,12 @@ export interface ChatTurn {
   onSteer?(steer: SteerChat | null): void;
   operation?: "compact";
   onUsage?(usage: ContextUsage): void;
+  // Safe harness metadata only. A checkpoint on "running" denies execution
+  // and is returned to the model; completion checkpoints accompany the result.
+  onTool?(
+    name: string,
+    status: "running" | "completed" | "failed",
+  ): string | void;
   selection: ChatSelection;
   signal: AbortSignal;
   onImage?(id: string, savedPath: string): Promise<void>;
