@@ -3,7 +3,6 @@ import { Button } from "./components/ui/button.tsx";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useState } from "react";
 import {
-  Bot,
   PanelLeft,
   PanelLeftClose,
   SearchIcon,
@@ -11,7 +10,8 @@ import {
   PlusIcon,
   XIcon,
 } from "lucide-react";
-import type { Agent } from "@paws/contracts";
+import { defaultAgentAvatar, type Agent } from "@paws/contracts";
+import { AgentAvatar } from "./AgentAvatar.tsx";
 
 interface AgentSidebarProps {
   agents: readonly Agent[];
@@ -124,7 +124,9 @@ export function AgentSidebar({
                   title={agent.name}
                   aria-current={agent.id === selectedId ? "page" : undefined}
                 >
-                  <Bot size={16} aria-hidden />
+                  <AgentAvatar
+                    avatar={agent.avatar ?? defaultAgentAvatar(agent.id)}
+                  />
                   <span>{agent.name}</span>
                 </a>
                 <Button

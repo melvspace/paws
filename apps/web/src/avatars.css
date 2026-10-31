@@ -1,0 +1,74 @@
+.agent-avatar {
+  display: block;
+  flex-shrink: 0;
+}
+.sidebar-agents .agent-avatar {
+  color: inherit;
+}
+.avatar-picker {
+  padding: 20px 0;
+}
+.avatar-picker-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.avatar-picker h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+.avatar-picker p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.avatar-picker fieldset {
+  min-width: 0;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+}
+.avatar-picker legend {
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.avatar-animal-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.avatar-animal-option.ui-button {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--foreground);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+.avatar-animal-option.ui-button[aria-pressed="true"] {
+  border-color: var(--foreground);
+  background: var(--accent);
+  outline: 1px solid var(--foreground);
+}
+.avatar-color-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 3px;
+}
+.avatar-color-option.ui-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  color: #171717;
+}
+.avatar-color-option[aria-pressed="true"] {
+  outline: 2px solid var(--foreground);
+  outline-offset: 3px;
+}

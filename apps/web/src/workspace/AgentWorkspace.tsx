@@ -1,3 +1,5 @@
+import { AgentAvatar } from "../AgentAvatar.tsx";
+import { defaultAgentAvatar } from "@paws/contracts";
 import { useComposerAttachments } from "./useComposerAttachments.ts";
 import { useAtomValue } from "@effect/atom-react";
 import { providersAtom } from "@paws/client-runtime";
@@ -205,6 +207,9 @@ export function AgentWorkspace({
         <header className="workspace-header">
           {navigation}
           <div className="workspace-title">
+            <AgentAvatar
+              avatar={agent.avatar ?? defaultAgentAvatar(agent.id)}
+            />
             <h1>{agent.name}</h1>
           </div>
           <Button
