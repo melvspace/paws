@@ -5,7 +5,7 @@ import { render } from "../../test/render.tsx";
 import { AppSettingsDialog } from "./AppSettingsDialog.tsx";
 import { AgentDialog } from "../AgentDialog.tsx";
 import { Button } from "../components/ui/button.tsx";
-import type { Agent } from "@paws/contracts";
+import { defaultAgentAvatar, type Agent } from "@paws/contracts";
 import {
   followUpStorageKey,
   messageDisplayStorageKey,
@@ -117,7 +117,10 @@ it("saves on dismissal and keeps failed edits open", async () => {
     "/api/agents/ada",
     expect.objectContaining({
       method: "PATCH",
-      body: JSON.stringify({ name: "Ada Lovelace" }),
+      body: JSON.stringify({
+        name: "Ada Lovelace",
+        avatar: defaultAgentAvatar(agent.id),
+      }),
     }),
   );
 });

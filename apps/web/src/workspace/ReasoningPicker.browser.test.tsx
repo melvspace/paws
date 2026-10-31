@@ -26,7 +26,20 @@ it("selects reasoning with the keyboard and restores focus; Escape preserves the
   await expect
     .element(page.getByRole("menuitemradio", { name: "Medium Default" }))
     .toHaveAttribute("aria-checked", "true");
-  await userEvent.keyboard("{Home}{ArrowDown}{ArrowDown}{Enter}");
+  await expect.element(page.getByRole("menu")).toHaveFocus();
+  await userEvent.keyboard("{Home}");
+  await expect
+    .element(page.getByRole("menuitemradio", { name: "Low", exact: true }))
+    .toHaveFocus();
+  await userEvent.keyboard("{ArrowDown}");
+  await expect
+    .element(page.getByRole("menuitemradio", { name: "Medium Default" }))
+    .toHaveFocus();
+  await userEvent.keyboard("{ArrowDown}");
+  await expect
+    .element(page.getByRole("menuitemradio", { name: "High", exact: true }))
+    .toHaveFocus();
+  await userEvent.keyboard("{Enter}");
   const trigger = page.getByRole("button", { name: "Reasoning: High" });
   await expect.element(trigger).toHaveFocus();
   await expect.element(page.getByRole("menu")).not.toBeInTheDocument();

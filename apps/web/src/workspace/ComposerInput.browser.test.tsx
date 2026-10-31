@@ -71,6 +71,9 @@ it("searches skills, inserts a chip without sending, persists Markdown, supports
     await userEvent.keyboard("{Enter}");
     expect(send).toHaveBeenCalledWith("$no-match", false);
     await input.fill("$");
+    await expect
+      .element(page.getByRole("option", { name: /writer/ }))
+      .toBeVisible();
     await userEvent.keyboard("{ArrowDown}{Tab}");
     expect(input.element().querySelector("[data-skill=writer]")).not.toBeNull();
   } finally {

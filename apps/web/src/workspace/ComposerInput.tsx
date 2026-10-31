@@ -30,6 +30,10 @@ type Trigger = {
   to: number;
 };
 
+function triggerKey(trigger: Trigger) {
+  return `${trigger.kind}:${trigger.from}:${trigger.query}`;
+}
+
 function detectTrigger(editor: Editor): Trigger | null {
   const { selection } = editor.state;
 
@@ -164,7 +168,7 @@ export function ComposerInput({
     onUpdate: ({ editor }) => latest.current.onChange(editor.getMarkdown()),
     onTransaction: ({ editor }) => {
       const next = detectTrigger(editor);
-      const key = next ? `${next.kind}:${next.from}` : null;
+      const key = next ? triggerKey(next) : null;
 
       if (!next) dismissed.current = null;
 
@@ -226,7 +230,7 @@ export function ComposerInput({
 
     if (trigger) {
       if (event.key === "Escape") {
-        dismissed.current = `${trigger.kind}:${trigger.from}`;
+        dismissed.current = triggerKey(trigger);
         setTrigger(null);
 
         return true;

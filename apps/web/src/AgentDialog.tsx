@@ -3,7 +3,12 @@ import { Button } from "./components/ui/button.tsx";
 import { useRef, useState, type FormEvent } from "react";
 import { Trash2Icon, XIcon } from "lucide-react";
 import { createAgent, deleteAgent, updateAgent } from "@paws/client-runtime";
-import type { Agent } from "@paws/contracts";
+import {
+  defaultAgentAvatar,
+  type Agent,
+  type AgentAvatar,
+} from "@paws/contracts";
+import { AvatarPicker } from "./AvatarPicker.tsx";
 import { Form } from "@base-ui/react/form";
 import {
   Dialog,
@@ -31,21 +36,28 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
   const keepAgentRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const saveInFlight = useRef<Promise<boolean> | null>(null);
-  const savedName = useRef(agent?.name ?? "");
+  const [avatar, setAvatar] = useState<AgentAvatar>(
+    () => agent?.avatar ?? defaultAgentAvatar(agent?.id ?? crypto.randomUUID()),
+  );
+  const saved = useRef({ name: agent?.name ?? "", avatar });
   const [name, setName] = useState(agent?.name ?? "");
-  const [saveStatus, setSaveStatus] = useState("");
   const [pending, setPending] = useState<"save" | "delete" | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function saveName(): Promise<boolean> {
+  function saveAgent(nextAvatar = avatar): Promise<boolean> {
     if (saveInFlight.current) {
       return saveInFlight.current;
     }
 
     const nextName = name.trim();
 
-    if (!agent || nextName === savedName.current) {
+    if (
+      !agent ||
+      (nextName === saved.current.name &&
+        nextAvatar.animal === saved.current.avatar.animal &&
+        nextAvatar.color === saved.current.avatar.color)
+    ) {
       return Promise.resolve(true);
     }
 
@@ -63,13 +75,14 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
     }
 
     setPending("save");
-    setSaveStatus("Saving…");
     setError(null);
-    const request = updateAgent(agent.id, { name: nextName })
+    const request = updateAgent(agent.id, {
+      name: nextName,
+      avatar: nextAvatar,
+    })
       .then(() => {
-        savedName.current = nextName;
+        saved.current = { name: nextName, avatar: nextAvatar };
         setName(nextName);
-        setSaveStatus("Saved");
 
         return true;
       })
@@ -77,7 +90,6 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
         setError(
           cause instanceof Error ? cause.message : "Unable to save agent.",
         );
-        setSaveStatus("");
 
         return false;
       })
@@ -95,7 +107,7 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
       return;
     }
 
-    if (!agent || (await saveName())) {
+    if (!agent || (await saveAgent())) {
       onDismiss();
     }
   }
@@ -108,7 +120,7 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
     }
 
     if (agent) {
-      await saveName();
+      await saveAgent();
 
       return;
     }
@@ -123,7 +135,7 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
     setError(null);
 
     try {
-      const created = await createAgent({ name: name.trim() });
+      const created = await createAgent({ name: name.trim(), avatar });
       location.hash = `agent-${created.id}`;
       onDismiss();
     } catch (cause) {
@@ -191,7 +203,9 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
         }}
       >
         <div className="dialog-heading">
-          <DialogTitle>{agent ? "Agent settings" : "New agent"}</DialogTitle>
+          <DialogTitle className={agent ? "sr-only" : undefined}>
+            {agent ? "Agent settings" : "New agent"}
+          </DialogTitle>
           <Button
             type="button"
             className="sidebar-icon-button"
@@ -205,6 +219,18 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
         {error && <p role="alert">{error}</p>}
         {!connected && <p role="status">Reconnecting…</p>}
         <Form onSubmit={(event) => void submit(event)}>
+          <AvatarPicker
+            value={avatar}
+            disabled={pending !== null || confirmingDelete || !connected}
+            onChange={(nextAvatar) => {
+              setAvatar(nextAvatar);
+              setError(null);
+
+              if (agent) {
+                void saveAgent(nextAvatar);
+              }
+            }}
+          />
           <div className={agent ? "settings-group" : undefined}>
             <div className={agent ? "settings-row" : undefined}>
               <div className="settings-copy">
@@ -217,12 +243,18 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
                 value={name}
                 onChange={(event) => {
                   setName(event.target.value);
-                  setSaveStatus("");
                   setError(null);
                 }}
-                onBlur={() => {
+                onBlur={(event) => {
+                  if (
+                    event.relatedTarget instanceof Node &&
+                    event.currentTarget.form?.contains(event.relatedTarget)
+                  ) {
+                    return;
+                  }
+
                   if (agent && !confirmingDelete && pending !== "delete") {
-                    void saveName();
+                    void saveAgent();
                   }
                 }}
                 required
@@ -237,11 +269,8 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
               />
             </div>
           </div>
-          {agent ? (
-            <p className="autosave-status" role="status">
-              {saveStatus}
-            </p>
-          ) : (
+
+          {!agent && (
             <div className="actions">
               <Button
                 type="button"
@@ -274,7 +303,7 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
                   className="danger-button"
                   disabled={pending !== null || !connected}
                   onClick={() => {
-                    void saveName().then((saved) => {
+                    void saveAgent().then((saved) => {
                       if (saved) {
                         setError(null);
                         setConfirmingDelete(true);

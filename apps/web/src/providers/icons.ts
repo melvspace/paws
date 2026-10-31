@@ -1,4 +1,4 @@
-// Provider glyphs from T3 Code (MIT); see LICENSE.t3code.
+// Provider glyphs from T3 Code (MIT); see LICENSE.
 export const providerIcons: Record<
   string,
   { viewBox: string; paths: string[] }

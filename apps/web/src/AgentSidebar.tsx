@@ -2,8 +2,9 @@ import { Input } from "./components/ui/input.tsx";
 import { Button } from "./components/ui/button.tsx";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { conversationsAtom } from "@paws/client-runtime";
 import {
-  Bot,
   PanelLeft,
   PanelLeftClose,
   SearchIcon,
@@ -11,7 +12,8 @@ import {
   PlusIcon,
   XIcon,
 } from "lucide-react";
-import type { Agent } from "@paws/contracts";
+import { defaultAgentAvatar, type Agent } from "@paws/contracts";
+import { AgentAvatar } from "./AgentAvatar.tsx";
 
 interface AgentSidebarProps {
   agents: readonly Agent[];
@@ -34,6 +36,13 @@ export function AgentSidebar({
   onNavigate,
   onClose,
 }: AgentSidebarProps) {
+  const conversations = useAtomValue(conversationsAtom);
+  const activities = new Map(
+    conversations.map(
+      ({ agentId, status }) =>
+        [agentId, status === "running" ? "working" : status] as const,
+    ),
+  );
   const [desktopCollapsed, setCollapsed] = useState(false);
   const collapsed = !onClose && desktopCollapsed;
   const [query, setQuery] = useState("");
@@ -124,7 +133,11 @@ export function AgentSidebar({
                   title={agent.name}
                   aria-current={agent.id === selectedId ? "page" : undefined}
                 >
-                  <Bot size={16} aria-hidden />
+                  <AgentAvatar
+                    avatar={agent.avatar ?? defaultAgentAvatar(agent.id)}
+                    animated={connected && !collapsed}
+                    activity={activities.get(agent.id) ?? "idle"}
+                  />
                   <span>{agent.name}</span>
                 </a>
                 <Button

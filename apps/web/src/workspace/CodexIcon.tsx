@@ -1,4 +1,4 @@
-// OpenAI mark from T3 Code Icons.tsx (MIT); see LICENSE.t3code.
+// OpenAI mark from T3 Code Icons.tsx (MIT); see LICENSE.
 import type { ComponentProps } from "react";
 
 export const CodexIcon = (props: ComponentProps<"svg">) => (

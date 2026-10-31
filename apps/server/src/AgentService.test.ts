@@ -1,7 +1,8 @@
 import * as Fs from "node:fs/promises";
 import * as Path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { CreateAgent, UpdateAgent } from "@paws/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { workspaceLayout } from "@paws/runtime";
 import { makeAgentService } from "./AgentService.ts";
@@ -174,6 +175,90 @@ it("deletes only the selected agent and preserves workspace files after restart"
     expect(
       await Fs.stat(workspaceLayout(root, second.id).workspace),
     ).toBeDefined();
+  } finally {
+    service.close();
+    await Fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+it("persists avatar changes across restarts and preserves them on name-only updates", async () => {
+  const root = await temporaryRoot();
+  let service = makeAgentService(root);
+
+  try {
+    const avatar = { animal: "fox", color: "red" } as const;
+    const agent = await Effect.runPromise(
+      service.create({ name: "Ada", avatar }),
+    );
+    expect(agent.avatar).toEqual(avatar);
+    const nextAvatar = { animal: "rabbit", color: "pink" } as const;
+    const updated = await Effect.runPromise(
+      service.update(agent.id, { name: "Ada", avatar: nextAvatar }),
+    );
+    expect(updated).toEqual({ ...agent, avatar: nextAvatar });
+    service.close();
+    service = makeAgentService(root);
+    expect(await Effect.runPromise(service.list())).toEqual([updated]);
+    const renamed = await Effect.runPromise(
+      service.update(agent.id, { name: "Grace" }),
+    );
+    expect(renamed?.avatar).toEqual(nextAvatar);
+  } finally {
+    service.close();
+    await Fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+it("rejects unknown animals and colors at the wire boundary", () => {
+  for (const schema of [CreateAgent, UpdateAgent]) {
+    for (const avatar of [
+      { animal: "dragon", color: "red" },
+      { animal: "cat", color: "arbitrary-css" },
+      { animal: "cat" },
+    ]) {
+      expect(() =>
+        Schema.decodeUnknownSync(schema)({ name: "Ada", avatar }),
+      ).toThrow();
+    }
+  }
+});
+
+it("replaces saved tiger avatars with mice while preserving color and identity", async () => {
+  const root = await temporaryRoot();
+  const legacy = {
+    id: "legacy-tiger",
+    name: "Ada",
+    avatar: { animal: "tiger", color: "orange" },
+    provider: "codex",
+    status: "configured",
+    createdAt: "2026-11-01T00:00:00.000Z",
+  };
+  const db = new DatabaseSync(Path.join(root, "state.sqlite"));
+  db.exec("CREATE TABLE agents (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  db.prepare("INSERT INTO agents (id, data) VALUES (?, ?)").run(
+    legacy.id,
+    JSON.stringify(legacy),
+  );
+  db.close();
+  let service = makeAgentService(root);
+
+  try {
+    const expected = {
+      ...legacy,
+      avatar: { animal: "mouse", color: "orange" },
+    };
+    expect(await Effect.runPromise(service.list())).toEqual([expected]);
+    service.close();
+    service = makeAgentService(root);
+    expect(await Effect.runPromise(service.list())).toEqual([expected]);
+    const stored = new DatabaseSync(Path.join(root, "state.sqlite"));
+
+    try {
+      const row = stored.prepare("SELECT data FROM agents").get();
+      expect(JSON.parse(String(row?.data))).toEqual(expected);
+    } finally {
+      stored.close();
+    }
   } finally {
     service.close();
     await Fs.rm(root, { recursive: true, force: true });

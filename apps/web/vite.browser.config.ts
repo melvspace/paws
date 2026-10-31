@@ -5,7 +5,14 @@ import { playwright } from "@vitest/browser-playwright";
 
 export default defineConfig({
   plugins: [react(), tailwind()],
-  optimizeDeps: { include: ["@base-ui/react/menu", "@base-ui/react/select"] },
+  optimizeDeps: {
+    include: [
+      "@base-ui/react/collapsible",
+      "@base-ui/react/menu",
+      "@base-ui/react/select",
+      "@tanstack/react-router",
+    ],
+  },
   test: {
     include: ["src/**/*.browser.test.tsx"],
     browser: {

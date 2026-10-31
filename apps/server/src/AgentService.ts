@@ -3,7 +3,13 @@ import * as Fs from "node:fs";
 import * as Path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Schema } from "effect";
-import { Agent, type CreateAgent, type UpdateAgent } from "@paws/contracts";
+import {
+  Agent,
+  AgentAvatar,
+  defaultAgentAvatar,
+  type CreateAgent,
+  type UpdateAgent,
+} from "@paws/contracts";
 import { provisionWorkspace } from "@paws/runtime";
 
 function validateName(value: string) {
@@ -33,6 +39,11 @@ export function makeAgentService(root: string) {
        OR json_type(data, '$.specialization') IS NOT NULL
        OR json_type(data, '$.instructions') IS NOT NULL
   `);
+  db.exec(`
+    UPDATE agents
+    SET data = json_set(data, '$.avatar.animal', 'mouse')
+    WHERE json_extract(data, '$.avatar.animal') = 'tiger'
+  `);
   const decode = Schema.decodeUnknownSync(Agent);
   const list = Effect.fn("AgentService.list")(() =>
     Effect.try(() =>
@@ -45,10 +56,15 @@ export function makeAgentService(root: string) {
   const create = Effect.fn("AgentService.create")((input: CreateAgent) =>
     Effect.tryPromise(async () => {
       const name = validateName(input.name);
+      const id = Crypto.randomUUID();
+      const avatar = Schema.decodeUnknownSync(AgentAvatar)(
+        input.avatar ?? defaultAgentAvatar(id),
+      );
 
       const agent: Agent = {
         name,
-        id: Crypto.randomUUID(),
+        id,
+        avatar,
         provider: "codex",
         status: "configured",
         createdAt: new Date().toISOString(),
@@ -80,7 +96,11 @@ export function makeAgentService(root: string) {
           return null;
         }
 
-        const agent = { ...decode(JSON.parse(String(row.data))), name };
+        const existing = decode(JSON.parse(String(row.data)));
+        const avatar = Schema.decodeUnknownSync(AgentAvatar)(
+          input.avatar ?? existing.avatar ?? defaultAgentAvatar(id),
+        );
+        const agent = { ...existing, name, avatar };
         db.prepare("UPDATE agents SET data = ? WHERE id = ?").run(
           JSON.stringify(agent),
           id,
