@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { DownloadIcon, FileIcon } from "lucide-react";
 import type { ChatAttachment } from "@paws/contracts";
 import { ChatImage } from "./ChatImage.tsx";
@@ -6,11 +6,9 @@ import { ChatImage } from "./ChatImage.tsx";
 export function MessageAttachment({
   attachment,
   agentId,
-  timestamp,
 }: {
   attachment: ChatAttachment;
   agentId: string;
-  timestamp?: ReactNode;
 }) {
   const preview = /^(image|audio|video)\//.test(attachment.mediaType);
   const [failed, setFailed] = useState(false);
@@ -49,22 +47,23 @@ export function MessageAttachment({
           Preview unavailable. Download the file to open it.
         </span>
       )}
-      <div className="chat-attachment-footer">
-        <a
-          className="chat-attachment-download"
-          title={`Download ${attachment.name}`}
-          href={url}
-          download={attachment.name}
-        >
-          {!preview && <FileIcon size={18} aria-hidden />}
-          <span className="chat-attachment-name">
-            <span title={attachment.name}>{attachment.name}</span>
-            {size && <small>{size}</small>}
+      <a
+        className="chat-attachment-download"
+        title={`Download ${attachment.name}`}
+        href={url}
+        download={attachment.name}
+      >
+        {!preview && (
+          <span className="chat-attachment-icon">
+            <FileIcon size={20} aria-hidden />
           </span>
-          <DownloadIcon size={16} aria-hidden />
-        </a>
-        {timestamp}
-      </div>
+        )}
+        <span className="chat-attachment-name">
+          <span title={attachment.name}>{attachment.name}</span>
+          {size && <small>{size}</small>}
+        </span>
+        <DownloadIcon size={16} aria-hidden />
+      </a>
     </div>
   );
 }

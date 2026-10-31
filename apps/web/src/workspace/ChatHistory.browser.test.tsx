@@ -327,6 +327,64 @@ it("keeps short-message timestamps inline without overlapping wrapped text", asy
   }
 });
 
+it.each([280, 520])(
+  "keeps file cards above a single trailing timestamp at %i pixels",
+  async (width) => {
+    await using _screen = await render(
+      <div style={{ width }}>
+        <ChatHistory
+          conversation={{
+            ...initial,
+            messages: [
+              {
+                id: "files",
+                role: "user",
+                text: "what is this? can you unpack it?",
+                createdAt: "2026-01-01T12:09:00Z",
+                attachments: [
+                  {
+                    id: "a".repeat(64),
+                    name: "Профы граф. диз (54).zip",
+                    mediaType: "application/zip",
+                    size: 230400,
+                  },
+                  {
+                    id: "b".repeat(64),
+                    name: "reference-material-with-a-very-long-filename.zip",
+                    mediaType: "application/zip",
+                    size: 1024,
+                  },
+                ],
+              },
+            ],
+          }}
+          busy={false}
+          error={null}
+          onReply={async () => true}
+        />
+      </div>,
+    );
+    const bubble = document.querySelector(".chat-message-bubble")!;
+    const metadata = bubble.querySelector(".chat-message-meta")!;
+    const metadataBounds = metadata.getBoundingClientRect();
+    const cards = bubble.querySelectorAll(".chat-attachment-download");
+    expect(bubble.querySelectorAll("time")).toHaveLength(1);
+
+    for (const card of cards) {
+      const bounds = card.getBoundingClientRect();
+      expect(metadataBounds.top).toBeGreaterThanOrEqual(bounds.bottom + 6);
+      expect(bounds.left).toBeCloseTo(metadataBounds.left, 0);
+      expect(bounds.right).toBeCloseTo(metadataBounds.right, 0);
+      expect(card.scrollWidth).toBeLessThanOrEqual(card.clientWidth);
+    }
+
+    expect(bubble.getBoundingClientRect().right).toBeLessThanOrEqual(width);
+    expect(metadataBounds.bottom).toBeLessThan(
+      bubble.getBoundingClientRect().bottom,
+    );
+  },
+);
+
 it("renders saved handoffs between messages and previews provider changes without creating a bubble", async () => {
   const codex = {
     providerId: "codex",

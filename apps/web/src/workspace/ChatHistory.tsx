@@ -368,12 +368,6 @@ export function ChatHistory({
         {messages.map((message, index) => {
           const time = times[index];
           const startsDay = time && time.day !== times[index - 1]?.day;
-          const attachmentTime =
-            !!message.attachments?.length &&
-            !message.card?.actions.length &&
-            !message.card?.fields.length &&
-            !message.card?.secretRequest &&
-            !message.interaction;
           const sending = outgoing[message.id] === "sending";
           const deliveryLabel = sending
             ? "Sending"
@@ -450,9 +444,9 @@ export function ChatHistory({
                 >
                   {message.role === "assistant" ? (
                     <MessageMarkdown text={message.text} />
-                  ) : (
+                  ) : message.text ? (
                     <p>{message.text}</p>
-                  )}
+                  ) : null}
                   {(message.delivery === "failed" ||
                     message.delivery === "cancelled") && (
                     <span className="chat-message-delivery" role="status">
@@ -485,17 +479,11 @@ export function ChatHistory({
                         Use as draft
                       </Button>
                     )}
-                  {message.attachments?.map((attachment, attachmentIndex) => (
+                  {message.attachments?.map((attachment) => (
                     <MessageAttachment
                       key={attachment.id}
                       attachment={attachment}
                       agentId={conversation!.agentId}
-                      timestamp={
-                        attachmentTime &&
-                        attachmentIndex === message.attachments!.length - 1
-                          ? timestamp
-                          : undefined
-                      }
                     />
                   ))}
                   <MessageControls
@@ -503,7 +491,7 @@ export function ChatHistory({
                     disabled={busy}
                     onReply={onReply}
                   />
-                  {!attachmentTime && timestamp}
+                  {timestamp}
                 </div>
               </article>
             </Fragment>

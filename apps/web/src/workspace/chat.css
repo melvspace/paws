@@ -487,6 +487,11 @@
   --attachment-secondary: var(--muted-foreground);
   --attachment-border: var(--border);
   --attachment-hover: var(--accent);
+  --attachment-background: color-mix(
+    in srgb,
+    var(--foreground) 3%,
+    transparent
+  );
   --attachment-ring: var(--ring);
   max-width: 100%;
   width: 320px;
@@ -501,6 +506,7 @@
   --attachment-secondary: light-dark(#526580, var(--primary-foreground));
   --attachment-border: light-dark(#c4d5f3, #ffffff40);
   --attachment-hover: light-dark(#dfe9fc, #ffffff1a);
+  --attachment-background: light-dark(#ffffff60, #ffffff0a);
   --attachment-ring: light-dark(var(--ring), var(--primary-foreground));
 }
 
@@ -519,17 +525,13 @@
   margin-bottom: 6px;
 }
 
-.chat-attachment-footer {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
+/* Attachment metadata belongs below the card, at the bubble's trailing edge. */
+.chat-message-bubble:has(> .chat-attachment) > .chat-message-meta {
+  margin-top: 6px;
 }
 
-.chat-attachment-footer > .chat-message-time,
-.chat-attachment-footer > .chat-message-meta {
-  flex-shrink: 0;
-  margin: 0;
+.chat-attachment:first-child {
+  margin-top: 0;
 }
 
 .chat-attachment .chat-image-trigger img {
@@ -544,7 +546,8 @@
   min-width: 0;
   padding: 10px 12px;
   border: 1px solid var(--attachment-border);
-  border-radius: 8px;
+  border-radius: 10px;
+  background: var(--attachment-background);
   color: var(--attachment-foreground);
   text-decoration: none;
   font-size: 12px;
@@ -557,6 +560,16 @@
 .chat-attachment-download:focus-visible {
   outline: 2px solid var(--attachment-ring);
   outline-offset: 2px;
+}
+
+.chat-attachment-icon {
+  display: flex;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--attachment-hover);
 }
 
 .chat-attachment-download > svg {
@@ -588,6 +601,7 @@
   padding: 4px 0;
   border: 0;
   border-radius: 4px;
+  background: transparent;
   font-size: 11px;
   color: var(--attachment-secondary);
 }
