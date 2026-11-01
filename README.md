@@ -95,7 +95,7 @@ Deleting an agent removes it and its conversation from Paws, but preserves its
 workspace and home files. Back up your state directory if you want to keep your
 agents and conversations safe.
 
-Team integrations run in a shared Debian environment. Agents can install software
+CLI and local MCP integrations run in a shared Debian environment. Agents can install software
 and system dependencies with the `paws_team_tool` install action, then configure
 CLI or MCP commands to use it. Successful installations survive new sessions and
 are available to every member through team integrations. Ordinary agent shells
@@ -108,6 +108,14 @@ approval. Sessions keep the integration's authentication home, survive chat turn
 and expire after 30 minutes. Cancelling a session, deleting its integration or
 team, or shutting down Paws stops its container. Completed output stays private
 and redacted for later reads.
+
+Remote MCP connections use HTTP directly. For servers supporting OAuth client
+registration, agents provide a browser sign-in link and verify access after your
+approval; Settings → Teams → Integrations also offers **Sign in**. Tokens and
+refresh credentials stay private to the team integration and are reused by its
+agents. Bearer-token authentication is also supported. A service may require an
+approved OAuth client; Paws reports that restriction rather than treating it as
+a container failure.
 
 Team environment image references live in the state directory; their filesystem
 layers live in Docker's image store. Include both when backing up installed team

@@ -11,7 +11,7 @@ import { assertAgentId } from "@paws/shared";
 import { containerArgs, runtimeIdentity } from "@paws/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { remoteTeamMcp } from "./teamMcp.ts";
 import { agentContext } from "./teamContext.ts";
 import {
   installTeamEnvironment,
@@ -241,6 +241,15 @@ export async function teamTool(
     );
   }
 
+  if (integration.kind === "mcp-http") {
+    if (input.action !== "tools" && (input.action !== "call" || !input.tool))
+      throw new ChatToolError(
+        "Use tools or call with a tool name for remote MCP integrations.",
+      );
+
+    return remoteTeamMcp(root, team.id, integration, input, secrets, signal);
+  }
+
   const name = `paws-integration-${randomUUID()}`;
   const image = teamEnvironmentImage(root, team.id);
   const args = containerArgs({
@@ -284,10 +293,7 @@ export async function teamTool(
     });
   }
 
-  const timeout = AbortSignal.any([
-    signal,
-    AbortSignal.timeout(integration.kind === "mcp-http" ? 60000 : 180000),
-  ]);
+  const timeout = AbortSignal.any([signal, AbortSignal.timeout(180000)]);
 
   try {
     if (input.action === "exec") {
@@ -341,22 +347,12 @@ export async function teamTool(
     if (integration.kind === "cli")
       throw new Error("Use exec for CLI integrations.");
 
-    const transport =
-      integration.kind === "mcp-http"
-        ? new StreamableHTTPClientTransport(new URL(integration.url!), {
-            requestInit: {
-              headers: secrets.BEARER_TOKEN
-                ? { Authorization: `Bearer ${secrets.BEARER_TOKEN}` }
-                : {},
-              signal: timeout,
-            },
-          })
-        : new StdioClientTransport({
-            command: "docker",
-            args,
-            env: { PATH: process.env.PATH ?? "", ...secrets },
-            stderr: "ignore",
-          });
+    const transport = new StdioClientTransport({
+      command: "docker",
+      args,
+      env: { PATH: process.env.PATH ?? "", ...secrets },
+      stderr: "ignore",
+    });
     const client = new Client({ name: "paws", version: "0.1.0" });
     const abort = () => {
       void client.close();
@@ -397,10 +393,8 @@ export async function teamTool(
         "Team command could not complete. Check Docker availability; container setup is allowed up to two minutes before the execution deadline.",
     );
   } finally {
-    if (integration.kind !== "mcp-http") {
-      await exec("docker", ["rm", "--force", name], { timeout: 10000 }).catch(
-        () => {},
-      );
-    }
+    await exec("docker", ["rm", "--force", name], { timeout: 10000 }).catch(
+      () => {},
+    );
   }
 }

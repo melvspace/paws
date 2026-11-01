@@ -374,6 +374,27 @@ function IntegrationEditor({
               />
             </div>
           )}
+          {existing && draft.kind === "mcp-http" && (
+            <div className="settings-row">
+              <span>Authentication</span>
+              <Button
+                variant="outline"
+                disabled={pending || disabled}
+                onClick={(event) => {
+                  if (pending || disabled) event.preventDefault();
+                }}
+                render={
+                  <a
+                    href={`/api/teams/${encodeURIComponent(teamId)}/integrations/${encodeURIComponent(initial.id)}/authorize`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  />
+                }
+              >
+                Sign in
+              </Button>
+            </div>
+          )}
           <div className="settings-row">
             <label htmlFor="credential-value">
               {draft.kind === "mcp-http" ? "Bearer token" : "Credential"}

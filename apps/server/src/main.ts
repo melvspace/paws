@@ -1,3 +1,4 @@
+import { teamMcpAuthHttp } from "./teamMcpAuth.ts";
 import { saveIntegrationSecrets } from "./teamIntegrations.ts";
 import { closeTeamCommands } from "./teamCommandSessions.ts";
 import { teamResources } from "./teamResources.ts";
@@ -50,6 +51,25 @@ export function createServer(
     }));
   const server = Http.createServer(async (request, response) => {
     response.setHeader("Content-Type", "application/json");
+
+    if (
+      await teamMcpAuthHttp(
+        request,
+        response,
+        root,
+        async (teamId, integrationId) =>
+          (await Effect.runPromise(agents.listTeams()))
+            .find((team) => team.id === teamId)
+            ?.integrations?.find(
+              (integration) => integration.id === integrationId,
+            ),
+      ).catch(() => {
+        response.writeHead(400).end("MCP sign-in failed. Retry from Paws.");
+
+        return true;
+      })
+    )
+      return;
 
     if (!isAllowedRequestOrigin(request.headers)) {
       response
