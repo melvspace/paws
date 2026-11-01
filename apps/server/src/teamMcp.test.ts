@@ -437,3 +437,80 @@ it("expires OAuth approval and binds credentials to the configured server", asyn
     await Fs.rm(root, { recursive: true, force: true });
   }
 });
+
+it("never forwards a saved bearer token to a replacement MCP endpoint", async () => {
+  const { saveIntegrationSecrets } = await import("./teamIntegrations.ts");
+  const root = await Fs.mkdtemp("/tmp/codex/paws-mcp-token-binding-");
+  const agents = makeAgentService(root);
+  const calls: {
+    url: string | undefined;
+    authorization: string | undefined;
+  }[] = [];
+  const server = createServer((request, response) => {
+    calls.push({
+      url: request.url,
+      authorization: request.headers.authorization,
+    });
+    response.writeHead(401).end();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+
+  if (!address || typeof address === "string") throw new Error("No listener");
+
+  try {
+    const url = `http://127.0.0.1:${address.port}`;
+    const team = await Effect.runPromise(
+      agents.saveTeam({
+        name: "Project",
+        memory: "",
+        integrations: [
+          { id: "remote", kind: "mcp-http", url: `${url}/original` },
+        ],
+      }),
+    );
+    const agent = await Effect.runPromise(
+      agents.create({ name: "Ada", teamIds: [team!.id] }),
+    );
+    saveIntegrationSecrets(root, team!.id, "remote", {
+      BEARER_TOKEN: "private-fixture-token",
+    });
+    await Effect.runPromise(
+      agents.saveTeam(
+        {
+          integrations: [
+            { id: "remote", kind: "mcp-http", url: `${url}/replacement` },
+          ],
+        },
+        team!.id,
+      ),
+    );
+    await teamTool(
+      root,
+      agent.id,
+      { teamId: team!.id, action: "tools", integrationId: "remote" },
+      new AbortController().signal,
+    );
+    expect(calls.some((call) => call.url === "/replacement")).toBe(true);
+    expect(calls.every((call) => !call.authorization)).toBe(true);
+    calls.length = 0;
+    saveIntegrationSecrets(root, team!.id, "remote", {
+      BEARER_TOKEN: "replacement-token",
+    });
+    await teamTool(
+      root,
+      agent.id,
+      { teamId: team!.id, action: "tools", integrationId: "remote" },
+      new AbortController().signal,
+    );
+    expect(
+      calls.some((call) => call.authorization === "Bearer replacement-token"),
+    ).toBe(true);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+    agents.close();
+    await Fs.rm(root, { recursive: true, force: true });
+  }
+});

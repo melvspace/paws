@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as Fs from "node:fs";
 import { join, resolve } from "node:path";
 import { Schema } from "effect";
@@ -22,6 +22,7 @@ const Session = Schema.Struct({
   teamId: Schema.String,
   integrationId: Schema.String,
   args: Schema.Array(Schema.String),
+  configurationFingerprint: Schema.optional(Schema.String),
   createdAt: Schema.String,
   expiresAt: Schema.String,
   redactions: Schema.optional(Schema.Array(Schema.String)),
@@ -339,6 +340,15 @@ export async function startTeamCommand(input: {
   signal: AbortSignal;
   redact: (text: string) => string;
 }) {
+  const imageIndex = input.commandArgs.indexOf(input.image);
+
+  if (imageIndex < 0) throw new Error("Command runtime image is missing.");
+
+  const configurationFingerprint = createHash("sha256")
+    .update(
+      JSON.stringify([input.image, input.commandArgs.slice(imageIndex + 1)]),
+    )
+    .digest("hex");
   const key = JSON.stringify([
     resolve(input.root),
     input.teamId,
@@ -365,7 +375,10 @@ export async function startTeamCommand(input: {
       );
 
       if (result.status === "running" || result.status === "starting") {
-        if (JSON.stringify(session.args) !== JSON.stringify(input.args))
+        if (
+          session.configurationFingerprint !== configurationFingerprint ||
+          JSON.stringify(session.args) !== JSON.stringify(input.args)
+        )
           throw new ChatToolError(
             `Command session ${session.sessionId} is running. Read or cancel it first.`,
           );
@@ -379,13 +392,13 @@ export async function startTeamCommand(input: {
       teamId: input.teamId,
       integrationId: input.integrationId,
       args: input.args,
+      configurationFingerprint,
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       redactions: Object.values(input.secrets).filter(Boolean),
       launching: true,
     };
     save(input.root, session);
-    const imageIndex = input.commandArgs.indexOf(input.image);
     const args = input.commandArgs
       .slice(0, imageIndex)
       .filter((arg) => arg !== "--rm" && arg !== "--interactive")

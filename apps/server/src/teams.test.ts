@@ -249,7 +249,8 @@ it("keeps shared authentication outside snapshots and agent mounts, and reuses i
     const file = join(root, "team-auth", team.id, "pachca", "environment.json");
     expect((await Fs.stat(file)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(await Fs.readFile(file, "utf8"))).toEqual({
-      PACHCA_TOKEN: "test-secret-value",
+      values: { PACHCA_TOKEN: "test-secret-value" },
+      endpoint: null,
     });
     await expect(
       teamTool(

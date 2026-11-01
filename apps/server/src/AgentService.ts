@@ -8,7 +8,7 @@ import {
   AgentAvatar,
   defaultAgentAvatar,
   Team,
-  type SaveTeam,
+  type UpdateTeam,
   type MoveAgentTeam,
   type CreateAgent,
   type UpdateAgent,
@@ -68,30 +68,40 @@ export function makeAgentService(root: string) {
     ),
   );
   const saveTeam = Effect.fn("AgentService.saveTeam")(
-    (input: SaveTeam, id?: string) =>
+    (input: UpdateTeam, id?: string) =>
       Effect.try(() => {
-        const name = validateName(input.name);
-        const memory = validateMemory(input.memory);
         const row = id
           ? db.prepare("SELECT data FROM teams WHERE id = ?").get(id)
           : undefined;
 
         if (id && !row) return null;
 
+        const current = row
+          ? decodeTeam(JSON.parse(String(row.data)))
+          : undefined;
+
+        for (const key of ["name", "memory", "integrations"] as const) {
+          if (
+            input.expected &&
+            key in input.expected &&
+            JSON.stringify(input.expected[key]) !==
+              JSON.stringify(
+                current?.[key] ?? (key === "integrations" ? [] : undefined),
+              )
+          )
+            throw new Error(
+              "Team changed. Reopen it before retrying this edit.",
+            );
+        }
+
         const team: Team = {
           id: id ?? Crypto.randomUUID(),
-          name,
-          memory,
+          name: validateName(input.name ?? current?.name ?? ""),
+          memory: validateMemory(input.memory ?? current?.memory ?? ""),
           integrations: validateIntegrations(
-            input.integrations ??
-              (row
-                ? decodeTeam(JSON.parse(String(row.data))).integrations
-                : undefined) ??
-              [],
+            input.integrations ?? current?.integrations ?? [],
           ),
-          createdAt: row
-            ? decodeTeam(JSON.parse(String(row.data))).createdAt
-            : new Date().toISOString(),
+          createdAt: current?.createdAt ?? new Date().toISOString(),
         };
         const base = Path.join(root, "teams", team.id);
 
@@ -102,10 +112,19 @@ export function makeAgentService(root: string) {
           });
         }
 
-        db.prepare("INSERT OR REPLACE INTO teams (id, data) VALUES (?, ?)").run(
-          team.id,
-          JSON.stringify(team),
-        );
+        if (row) {
+          const result = db
+            .prepare("UPDATE teams SET data = ? WHERE id = ? AND data = ?")
+            .run(JSON.stringify(team), team.id, String(row.data));
+
+          if (!result.changes)
+            throw new Error("Team changed. Retry this edit.");
+        } else {
+          db.prepare("INSERT INTO teams (id, data) VALUES (?, ?)").run(
+            team.id,
+            JSON.stringify(team),
+          );
+        }
 
         return team;
       }),

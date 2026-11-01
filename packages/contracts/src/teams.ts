@@ -42,6 +42,18 @@ export const SaveTeam = Schema.Struct({
 });
 export type SaveTeam = typeof SaveTeam.Type;
 
+export const TeamChanges = Schema.Struct({
+  name: Schema.optional(Schema.String),
+  memory: Schema.optional(Schema.String),
+  integrations: Schema.optional(Schema.Array(TeamIntegration)),
+});
+
+export const UpdateTeam = Schema.Struct({
+  ...TeamChanges.fields,
+  expected: Schema.optional(TeamChanges),
+});
+export type UpdateTeam = typeof UpdateTeam.Type;
+
 export const Team = Schema.Struct({
   id: Schema.String,
   name: Schema.String,

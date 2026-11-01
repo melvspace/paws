@@ -38,7 +38,11 @@ export function TeamIntegrations({
         teamId={teamId}
         disabled={disabled}
         onBack={() => setEditing(null)}
-        onPersist={async (item) => {
+        onPersist={async (item, creating) => {
+          if (creating && value.some((entry) => entry.id === item.id)) {
+            throw new Error("An integration with this name already exists.");
+          }
+
           await onChange([
             ...value.filter((entry) => entry.id !== item.id),
             item,
@@ -114,9 +118,11 @@ function IntegrationEditor({
   disabled: boolean;
   beforeClose?: RefObject<(() => Promise<void>) | null> | undefined;
   onBack(): void;
-  onPersist(item: TeamIntegration): Promise<void>;
+  onPersist(item: TeamIntegration, creating: boolean): Promise<void>;
   onRemove(): Promise<void>;
 }) {
+  const [configured, setConfigured] = useState(existing);
+  const configuredRef = useRef(existing);
   const [draft, setDraft] = useState(initial);
   const draftRef = useRef(initial);
   const [args, setArgs] = useState(initial.args?.join("\n") ?? "");
@@ -144,21 +150,20 @@ function IntegrationEditor({
       setError("");
 
       try {
-        let configured = existing;
-
         while (
-          !configured ||
+          !configuredRef.current ||
           JSON.stringify(saved.current) !== JSON.stringify(draftRef.current) ||
           credentialRef.current
         ) {
           if (
-            !configured ||
+            !configuredRef.current ||
             JSON.stringify(saved.current) !== JSON.stringify(draftRef.current)
           ) {
             const next = draftRef.current;
-            await onPersist(next);
+            await onPersist(next, !configuredRef.current);
             saved.current = next;
-            configured = true;
+            configuredRef.current = true;
+            setConfigured(true);
           }
 
           const secret = credentialRef.current;
@@ -179,12 +184,20 @@ function IntegrationEditor({
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name: key, value: secret }),
+                body: JSON.stringify({
+                  name: key,
+                  value: secret,
+                  expectedIntegration: saved.current,
+                }),
               },
             );
 
             if (!response.ok)
-              throw new Error("Could not save authentication. Try again.");
+              throw new Error(
+                response.status === 409
+                  ? "Integration changed. Return to the team list and reopen it before entering credentials."
+                  : "Could not save authentication. Try again.",
+              );
 
             if (credentialRef.current === secret) {
               credentialRef.current = "";
@@ -216,11 +229,13 @@ function IntegrationEditor({
     flushRef.current = save;
   });
   useEffect(() => {
-    if (!beforeClose || !existing) return;
+    if (!beforeClose) return;
 
     const previous = beforeClose.current;
     const flush = async () => {
-      await flushRef.current();
+      if (flight.current) await flight.current;
+      else if (configuredRef.current) await flushRef.current();
+
       await previous?.();
     };
     beforeClose.current = flush;
@@ -228,10 +243,10 @@ function IntegrationEditor({
     return () => {
       if (beforeClose.current === flush) beforeClose.current = previous;
     };
-  }, [beforeClose, existing]);
+  }, [beforeClose]);
 
   function autosave() {
-    if (existing) void save().catch(() => {});
+    if (configuredRef.current) void save().catch(() => {});
   }
 
   return (
@@ -242,16 +257,14 @@ function IntegrationEditor({
           size="icon"
           aria-label="Back to integrations"
           onClick={() => {
-            if (existing)
-              void save()
-                .then(onBack)
-                .catch(() => {});
+            if (flight.current || configuredRef.current)
+              void (flight.current ?? save()).then(onBack).catch(() => {});
             else onBack();
           }}
         >
           <ArrowLeftIcon size={16} />
         </Button>
-        <span>{existing ? initial.id : "New integration"}</span>
+        <span>{configured ? draft.id : "New integration"}</span>
         {existing && (
           <Button
             className="danger-button"
@@ -283,10 +296,10 @@ function IntegrationEditor({
         }}
       >
         <fieldset
-          disabled={disabled || (!existing && pending)}
+          disabled={disabled || (!configured && pending)}
           className="settings-group team-collection"
         >
-          {!existing && (
+          {!configured && (
             <div className="settings-row">
               <label htmlFor="integration-id">Name</label>
               <Input
@@ -412,8 +425,26 @@ function IntegrationEditor({
             />
           </div>
         </fieldset>
-        {error && <p role="alert">{error}</p>}
-        {!existing && (
+        {error && (
+          <div>
+            <p role="alert">{error}</p>
+            {credential && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending}
+                onClick={() => {
+                  credentialRef.current = "";
+                  setCredential("");
+                  setError("");
+                }}
+              >
+                Discard credential
+              </Button>
+            )}
+          </div>
+        )}
+        {!configured && (
           <div className="actions">
             <Button
               variant="outline"

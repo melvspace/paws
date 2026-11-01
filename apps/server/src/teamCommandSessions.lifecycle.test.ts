@@ -44,7 +44,11 @@ if (args[0] === 'create') {
     { mode: 0o700 },
   );
   process.env.PATH = root;
-  const start = (integrationId = "custom", args: string[] = []) =>
+  const start = (
+    integrationId = "custom",
+    args: string[] = [],
+    configuration = ["custom-cli"],
+  ) =>
     startTeamCommand({
       root,
       teamId,
@@ -59,7 +63,7 @@ if (args[0] === 'create') {
         "--name",
         "placeholder",
         "test-image",
-        "custom-cli",
+        ...configuration,
         ...args,
       ],
       signal: new AbortController().signal,
@@ -231,6 +235,33 @@ it("returns startup progress while Docker is still creating the container", asyn
   } finally {
     await state.flag("release");
     await pending?.catch(() => {});
+    await closeTeamCommands(state.root);
+    await state.dispose();
+  }
+});
+
+it("requires cancellation before reusing a session with a changed executable or configured arguments", async () => {
+  const state = await fixture();
+
+  try {
+    const first = await state.start("custom", ["login"]);
+    await expect(
+      state.start("custom", ["login"], ["replacement-cli"]),
+    ).rejects.toThrow("Read or cancel it first");
+    await expect(
+      state.start("custom", ["login"], ["custom-cli", "--profile", "other"]),
+    ).rejects.toThrow("Read or cancel it first");
+    expect((await state.start("custom", ["login"])).sessionId).toBe(
+      first.sessionId,
+    );
+    await state.read(first.sessionId, true);
+    const replacement = await state.start(
+      "custom",
+      ["login"],
+      ["replacement-cli"],
+    );
+    expect(replacement.sessionId).not.toBe(first.sessionId);
+  } finally {
     await closeTeamCommands(state.root);
     await state.dispose();
   }

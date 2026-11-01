@@ -120,7 +120,10 @@ it("manages team membership and shared memories from the existing Settings dialo
   await expect.poll(() => requests.length).toBe(2);
   expect(requests[1]).toMatchObject({
     url: "/api/teams/project-a",
-    body: { name: "Project A", memory: "Updated project context" },
+    body: {
+      memory: "Updated project context",
+      expected: { memory: "Project conventions" },
+    },
   });
   await expect
     .element(page.getByRole("button", { name: "Save team", exact: true }))
@@ -341,4 +344,308 @@ it("keeps unsaved team memories open on failure and retries when closing Setting
   );
   await page.getByRole("button", { name: "Close settings" }).click();
   await expect.poll(() => dismiss.mock.calls.length).toBe(1);
+});
+
+it("retains failed credentials when switching team tabs or returning to the team list", async () => {
+  appAtomRegistry.set(agentsAtom, {
+    snapshot: {
+      agents,
+      teams: [
+        {
+          ...teams[0]!,
+          integrations: [{ id: "tool", kind: "cli", command: "node" }],
+        },
+      ],
+    },
+    connected: true,
+    error: null,
+  });
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue(new Response(null, { status: 500 }));
+  vi.stubGlobal("fetch", fetchMock);
+  await using _screen = await render(
+    <AppSettingsDialog initialPage="Teams" onDismiss={() => {}} />,
+  );
+  await page.getByRole("button", { name: "Project A", exact: true }).click();
+  await page.getByRole("tab", { name: "Integrations", exact: true }).click();
+  await page.getByRole("button", { name: "tool CLI", exact: true }).click();
+  await page.getByLabelText("Credential variable").fill("TOKEN");
+  await page.getByLabelText("Credential", { exact: true }).fill("keep-secret");
+  await page.getByRole("tab", { name: "General", exact: true }).click();
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("Could not save authentication. Try again.");
+  await expect
+    .element(page.getByLabelText("Credential", { exact: true }))
+    .toHaveValue("keep-secret");
+  await page
+    .getByRole("button", { name: "Back to teams", exact: true })
+    .click();
+  await expect
+    .element(page.getByLabelText("Credential", { exact: true }))
+    .toHaveValue("keep-secret");
+  fetchMock.mockImplementation(async () => new Response(null, { status: 204 }));
+  await page.getByRole("tab", { name: "General", exact: true }).click();
+  await expect
+    .element(page.getByRole("textbox", { name: "Name", exact: true }))
+    .toBeVisible();
+});
+
+it("reloads conflicting team edits so Settings can recover and continue saving", async () => {
+  appAtomRegistry.set(agentsAtom, {
+    snapshot: { agents, teams },
+    connected: true,
+    error: null,
+  });
+  let current = { ...teams[0]!, memory: "Updated by agent" };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      if (!init?.method) return Response.json({ agents, teams: [current] });
+
+      const input = JSON.parse(String(init.body));
+
+      if (input.expected.memory !== current.memory)
+        return new Response(null, { status: 400 });
+
+      current = { ...current, memory: input.memory };
+
+      return Response.json(current);
+    }),
+  );
+  await using _screen = await render(
+    <AppSettingsDialog initialPage="Teams" onDismiss={() => {}} />,
+  );
+  await page.getByRole("button", { name: "Project A", exact: true }).click();
+  await page.getByRole("tab", { name: "Memories", exact: true }).click();
+  await page.getByLabelText("Shared memories").fill("Conflicting edit");
+  await page.getByRole("tab", { name: "General", exact: true }).click();
+  await expect.element(page.getByRole("alert")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Discard team edits", exact: true })
+    .click();
+  await expect
+    .element(page.getByLabelText("Shared memories"))
+    .toHaveValue("Updated by agent");
+  await page.getByLabelText("Shared memories").fill("New edit");
+  await page.getByRole("tab", { name: "General", exact: true }).click();
+  await expect
+    .element(page.getByRole("textbox", { name: "Name", exact: true }))
+    .toBeVisible();
+  expect(current.memory).toBe("New edit");
+});
+
+it("flushes credentials after new integration configuration succeeds but authentication fails", async () => {
+  appAtomRegistry.set(agentsAtom, {
+    snapshot: { agents, teams },
+    connected: true,
+    error: null,
+  });
+  let fail = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/credentials"))
+        return new Response(null, { status: fail ? 500 : 204 });
+
+      return Response.json({ ...teams[0], ...JSON.parse(String(init?.body)) });
+    }),
+  );
+  await using _screen = await render(
+    <AppSettingsDialog initialPage="Teams" onDismiss={() => {}} />,
+  );
+  await page.getByRole("button", { name: "Project A", exact: true }).click();
+  await page.getByRole("tab", { name: "Integrations", exact: true }).click();
+  await page
+    .getByRole("button", { name: "New integration", exact: true })
+    .click();
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("tool");
+  await page.getByLabelText("Command").fill("node");
+  await page.getByLabelText("Credential variable").fill("TOKEN");
+  await page.getByLabelText("Credential", { exact: true }).fill("keep-secret");
+  await page
+    .getByRole("button", { name: "Add integration", exact: true })
+    .click();
+  await expect.element(page.getByRole("alert")).toBeVisible();
+  await page.getByRole("tab", { name: "General", exact: true }).click();
+  await expect
+    .element(page.getByLabelText("Credential", { exact: true }))
+    .toHaveValue("keep-secret");
+  await page
+    .getByRole("button", { name: "Back to teams", exact: true })
+    .click();
+  await expect
+    .element(page.getByLabelText("Credential", { exact: true }))
+    .toHaveValue("keep-secret");
+  fail = false;
+  await page.getByRole("tab", { name: "General", exact: true }).click();
+  await expect
+    .element(page.getByRole("textbox", { name: "Name", exact: true }))
+    .toBeVisible();
+});
+
+it.each(["General", "Back to integrations"])(
+  "waits for initial integration creation before navigating via %s",
+  async (navigation) => {
+    appAtomRegistry.set(agentsAtom, {
+      snapshot: { agents, teams },
+      connected: true,
+      error: null,
+    });
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/credentials"))
+          return new Response(null, { status: 500 });
+
+        await gate;
+
+        return Response.json({
+          ...teams[0],
+          ...JSON.parse(String(init?.body)),
+        });
+      }),
+    );
+    await using _screen = await render(
+      <AppSettingsDialog initialPage="Teams" onDismiss={() => {}} />,
+    );
+    await page.getByRole("button", { name: "Project A", exact: true }).click();
+    await page.getByRole("tab", { name: "Integrations", exact: true }).click();
+    await page
+      .getByRole("button", { name: "New integration", exact: true })
+      .click();
+    await page.getByRole("textbox", { name: "Name", exact: true }).fill("tool");
+    await page.getByLabelText("Command").fill("node");
+    await page.getByLabelText("Credential variable").fill("TOKEN");
+    await page
+      .getByLabelText("Credential", { exact: true })
+      .fill("keep-secret");
+    await page
+      .getByRole("button", { name: "Add integration", exact: true })
+      .click();
+    if (navigation === "General")
+      await page.getByRole("tab", { name: "General", exact: true }).click();
+    else
+      await page
+        .getByRole("button", { name: "Back to integrations", exact: true })
+        .click();
+    release!();
+    await expect.element(page.getByRole("alert")).toBeVisible();
+    await expect
+      .element(page.getByLabelText("Credential", { exact: true }))
+      .toHaveValue("keep-secret");
+    await expect
+      .element(page.getByRole("tab", { name: "Integrations", exact: true }))
+      .toHaveAttribute("aria-selected", "true");
+  },
+);
+
+it("rejects duplicate integration names during creation", async () => {
+  appAtomRegistry.set(agentsAtom, {
+    snapshot: {
+      agents,
+      teams: [
+        {
+          ...teams[0]!,
+          integrations: [{ id: "tool", kind: "cli", command: "node" }],
+        },
+      ],
+    },
+    connected: true,
+    error: null,
+  });
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  await using _screen = await render(
+    <AppSettingsDialog initialPage="Teams" onDismiss={() => {}} />,
+  );
+  await page.getByRole("button", { name: "Project A", exact: true }).click();
+  await page.getByRole("tab", { name: "Integrations", exact: true }).click();
+  await page
+    .getByRole("button", { name: "New integration", exact: true })
+    .click();
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("tool");
+  await page.getByLabelText("Command").fill("replacement");
+  await page
+    .getByRole("button", { name: "Add integration", exact: true })
+    .click();
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("An integration with this name already exists.");
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("allows discarding edits when the team was deleted elsewhere", async () => {
+  appAtomRegistry.set(agentsAtom, {
+    snapshot: { agents, teams },
+    connected: true,
+    error: null,
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) =>
+      init?.method
+        ? new Response(null, { status: 404 })
+        : Response.json({ agents, teams: [] }),
+    ),
+  );
+  await using _screen = await render(
+    <AppSettingsDialog initialPage="Teams" onDismiss={() => {}} />,
+  );
+  await page.getByRole("button", { name: "Project A", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "Name", exact: true })
+    .fill("Deleted team");
+  await page
+    .getByRole("button", { name: "Back to teams", exact: true })
+    .click();
+  await expect.element(page.getByRole("alert")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Discard team edits", exact: true })
+    .click();
+  await expect
+    .element(page.getByRole("button", { name: "New team", exact: true }))
+    .toBeVisible();
+});
+
+it("retries failed integration creation without treating its draft as a duplicate", async () => {
+  appAtomRegistry.set(agentsAtom, {
+    snapshot: { agents, teams },
+    connected: true,
+    error: null,
+  });
+  let fail = true;
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+    fail
+      ? new Response(null, { status: 500 })
+      : Response.json({ ...teams[0], ...JSON.parse(String(init?.body)) }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  await using _screen = await render(
+    <AppSettingsDialog initialPage="Teams" onDismiss={() => {}} />,
+  );
+  await page.getByRole("button", { name: "Project A", exact: true }).click();
+  await page.getByRole("tab", { name: "Integrations", exact: true }).click();
+  await page
+    .getByRole("button", { name: "New integration", exact: true })
+    .click();
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("tool");
+  await page.getByLabelText("Command").fill("node");
+  await page
+    .getByRole("button", { name: "Add integration", exact: true })
+    .click();
+  await expect.element(page.getByRole("alert").last()).toBeVisible();
+  fail = false;
+  await page
+    .getByRole("button", { name: "Add integration", exact: true })
+    .click();
+  await expect
+    .element(page.getByRole("button", { name: "tool CLI", exact: true }))
+    .toBeVisible();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 });

@@ -22,27 +22,55 @@ function resourcePath(
   )
     throw new Error("Invalid resource path.");
 
-  let current = join(root, "teams", teamId, kind);
-  const directories = [current];
+  // Pin each directory before descending. The descriptor paths keep operations
+  // anchored even when an agent renames a directory during an upload.
+  const descriptors: number[] = [];
+  const descriptorRoot =
+    process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";
 
-  for (const part of parts.slice(0, -1)) {
-    current = join(current, part);
-    directories.push(current);
+  try {
+    let directory = root;
+
+    for (const part of ["", "teams", teamId, kind, ...parts.slice(0, -1)]) {
+      if (part) directory = join(directory, part);
+
+      if (create && !Fs.existsSync(directory)) {
+        try {
+          Fs.mkdirSync(directory, { mode: 0o700 });
+        } catch (cause) {
+          if (
+            !(
+              cause instanceof Error &&
+              "code" in cause &&
+              cause.code === "EEXIST"
+            )
+          )
+            throw cause;
+        }
+      }
+
+      const descriptor = Fs.openSync(
+        directory,
+        Fs.constants.O_RDONLY |
+          Fs.constants.O_DIRECTORY |
+          Fs.constants.O_NOFOLLOW,
+      );
+      descriptors.push(descriptor);
+      directory = join(descriptorRoot, String(descriptor));
+    }
+
+    return {
+      path: parts.length ? join(directory, parts.at(-1)!) : directory,
+      close() {
+        for (const descriptor of descriptors.reverse())
+          Fs.closeSync(descriptor);
+      },
+    };
+  } catch (cause) {
+    for (const descriptor of descriptors.reverse()) Fs.closeSync(descriptor);
+
+    throw cause;
   }
-
-  for (const directory of directories) {
-    if (create && !Fs.existsSync(directory))
-      Fs.mkdirSync(directory, { mode: 0o700 });
-    if (!Fs.lstatSync(directory).isDirectory())
-      throw new Error("Invalid directory.");
-  }
-
-  const result = parts.length ? join(current, parts.at(-1)!) : current;
-
-  if (Fs.existsSync(result) && Fs.lstatSync(result).isSymbolicLink())
-    throw new Error("Links cannot be accessed.");
-
-  return result;
 }
 
 export async function teamResources(
@@ -67,7 +95,7 @@ export async function teamResources(
   }
 
   const path = decodeURIComponent(match[3] ?? "");
-  const file = resourcePath(
+  const resource = resourcePath(
     root,
     id,
     match[2]!,
@@ -75,86 +103,95 @@ export async function teamResources(
     request.method === "PUT",
   );
 
-  if (request.method === "GET") {
-    if (Fs.lstatSync(file).isDirectory()) {
-      response.end(
-        JSON.stringify(
-          Fs.readdirSync(file, { withFileTypes: true })
-            .filter((entry) => !entry.isSymbolicLink())
-            .map((entry) => ({
-              name: entry.name,
-              directory: entry.isDirectory(),
-            })),
-        ),
-      );
-    } else {
+  try {
+    const file = resource.path;
+
+    if (request.method === "GET") {
       const descriptor = Fs.openSync(
         file,
         Fs.constants.O_RDONLY |
-          Fs.constants.O_NOFOLLOW |
+          (path ? Fs.constants.O_NOFOLLOW : 0) |
           Fs.constants.O_NONBLOCK,
       );
 
       try {
-        const stat = Fs.fstatSync(descriptor);
+        if (Fs.fstatSync(descriptor).isDirectory()) {
+          response.end(
+            JSON.stringify(
+              Fs.readdirSync(
+                `${process.platform === "linux" ? "/proc/self/fd" : "/dev/fd"}/${descriptor}`,
+                { withFileTypes: true },
+              )
+                .filter((entry) => !entry.isSymbolicLink())
+                .map((entry) => ({
+                  name: entry.name,
+                  directory: entry.isDirectory(),
+                })),
+            ),
+          );
+        } else {
+          const stat = Fs.fstatSync(descriptor);
 
-        if (!stat.isFile() || stat.size > 16 * 1024 * 1024)
-          throw new Error("File too large or not a regular file.");
+          if (!stat.isFile() || stat.size > 16 * 1024 * 1024)
+            throw new Error("File too large or not a regular file.");
 
-        response.setHeader("Content-Type", "application/octet-stream");
-        response.setHeader("Content-Disposition", "attachment");
-        response.setHeader("X-Content-Type-Options", "nosniff");
-        response.end(Fs.readFileSync(descriptor));
+          response.setHeader("Content-Type", "application/octet-stream");
+          response.setHeader("Content-Disposition", "attachment");
+          response.setHeader("X-Content-Type-Options", "nosniff");
+          response.end(Fs.readFileSync(descriptor));
+        }
       } finally {
         Fs.closeSync(descriptor);
       }
-    }
-  } else if (request.method === "PUT" && path) {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    const limit = match[2] === "skills" ? 65536 : 16 * 1024 * 1024;
+    } else if (request.method === "PUT" && path) {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      const limit = match[2] === "skills" ? 65536 : 16 * 1024 * 1024;
 
-    for await (const chunk of request) {
-      const data = Buffer.from(chunk);
-      size += data.length;
+      for await (const chunk of request) {
+        const data = Buffer.from(chunk);
+        size += data.length;
 
-      if (size > limit) {
-        response
-          .writeHead(413)
-          .end(JSON.stringify({ error: "File too large." }));
+        if (size > limit) {
+          response
+            .writeHead(413)
+            .end(JSON.stringify({ error: "File too large." }));
 
-        return true;
+          return true;
+        }
+
+        chunks.push(data);
       }
 
-      chunks.push(data);
+      const descriptor = Fs.openSync(
+        file,
+        Fs.constants.O_WRONLY |
+          Fs.constants.O_CREAT |
+          Fs.constants.O_NOFOLLOW |
+          Fs.constants.O_NONBLOCK,
+        0o600,
+      );
+
+      try {
+        if (!Fs.fstatSync(descriptor).isFile())
+          throw new Error("Not a regular file.");
+
+        Fs.ftruncateSync(descriptor);
+        Fs.writeFileSync(descriptor, Buffer.concat(chunks));
+      } finally {
+        Fs.closeSync(descriptor);
+      }
+
+      response.writeHead(204).end();
+    } else if (request.method === "DELETE" && path) {
+      Fs.unlinkSync(file);
+      response.writeHead(204).end();
+    } else {
+      response.writeHead(405).end();
     }
 
-    const descriptor = Fs.openSync(
-      file,
-      Fs.constants.O_WRONLY |
-        Fs.constants.O_CREAT |
-        Fs.constants.O_NOFOLLOW |
-        Fs.constants.O_NONBLOCK,
-      0o600,
-    );
-
-    try {
-      if (!Fs.fstatSync(descriptor).isFile())
-        throw new Error("Not a regular file.");
-
-      Fs.ftruncateSync(descriptor);
-      Fs.writeFileSync(descriptor, Buffer.concat(chunks));
-    } finally {
-      Fs.closeSync(descriptor);
-    }
-
-    response.writeHead(204).end();
-  } else if (request.method === "DELETE" && path) {
-    Fs.unlinkSync(file);
-    response.writeHead(204).end();
-  } else {
-    response.writeHead(405).end();
+    return true;
+  } finally {
+    resource.close();
   }
-
-  return true;
 }

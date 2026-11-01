@@ -66,11 +66,38 @@ export function validateIntegrations(integrations: readonly TeamIntegration[]) {
   return integrations;
 }
 
+const SecretValues = Schema.Record(Schema.String, Schema.String);
+const StoredSecrets = Schema.Struct({
+  values: SecretValues,
+  endpoint: Schema.NullOr(Schema.String),
+});
+
+function readSecrets(path: string) {
+  if (!Fs.existsSync(path)) return { values: {}, endpoint: null };
+
+  const data: unknown = JSON.parse(Fs.readFileSync(path, "utf8"));
+
+  if (Schema.is(StoredSecrets)(data)) return data;
+
+  // Legacy HTTP credentials have no endpoint binding and require reconfiguration.
+  return {
+    values: Schema.decodeUnknownSync(SecretValues)(data),
+    endpoint: null,
+  };
+}
+
+function secretEndpoint(integration: TeamIntegration | undefined) {
+  return integration?.kind === "mcp-http"
+    ? new URL(integration.url!).href
+    : null;
+}
+
 export function saveIntegrationSecrets(
   root: string,
   teamId: string,
   integrationId: string,
   values: Record<string, string>,
+  configuredIntegration?: TeamIntegration,
 ) {
   assertAgentId(teamId);
 
@@ -85,18 +112,35 @@ export function saveIntegrationSecrets(
   const directory = join(root, "team-auth", teamId, integrationId);
   Fs.mkdirSync(join(directory, "home"), { recursive: true, mode: 0o700 });
   const path = join(directory, "environment.json");
-  const existing = Fs.existsSync(path)
-    ? Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(
-        JSON.parse(Fs.readFileSync(path, "utf8")),
-      )
-    : {};
+  const db = new DatabaseSync(join(root, "state.sqlite"), { readOnly: true });
+  let integration = configuredIntegration;
+
+  try {
+    const row = db.prepare("SELECT data FROM teams WHERE id = ?").get(teamId);
+
+    if (!integration && row) {
+      integration = Schema.decodeUnknownSync(Team)(
+        JSON.parse(String(row.data)),
+      ).integrations?.find((item) => item.id === integrationId);
+    }
+  } finally {
+    db.close();
+  }
+
+  const endpoint = secretEndpoint(integration);
+  const stored = readSecrets(path);
+  const existing = stored.endpoint === endpoint ? stored.values : {};
   const temporary = `${path}.${randomUUID()}.tmp`;
 
   try {
-    Fs.writeFileSync(temporary, JSON.stringify({ ...existing, ...values }), {
-      mode: 0o600,
-      flag: "wx",
-    });
+    Fs.writeFileSync(
+      temporary,
+      JSON.stringify({ values: { ...existing, ...values }, endpoint }),
+      {
+        mode: 0o600,
+        flag: "wx",
+      },
+    );
     Fs.renameSync(temporary, path);
   } finally {
     Fs.rmSync(temporary, { force: true });
@@ -149,7 +193,13 @@ export async function teamTool(
     }
 
     if (Object.keys(secretValues).length) {
-      saveIntegrationSecrets(root, team.id, input.integration.id, secretValues);
+      saveIntegrationSecrets(
+        root,
+        team.id,
+        input.integration.id,
+        secretValues,
+        input.integration,
+      );
     }
 
     const db = new DatabaseSync(join(root, "state.sqlite"));
@@ -212,11 +262,9 @@ export async function teamTool(
   const directory = join(root, "team-auth", team.id, integration.id);
   Fs.mkdirSync(join(directory, "home"), { recursive: true, mode: 0o700 });
   const environmentFile = join(directory, "environment.json");
-  const secrets = Fs.existsSync(environmentFile)
-    ? Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(
-        JSON.parse(Fs.readFileSync(environmentFile, "utf8")),
-      )
-    : {};
+  const stored = readSecrets(environmentFile);
+  const secrets =
+    stored.endpoint === secretEndpoint(integration) ? stored.values : {};
   const redact = (value: unknown) =>
     JSON.parse(
       JSON.stringify(value, (_key, item: unknown) => {

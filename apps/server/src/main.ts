@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import {
   nativeMcpAuthHttp,
   closeNativeMcpLogins,
@@ -18,6 +19,8 @@ import {
   CreateAgent,
   UpdateAgent,
   SaveTeam,
+  TeamIntegration,
+  UpdateTeam,
   MoveAgentTeam,
 } from "@paws/contracts";
 import { makeAgentService } from "./AgentService.ts";
@@ -141,11 +144,39 @@ export function createServer(
         }
 
         const input = Schema.decodeUnknownSync(
-          Schema.Struct({ name: Schema.String, value: Schema.String }),
+          Schema.Struct({
+            name: Schema.String,
+            value: Schema.String,
+            expectedIntegration: TeamIntegration,
+          }),
         )(JSON.parse(body));
-        saveIntegrationSecrets(root, team.id, credentials[2]!, {
-          [input.name]: input.value,
-        });
+        const current = (await Effect.runPromise(agents.listTeams()))
+          .find((item) => item.id === team.id)
+          ?.integrations?.find((item) => item.id === credentials[2]);
+
+        if (
+          !current ||
+          !isDeepStrictEqual(current, input.expectedIntegration)
+        ) {
+          response.writeHead(409).end(
+            JSON.stringify({
+              error:
+                "Integration changed. Reload it before saving credentials.",
+            }),
+          );
+
+          return;
+        }
+
+        saveIntegrationSecrets(
+          root,
+          team.id,
+          credentials[2]!,
+          {
+            [input.name]: input.value,
+          },
+          input.expectedIntegration,
+        );
         response.writeHead(204).end();
 
         return;
@@ -267,7 +298,9 @@ export function createServer(
         }
 
         if (isTeamCreate || isTeamUpdate) {
-          const input = Schema.decodeUnknownSync(SaveTeam)(JSON.parse(body));
+          const input = Schema.decodeUnknownSync(
+            isTeamCreate ? SaveTeam : UpdateTeam,
+          )(JSON.parse(body));
           const team = await Effect.runPromise(agents.saveTeam(input, teamId));
 
           if (team && input.integrations) {

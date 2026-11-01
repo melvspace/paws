@@ -9,10 +9,11 @@ import {
 import {
   agentsAtom,
   saveTeam,
+  getTeam,
   deleteTeam,
   updateAgent,
 } from "@paws/client-runtime";
-import type { Team } from "@paws/contracts";
+import type { Team, UpdateTeam } from "@paws/contracts";
 import { Input } from "./components/ui/input.tsx";
 import { Textarea } from "./components/ui/textarea.tsx";
 import { Button } from "./components/ui/button.tsx";
@@ -169,6 +170,8 @@ function TeamDetails({
   const [draft, setDraft] = useState(team);
   const draftRef = useRef(team);
   const saved = useRef(team);
+  const [editorVersion, setEditorVersion] = useState(0);
+  const childFlush = useRef<(() => Promise<void>) | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -192,12 +195,42 @@ function TeamDetails({
           JSON.stringify(saved.current) !== JSON.stringify(draftRef.current)
         ) {
           const next = draftRef.current;
-          const result = await saveTeam(next, team.id);
+          const patch: {
+            name?: string;
+            memory?: string;
+            integrations?: Team["integrations"];
+          } = {};
+          const expected: UpdateTeam["expected"] = {};
+
+          for (const key of ["name", "memory", "integrations"] as const) {
+            if (
+              JSON.stringify(next[key]) !== JSON.stringify(saved.current[key])
+            ) {
+              Object.assign(patch, { [key]: next[key] });
+              Object.assign(expected, {
+                [key]: saved.current[key] ?? (key === "integrations" ? [] : ""),
+              });
+            }
+          }
+
+          const result = await saveTeam({ ...patch, expected }, team.id);
+          const edits = draftRef.current;
           saved.current = result;
 
           if (draftRef.current === next) {
             draftRef.current = result;
             setDraft(result);
+          } else {
+            const merged = { ...result };
+
+            for (const key of ["name", "memory", "integrations"] as const) {
+              if (JSON.stringify(edits[key]) !== JSON.stringify(next[key])) {
+                Object.assign(merged, { [key]: edits[key] });
+              }
+            }
+
+            draftRef.current = merged;
+            setDraft(merged);
           }
         }
       } catch (cause) {
@@ -224,7 +257,10 @@ function TeamDetails({
   useEffect(() => {
     if (!beforeClose) return;
 
-    const flush = () => flushRef.current();
+    const flush = async () => {
+      await childFlush.current?.();
+      await flushRef.current();
+    };
     beforeClose.current = flush;
 
     return () => {
@@ -236,8 +272,36 @@ function TeamDetails({
     void persist().catch(() => {});
   }
 
+  async function discard() {
+    setPending(true);
+
+    try {
+      await inFlight.current?.catch(() => {});
+      const latest = await getTeam(team.id);
+
+      if (!latest) {
+        onBack();
+
+        return;
+      }
+
+      saved.current = latest;
+      draftRef.current = latest;
+      setDraft(latest);
+      setEditorVersion((value) => value + 1);
+      setError("");
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Could not reload team.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
   async function back() {
     try {
+      await childFlush.current?.();
       await persist();
       onBack();
     } catch {
@@ -268,15 +332,29 @@ function TeamDetails({
             aria-controls="team-panel"
             variant="ghost"
             onClick={() => {
-              autosave();
-              setTab(item);
+              void (async () => {
+                await childFlush.current?.();
+                await persist();
+                setTab(item);
+              })().catch(() => {});
             }}
           >
             {item}
           </Button>
         ))}
       </div>
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <div>
+          <p role="alert">{error}</p>
+          <Button
+            variant="outline"
+            disabled={pending}
+            onClick={() => void discard()}
+          >
+            Discard team edits
+          </Button>
+        </div>
+      )}
       <div id="team-panel" role="tabpanel" aria-labelledby={`team-tab-${tab}`}>
         {tab === "General" && (
           <div className="settings-group team-collection">
@@ -357,11 +435,25 @@ function TeamDetails({
         )}
         {tab === "Integrations" && (
           <TeamIntegrations
-            beforeClose={beforeClose}
+            key={editorVersion}
+            beforeClose={childFlush}
             value={draft.integrations ?? []}
             onChange={async (integrations) => {
               change({ integrations });
-              await persist();
+
+              try {
+                await persist();
+              } catch (cause) {
+                if (draftRef.current.integrations === integrations) {
+                  draftRef.current = {
+                    ...draftRef.current,
+                    integrations: saved.current.integrations,
+                  };
+                  setDraft(draftRef.current);
+                }
+
+                throw cause;
+              }
             }}
             teamId={team.id}
             disabled={!connected}

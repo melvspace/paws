@@ -122,7 +122,9 @@ export * from "./providers.ts";
 export * from "./chat.ts";
 
 export async function saveTeam(
-  input: import("@paws/contracts").SaveTeam,
+  input:
+    | import("@paws/contracts").SaveTeam
+    | import("@paws/contracts").UpdateTeam,
   id?: string,
 ) {
   const response = await fetch(
@@ -135,7 +137,9 @@ export async function saveTeam(
   );
 
   if (!response.ok)
-    throw new Error("Could not save team. Check the name and memory.");
+    throw new Error(
+      "Could not save team. Retry, or discard team edits to reload the latest values.",
+    );
 
   return Schema.decodeUnknownSync(Team)(await response.json());
 }
@@ -166,4 +170,15 @@ export async function moveAgentTeam(
         ? "Only idle agents can move between teams."
         : "Could not move agent. Check your connection and team membership.",
     );
+}
+
+export async function getTeam(id: string) {
+  const response = await fetch("/api/agents");
+
+  if (!response.ok) throw new Error("Could not reload team. Try again.");
+
+  const snapshot = Schema.decodeUnknownSync(Snapshot)(await response.json());
+  const team = snapshot.teams?.find((item) => item.id === id);
+
+  return team ?? null;
 }
