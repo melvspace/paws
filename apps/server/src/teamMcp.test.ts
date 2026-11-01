@@ -314,11 +314,11 @@ it("completes browser OAuth, rejects forged callbacks, and shares refreshed cred
       status: "authentication_required",
       authorizationUrl: path,
     });
-    const blocked = await browserFetch(`${pawsBase}${path}`, {
+    const externalNavigation = await browserFetch(`${pawsBase}${path}`, {
       headers: { ...headers, "Sec-Fetch-Site": "cross-site" },
       redirect: "manual",
     });
-    expect(blocked.status).toBe(403);
+    expect(externalNavigation.status).toBe(302);
     const start = await browserFetch(`${pawsBase}${path}`, {
       headers,
       redirect: "manual",

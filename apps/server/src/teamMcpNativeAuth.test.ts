@@ -133,8 +133,8 @@ it("uses the selected harness, keeps browser approval private, and reuses team a
     const url = `http://127.0.0.1:${address.port}${path}`;
     const navigation = {
       "Sec-Fetch-Site": "cross-site",
-      "Sec-Fetch-Mode": "navigate",
-      "Sec-Fetch-Dest": "document",
+      "Sec-Fetch-Mode": "cors",
+      "Sec-Fetch-Dest": "empty",
     };
     const page = await browser(url, undefined, undefined, navigation);
     expect(page.status).toBe(200);
@@ -160,7 +160,7 @@ it("uses the selected harness, keeps browser approval private, and reuses team a
           "Sec-Fetch-Mode": "cors",
         })
       ).status,
-    ).toBe(403);
+    ).toBe(200);
     expect(
       (
         await browser(url, undefined, undefined, {
