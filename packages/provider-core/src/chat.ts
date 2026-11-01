@@ -68,6 +68,9 @@ export type RunChatTurn = (turn: ChatTurn) => Promise<void>;
 // Adapters may expose only deliberately safe, user-facing execution errors.
 export class ChatExecutionError extends Error {}
 
+// Only explicitly sanitized diagnostics may cross the tool/provider boundary.
+export class ChatToolError extends Error {}
+
 // The adapter refused resume before consuming any new input; a fresh handoff is safe.
 export class ChatSessionUnavailableError extends Error {}
 

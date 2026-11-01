@@ -1,3 +1,4 @@
+import { ChatToolError } from "@paws/provider-core";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -283,12 +284,25 @@ export async function teamTool(
     });
   }
 
-  const timeout = AbortSignal.any([signal, AbortSignal.timeout(60000)]);
+  const timeout = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(integration.kind === "mcp-http" ? 60000 : 180000),
+  ]);
 
   try {
     if (input.action === "exec") {
       try {
-        const result = await exec("docker", [...args, ...(input.args ?? [])], {
+        const commandImageIndex = args.indexOf(image);
+        const commandArgs = [
+          ...args.slice(0, commandImageIndex + 1),
+          "/usr/bin/timeout",
+          "--signal=TERM",
+          "--kill-after=5",
+          "60",
+          ...args.slice(commandImageIndex + 1),
+          ...(input.args ?? []),
+        ];
+        const result = await exec("docker", commandArgs, {
           env: { PATH: process.env.PATH, ...secrets },
           signal: timeout,
           maxBuffer: 256 * 1024,
@@ -369,9 +383,18 @@ export async function teamTool(
       timeout.removeEventListener("abort", abort);
       await client.close();
     }
-  } catch {
-    throw new Error(
-      "Team integration failed. Check its configuration, authentication, and runtime availability.",
+  } catch (error) {
+    const detail =
+      typeof error === "object" &&
+      error !== null &&
+      "stderr" in error &&
+      typeof error.stderr === "string"
+        ? String(redact(error.stderr)).slice(-4000).trim()
+        : "";
+
+    throw new ChatToolError(
+      detail ||
+        "Team command could not complete. Check Docker availability; container setup is allowed up to two minutes before the execution deadline.",
     );
   } finally {
     if (integration.kind !== "mcp-http") {

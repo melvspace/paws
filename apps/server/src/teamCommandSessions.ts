@@ -5,9 +5,11 @@ import * as Fs from "node:fs";
 import { join, resolve } from "node:path";
 import { Schema } from "effect";
 import { assertAgentId } from "@paws/shared";
+import { ChatToolError } from "@paws/provider-core";
 
 const exec = promisify(execFile);
 const starts = new Map<string, Promise<unknown>>();
+const launches = new Map<string, { root: string; ready: Promise<void> }>();
 const Result = Schema.Struct({
   status: Schema.Literals(["running", "completed", "failed", "cancelled"]),
   exitCode: Schema.NullOr(Schema.Number),
@@ -24,6 +26,7 @@ const Session = Schema.Struct({
   expiresAt: Schema.String,
   redactions: Schema.optional(Schema.Array(Schema.String)),
   result: Schema.optional(Result),
+  launching: Schema.optional(Schema.Boolean),
 });
 type Session = typeof Session.Type;
 
@@ -90,20 +93,29 @@ function all(root: string) {
 export function listTeamCommands(root: string, teamId: string) {
   return all(root)
     .filter((session) => session.teamId === teamId)
-    .map(({ sessionId, integrationId, createdAt, expiresAt, result }) => ({
-      sessionId,
-      integrationId,
-      createdAt,
-      expiresAt,
-      status: result?.status ?? "running",
-    }));
+    .map(
+      ({
+        sessionId,
+        integrationId,
+        createdAt,
+        expiresAt,
+        result,
+        launching,
+      }) => ({
+        sessionId,
+        integrationId,
+        createdAt,
+        expiresAt,
+        status: result?.status ?? (launching ? "starting" : "running"),
+      }),
+    );
 }
 
 export function commandIntegration(root: string, teamId: string, id: string) {
   const session = load(root, id);
 
   if (session.teamId !== teamId)
-    throw new Error("Command session belongs to another team.");
+    throw new ChatToolError("Command session belongs to another team.");
 
   return session.integrationId;
 }
@@ -135,7 +147,7 @@ async function logs(id: string) {
   const dropping = { stdout: false, stderr: false };
   await new Promise<void>((resolve, reject) => {
     let failure: Error | undefined;
-    const child = spawn("docker", ["logs", "--tail", "200", container(id)], {
+    const child = spawn("docker", ["logs", container(id)], {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 10000,
     });
@@ -172,7 +184,12 @@ async function logs(id: string) {
     });
     child.on("close", (code) => {
       if (failure) reject(failure);
-      else if (code !== 0) reject(new Error("Cannot read command output."));
+      else if (code !== 0)
+        reject(
+          new ChatToolError(
+            "Cannot read command output. Check Docker availability.",
+          ),
+        );
       else resolve();
     });
   });
@@ -186,9 +203,45 @@ export async function readTeamCommand(
   id: string,
   redact: (text: string) => string,
   cancel = false,
+  waitMs = 10000,
 ) {
   commandIntegration(root, teamId, id);
+  const launch = launches.get(id);
+
+  if (launch) {
+    if (cancel) await launch.ready;
+    else
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, waitMs);
+        launch.ready.then(
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          (error: unknown) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        );
+      });
+  }
+
   const session = load(root, id);
+
+  if (launches.has(id) && !session.result) {
+    return {
+      sessionId: id,
+      integrationId: session.integrationId,
+      expiresAt: session.expiresAt,
+      status: "starting" as const,
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      truncated: false,
+      message:
+        "Docker is preparing the command container. Read this session again for progress; do not start another login.",
+    };
+  }
   const redactOutput = (text: string) =>
     redact(redactSecrets(text, session.redactions ?? []));
   let result = session.result;
@@ -213,7 +266,7 @@ export async function readTeamCommand(
       if (missingContainer(error)) {
         state = { Status: "missing", ExitCode: 127 };
       } else {
-        throw new Error(
+        throw new ChatToolError(
           "Cannot inspect command session. Check Docker availability; the session has not been replaced.",
         );
       }
@@ -311,9 +364,9 @@ export async function startTeamCommand(input: {
         input.redact,
       );
 
-      if (result.status === "running") {
+      if (result.status === "running" || result.status === "starting") {
         if (JSON.stringify(session.args) !== JSON.stringify(input.args))
-          throw new Error(
+          throw new ChatToolError(
             `Command session ${session.sessionId} is running. Read or cancel it first.`,
           );
 
@@ -329,6 +382,7 @@ export async function startTeamCommand(input: {
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       redactions: Object.values(input.secrets).filter(Boolean),
+      launching: true,
     };
     save(input.root, session);
     const imageIndex = input.commandArgs.indexOf(input.image);
@@ -340,7 +394,6 @@ export async function startTeamCommand(input: {
     args.splice(
       1,
       0,
-      "--detach",
       "--log-driver=local",
       "--log-opt=max-size=10m",
       "--log-opt=max-file=2",
@@ -354,36 +407,57 @@ export async function startTeamCommand(input: {
       "1800",
     );
 
-    try {
-      await exec("docker", args, {
-        env: { PATH: process.env.PATH, ...input.secrets },
-        signal: input.signal,
-        timeout: 30000,
-      });
-    } catch (error) {
-      await remove(session.sessionId).catch(() => {});
-      Fs.rmSync(join(directory(input.root), `${session.sessionId}.json`), {
-        force: true,
-      });
+    args[0] = "create";
+    const ready = (async () => {
+      let phase = "Container creation";
 
-      const diagnostic =
-        typeof error === "object" &&
-        error !== null &&
-        "stderr" in error &&
-        typeof error.stderr === "string"
-          ? input.redact(error.stderr.slice(-4000))
-          : input.signal.aborted
-            ? "Start was cancelled."
-            : "Check Docker availability.";
-
-      throw new Error(`Could not start command session. ${diagnostic}`);
-    }
+      try {
+        // Creation is deliberately separate: a timed-out create must never
+        // launch the command later, after its caller has reported failure.
+        await exec("docker", args, {
+          env: { PATH: process.env.PATH, ...input.secrets },
+          timeout: 120000,
+        });
+        phase = "Container startup";
+        await exec("docker", ["start", container(session.sessionId)], {
+          timeout: 60000,
+        });
+        save(input.root, { ...session, launching: false });
+      } catch (error) {
+        const detail =
+          typeof error === "object" &&
+          error !== null &&
+          "stderr" in error &&
+          typeof error.stderr === "string"
+            ? input.redact(error.stderr).slice(-4000).trim()
+            : "";
+        save(input.root, {
+          ...session,
+          launching: false,
+          redactions: [],
+          result: {
+            status: "failed",
+            exitCode: null,
+            stdout: "",
+            truncated: false,
+            stderr: `${phase} failed. ${detail || "Docker did not become ready before the infrastructure deadline. Check Docker availability and load."}`,
+          },
+        });
+        await remove(session.sessionId).catch(() => {});
+      }
+    })();
+    launches.set(session.sessionId, { root: resolve(input.root), ready });
+    void ready
+      .finally(() => launches.delete(session.sessionId))
+      .catch(() => {});
 
     return readTeamCommand(
       input.root,
       input.teamId,
       session.sessionId,
       input.redact,
+      false,
+      500,
     );
   })();
   starts.set(key, operation);
@@ -412,6 +486,11 @@ export async function closeTeamCommands(
         );
       })
       .map(([, operation]) => operation),
+  );
+  await Promise.allSettled(
+    [...launches.values()]
+      .filter((launch) => launch.root === resolve(root))
+      .map((launch) => launch.ready),
   );
   await Promise.all(
     all(root).map(async (session) => {

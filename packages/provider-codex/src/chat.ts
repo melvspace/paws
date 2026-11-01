@@ -1,5 +1,6 @@
 import {
   chatInstructions,
+  ChatToolError,
   teamToolDescription,
   ChatSessionUnavailableError,
 } from "@paws/provider-core";
@@ -670,7 +671,7 @@ export async function runCodexTurn(
             },
           ],
         };
-      } catch {
+      } catch (error) {
         if (call.tool === "paws_memory" || call.tool === "paws_team_tool") {
           turn.onTool?.(call.tool, "failed");
 
@@ -680,9 +681,11 @@ export async function runCodexTurn(
               {
                 type: "inputText",
                 text:
-                  call.tool === "paws_memory"
-                    ? "Memory unavailable. Check team membership and use at most 16000 characters."
-                    : "Team integration failed. Check membership, configuration, authentication, and runtime availability. List integrations before using them.",
+                  error instanceof ChatToolError
+                    ? error.message
+                    : call.tool === "paws_memory"
+                      ? "Memory unavailable. Check team membership and use at most 16000 characters."
+                      : "Team integration failed. Check membership, configuration, authentication, and runtime availability. List integrations before using them.",
               },
             ],
           };

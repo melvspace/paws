@@ -49,7 +49,7 @@ if (args[0] === 'inspect') {
   console.log('Approve at https://example.test/device CODE-1234');
   console.log('private-test-credential');
   process.stdout.write('private-test-cred');
-} else if (args[0] === 'run') {
+} else if (args[0] === 'create') {
   if (args.includes('--detach')) console.log('container-id');
   else console.log(existsSync(${JSON.stringify(join(root, "approved"))}) ? 'signed in' : 'not signed in');
 }
@@ -148,7 +148,7 @@ if (args[0] === 'inspect') {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    const runs = calls.filter((call: string[]) => call[0] === "run");
+    const runs = calls.filter((call: string[]) => call[0] === "create");
     expect(runs).toHaveLength(1);
     expect(runs[0]).not.toContain("--rm");
     expect(runs[0]).toContain(

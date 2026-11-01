@@ -22,8 +22,11 @@ const args = process.argv.slice(2);
 const root = ${JSON.stringify(root)};
 appendFileSync(root+'/calls', JSON.stringify(args)+'\\n');
 const flag = name => existsSync(root+'/'+name);
-if (args[0] === 'run') {
+if (args[0] === 'create') {
   if (flag('launch-failed')) process.exit(1);
+  if (flag('slow-start')) await new Promise(resolve => {
+    const timer = setInterval(() => { if (flag('release')) { clearInterval(timer);resolve(); } }, 20);
+  });
   console.log('container-id');
 } else if (args[0] === 'inspect') {
   if (flag('missing')) {console.error('No such object');process.exit(1);}
@@ -123,10 +126,13 @@ it("cleans up failed launches and cancellation, and scopes administrative cleanu
 
   try {
     await state.flag("launch-failed");
-    await expect(state.start()).rejects.toThrow(
-      "Could not start command session",
+    expect(await state.start()).toMatchObject({
+      status: "failed",
+      isError: true,
+    });
+    expect(listTeamCommands(state.root, state.teamId)[0]?.status).toBe(
+      "failed",
     );
-    expect(listTeamCommands(state.root, state.teamId)).toEqual([]);
     expect((await state.calls()).at(-1)?.[0]).toBe("rm");
     await state.clear("launch-failed");
     const running = await state.start();
@@ -165,7 +171,7 @@ it("preserves sessions during Docker outages, reports lost containers, and preve
     ]);
     expect(first.sessionId).toBe(duplicate.sessionId);
     expect(
-      (await state.calls()).filter((call) => call[0] === "run"),
+      (await state.calls()).filter((call) => call[0] === "create"),
     ).toHaveLength(1);
     await expect(state.start("custom", ["different"])).rejects.toThrow(
       "Read or cancel it first",
@@ -198,6 +204,34 @@ it("preserves sessions during Docker outages, reports lost containers, and preve
       exitCode: 124,
     });
   } finally {
+    await state.dispose();
+  }
+});
+
+it("returns startup progress while Docker is still creating the container", async () => {
+  const state = await fixture();
+  let pending: ReturnType<typeof state.start> | undefined;
+
+  try {
+    await state.flag("slow-start");
+    pending = state.start();
+    const result = await Promise.race([
+      pending,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(
+          () =>
+            reject(new Error("Container creation blocked the tool response")),
+          1200,
+        );
+      }),
+    ]);
+    expect(result.status).toBe("starting");
+    await state.flag("release");
+    expect((await state.read(result.sessionId)).status).toBe("running");
+  } finally {
+    await state.flag("release");
+    await pending?.catch(() => {});
+    await closeTeamCommands(state.root);
     await state.dispose();
   }
 });

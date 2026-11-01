@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Schema } from "effect";
 import { ChatCard, ChatFileInputs, validateChatCard } from "@paws/contracts";
-import { teamToolDescription, type ChatTurn } from "@paws/provider-core";
+import {
+  ChatToolError,
+  teamToolDescription,
+  type ChatTurn,
+} from "@paws/provider-core";
 
 export interface ChatToolRuntime {
   execute(command: string, signal: AbortSignal): Promise<string>;
@@ -67,7 +71,20 @@ export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
       async execute(value: unknown) {
         if (!turn.teamTool) throw new Error("Team tools unavailable.");
 
-        const result = await turn.teamTool(value);
+        let result: unknown;
+
+        try {
+          result = await turn.teamTool(value);
+        } catch (error) {
+          return {
+            ...toolText(
+              error instanceof ChatToolError
+                ? error.message
+                : "Team integration failed. Check configuration and runtime availability.",
+            ),
+            isError: true,
+          };
+        }
         const isError =
           typeof result === "object" &&
           result !== null &&
