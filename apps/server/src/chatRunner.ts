@@ -1,3 +1,4 @@
+import { teamMcpHarness } from "./teamMcpHarness.ts";
 import { memoryTool } from "./teamContext.ts";
 import { teamTool } from "./teamIntegrations.ts";
 import { makeNativeChatRunner } from "./nativeChatRunner.ts";
@@ -61,7 +62,14 @@ export function makeChatRunner(
         ...(turn.consumeSecret ? { consumeSecret } : {}),
         memoryTool: async (input) => memoryTool(root, turn.agentId, input),
         teamTool: (input) =>
-          teamTool(root, turn.agentId, input, turn.signal, consumeSecret),
+          teamTool(
+            root,
+            turn.agentId,
+            input,
+            turn.signal,
+            consumeSecret,
+            teamMcpHarness(root, provider.config),
+          ),
       });
     } finally {
       privateInputs.clear();

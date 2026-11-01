@@ -1,3 +1,4 @@
+import type { TeamMcpHarness } from "./teamMcpHarness.ts";
 import { ChatToolError } from "@paws/provider-core";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -110,6 +111,7 @@ export async function teamTool(
   value: unknown,
   signal: AbortSignal,
   consumeSecret?: (reference: string) => string,
+  harness?: TeamMcpHarness,
 ) {
   const input = Schema.decodeUnknownSync(TeamToolRequest)(value);
   assertAgentId(input.teamId);
@@ -247,7 +249,15 @@ export async function teamTool(
         "Use tools or call with a tool name for remote MCP integrations.",
       );
 
-    return remoteTeamMcp(root, team.id, integration, input, secrets, signal);
+    return remoteTeamMcp(
+      root,
+      team.id,
+      integration,
+      input,
+      secrets,
+      signal,
+      harness,
+    );
   }
 
   const name = `paws-integration-${randomUUID()}`;

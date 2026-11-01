@@ -109,13 +109,17 @@ and expire after 30 minutes. Cancelling a session, deleting its integration or
 team, or shutting down Paws stops its container. Completed output stays private
 and redacted for later reads.
 
-Remote MCP connections use HTTP directly. For servers supporting OAuth client
-registration, agents provide a browser sign-in link and verify access after your
-approval; Settings → Teams → Integrations also offers **Sign in**. Tokens and
-refresh credentials stay private to the team integration and are reused by its
-agents. Bearer-token authentication is also supported. A service may require an
-approved OAuth client; Paws reports that restriction rather than treating it as
-a container failure.
+Remote MCP connections use the active harness when a native adapter is available
+(currently Codex). Paws runs that client in an isolated helper with a private team
+MCP home, without model turns or global provider credentials. Agents provide a
+Paws sign-in link; approve access in the browser, then paste the final callback
+URL into the private form when prompted. This uses Codex's supported no-browser
+login and works when the provider only accepts a loopback callback. Keep callback
+URLs out of chat. Settings → Teams → Integrations also offers **Sign in** after
+the agent selects its harness. Login attempts survive chat turns for up to ten
+minutes; shutdown cancels pending attempts. Saved credentials are reused by team
+members using that harness. Other harnesses retain the generic HTTP OAuth/bearer
+client; a service can still restrict which clients it accepts.
 
 Team environment image references live in the state directory; their filesystem
 layers live in Docker's image store. Include both when backing up installed team

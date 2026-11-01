@@ -1,3 +1,8 @@
+import {
+  nativeMcpAuthHttp,
+  closeNativeMcpLogins,
+} from "./teamMcpNativeAuth.ts";
+import { teamMcpHarness } from "./teamMcpHarness.ts";
 import { teamMcpAuthHttp } from "./teamMcpAuth.ts";
 import { saveIntegrationSecrets } from "./teamIntegrations.ts";
 import { closeTeamCommands } from "./teamCommandSessions.ts";
@@ -52,22 +57,41 @@ export function createServer(
   const server = Http.createServer(async (request, response) => {
     response.setHeader("Content-Type", "application/json");
 
+    const findIntegration = async (teamId: string, integrationId: string) =>
+      (await Effect.runPromise(agents.listTeams()))
+        .find((team) => team.id === teamId)
+        ?.integrations?.find((integration) => integration.id === integrationId);
+    const findHarness = (providerId: string) => {
+      const provider = providers
+        .list()
+        .find((item) => item.config.id === providerId && item.config.enabled);
+
+      return provider ? teamMcpHarness(root, provider.config) : undefined;
+    };
+
     if (
-      await teamMcpAuthHttp(
+      await nativeMcpAuthHttp(
         request,
         response,
         root,
-        async (teamId, integrationId) =>
-          (await Effect.runPromise(agents.listTeams()))
-            .find((team) => team.id === teamId)
-            ?.integrations?.find(
-              (integration) => integration.id === integrationId,
-            ),
+        findIntegration,
+        findHarness,
       ).catch(() => {
-        response.writeHead(400).end("MCP sign-in failed. Retry from Paws.");
+        response.writeHead(400).end("Harness sign-in failed. Retry from Paws.");
 
         return true;
       })
+    )
+      return;
+
+    if (
+      await teamMcpAuthHttp(request, response, root, findIntegration).catch(
+        () => {
+          response.writeHead(400).end("MCP sign-in failed. Retry from Paws.");
+
+          return true;
+        },
+      )
     )
       return;
 
@@ -151,6 +175,7 @@ export function createServer(
           if (agent.teamIds?.includes(teamId)) await chat.stop(agent.id);
         }
 
+        await closeNativeMcpLogins(root, teamId);
         await closeTeamCommands(root, teamId);
         const removed = await Effect.runPromise(agents.removeTeam(teamId));
         await broadcast();
@@ -245,12 +270,18 @@ export function createServer(
           const input = Schema.decodeUnknownSync(SaveTeam)(JSON.parse(body));
           const team = await Effect.runPromise(agents.saveTeam(input, teamId));
 
-          if (team && input.integrations)
+          if (team && input.integrations) {
+            await closeNativeMcpLogins(
+              root,
+              team.id,
+              input.integrations.map((item) => item.id),
+            );
             await closeTeamCommands(
               root,
               team.id,
               input.integrations.map((item) => item.id),
             );
+          }
 
           await broadcast();
           response
@@ -333,6 +364,7 @@ export function createServer(
       sockets.close();
       server.close();
       await chat.close();
+      await closeNativeMcpLogins(root);
       await closeTeamCommands(root);
       await providers.close();
       agents.close();

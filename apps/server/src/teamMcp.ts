@@ -1,3 +1,4 @@
+import { rememberMcpHarness, type TeamMcpHarness } from "./teamMcpHarness.ts";
 import { OAuthError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { join } from "node:path";
 import type { TeamToolRequest, TeamIntegration } from "@paws/contracts";
@@ -23,10 +24,39 @@ export async function remoteTeamMcp(
   input: TeamToolRequest,
   secrets: Record<string, string>,
   signal: AbortSignal,
+  harness?: TeamMcpHarness,
 ) {
   const directory = join(root, "team-auth", teamId, integration.id);
 
   return withMcpLock(directory, async () => {
+    if (harness) {
+      await rememberMcpHarness(root, teamId, integration, harness);
+      const result = await harness.client(teamId, integration, secrets).request(
+        {
+          action: input.action === "tools" ? "tools" : "call",
+          tool: input.tool,
+          arguments: input.arguments,
+        },
+        AbortSignal.any([signal, AbortSignal.timeout(180_000)]),
+      );
+
+      if (
+        result &&
+        typeof result === "object" &&
+        "status" in result &&
+        result.status === "authentication_required"
+      ) {
+        return {
+          status: "authentication_required",
+          authorizationUrl: authorizationPath(teamId, integration.id),
+          message:
+            "Open this Paws link to sign in through your active harness. Complete the browser approval and private callback form, then return here to verify access.",
+        };
+      }
+
+      return result;
+    }
+
     const provider = new TeamMcpAuth(directory, integration.url!);
     const timeout = AbortSignal.any([signal, AbortSignal.timeout(60_000)]);
     const transport = new StreamableHTTPClientTransport(
