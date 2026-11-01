@@ -87,13 +87,43 @@ node node_modules/.pnpm/electron@44.10.0/node_modules/electron/install.js
 
 ## Your data and agent access
 
-Paws stores its application state in `.paws/` by default. Set `PAWS_HOME` before
+Paws stores its application state in `$HOME/.paws/` by default. Set `PAWS_HOME` before
 starting the app to use another location. Each agent's working folder is at
-`.paws/agents/<uuid>/workspace`.
+`$HOME/.paws/agents/<uuid>/workspace`.
 
 Deleting an agent removes it and its conversation from Paws, but preserves its
 workspace and home files. Back up your state directory if you want to keep your
 agents and conversations safe.
+
+CLI and local MCP integrations run in a shared Debian environment. Agents can install software
+and system dependencies with the `paws_team_tool` install action, then configure
+CLI or MCP commands to use it. Successful installations survive new sessions and
+are available to every member through team integrations. Ordinary agent shells
+remain separate. Failed installations keep the previous OS image. Shared files
+are read-only during installation; integration authentication is excluded.
+
+CLI commands that wait for browser approval can run in command sessions. Agents
+start the command, read its sign-in link, and resume the same session after your
+approval. Sessions keep the integration's authentication home, survive chat turns,
+and expire after 30 minutes. Cancelling a session, deleting its integration or
+team, or shutting down Paws stops its container. Completed output stays private
+and redacted for later reads.
+
+Remote MCP connections use the active harness when a native adapter is available
+(currently Codex). Paws runs that client in an isolated helper with a private team
+MCP home, without model turns or global provider credentials. Agents provide a
+Paws sign-in link; approve access in the browser, then paste the final callback
+URL into the private form when prompted. This uses Codex's supported no-browser
+login and works when the provider only accepts a loopback callback. Keep callback
+URLs out of chat. Settings → Teams → Integrations also offers **Sign in** after
+the agent selects its harness. Login attempts survive chat turns for up to ten
+minutes; shutdown cancels pending attempts. Saved credentials are reused by team
+members using that harness. Other harnesses retain the generic HTTP OAuth/bearer
+client; a service can still restrict which clients it accepts.
+
+Team environment image references live in the state directory; their filesystem
+layers live in Docker's image store. Include both when backing up installed team
+software. Rebuild the base images with `pnpm runtime:build` after runtime updates.
 
 Agents can run commands and edit files in their containers without approval
 prompts. Containers have outbound network access. Provider credentials remain

@@ -27,3 +27,4 @@ export { discoverCodex } from "./discovery.ts";
 export { signInCodex } from "./auth.ts";
 export { runCodexTurn, type ChatCredentials } from "./chat.ts";
 export { recoverCodexHistory } from "./recoverHistory.ts";
+export { callCodexMcp, authenticateCodexMcp } from "./mcp.ts";

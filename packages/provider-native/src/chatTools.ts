@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Schema } from "effect";
 import { ChatCard, ChatFileInputs, validateChatCard } from "@paws/contracts";
-import type { ChatTurn } from "@paws/provider-core";
+import {
+  ChatToolError,
+  teamToolDescription,
+  type ChatTurn,
+} from "@paws/provider-core";
 
 export interface ChatToolRuntime {
   execute(command: string, signal: AbortSignal): Promise<string>;
@@ -16,6 +20,80 @@ export const toolText = (text: string) => ({
 
 export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
   const entries = [
+    {
+      name: "paws_memory",
+      description:
+        "Read or update persistent memories. Omit teamId for your own private memories; provide a teamId to share with that team's members. Omit memory to read. To update, first read and then provide the complete replacement memory, preserving useful existing facts. Never store credentials.",
+      schema: z.object({
+        teamId: z.string().optional(),
+        memory: z.string().max(16000).optional(),
+      }),
+      async execute(value: unknown) {
+        if (!turn.memoryTool) throw new Error("Memories unavailable.");
+
+        return toolText(JSON.stringify(await turn.memoryTool(value)));
+      },
+    },
+    {
+      name: "paws_team_tool",
+      description: teamToolDescription,
+      schema: z.object({
+        teamId: z.string(),
+        action: z.enum([
+          "list",
+          "install",
+          "configure",
+          "tools",
+          "call",
+          "exec",
+          "start",
+          "read",
+          "cancel",
+          "sessions",
+        ]),
+        sessionId: z.string().optional(),
+        script: z.string().optional(),
+        integrationId: z.string().optional(),
+        integration: z
+          .object({
+            id: z.string(),
+            kind: z.enum(["cli", "mcp-stdio", "mcp-http"]),
+            command: z.string().optional(),
+            args: z.array(z.string()).optional(),
+            url: z.string().optional(),
+          })
+          .optional(),
+        tool: z.string().optional(),
+        arguments: z.record(z.string(), z.unknown()).optional(),
+        args: z.array(z.string()).optional(),
+        secrets: z.record(z.string(), z.string()).optional(),
+      }),
+      async execute(value: unknown) {
+        if (!turn.teamTool) throw new Error("Team tools unavailable.");
+
+        let result: unknown;
+
+        try {
+          result = await turn.teamTool(value);
+        } catch (error) {
+          return {
+            ...toolText(
+              error instanceof ChatToolError
+                ? error.message
+                : "Team integration failed. Check configuration and runtime availability.",
+            ),
+            isError: true,
+          };
+        }
+        const isError =
+          typeof result === "object" &&
+          result !== null &&
+          "isError" in result &&
+          result.isError === true;
+
+        return { ...toolText(JSON.stringify(result)), isError };
+      },
+    },
     {
       name: "paws_finish_turn",
       description:

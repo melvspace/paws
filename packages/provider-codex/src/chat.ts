@@ -1,5 +1,7 @@
 import {
   chatInstructions,
+  ChatToolError,
+  teamToolDescription,
   ChatSessionUnavailableError,
 } from "@paws/provider-core";
 // Thread lifecycle and dynamic tool translation follow T3 Code's Codex adapter (MIT).
@@ -123,6 +125,69 @@ const finishTurnTool = {
     required: ["silent"],
   },
 };
+const memoryTool = {
+  type: "function",
+  name: "paws_memory",
+  description:
+    "Read or update persistent memories. Omit teamId for private personal memories; provide teamId for shared team memories. Omit memory to read. Read before updating and provide the full replacement memory, preserving useful existing facts. Never store credentials.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      teamId: { type: "string" },
+      memory: { type: "string", maxLength: 16000 },
+    },
+    additionalProperties: false,
+  },
+};
+
+const teamTool = {
+  type: "function",
+  name: "paws_team_tool",
+  description: teamToolDescription,
+  inputSchema: {
+    type: "object",
+    properties: {
+      teamId: { type: "string" },
+      action: {
+        type: "string",
+        enum: [
+          "list",
+          "install",
+          "configure",
+          "tools",
+          "call",
+          "exec",
+          "start",
+          "read",
+          "cancel",
+          "sessions",
+        ],
+      },
+      sessionId: { type: "string" },
+      script: { type: "string" },
+      integrationId: { type: "string" },
+      integration: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          kind: { type: "string", enum: ["cli", "mcp-stdio", "mcp-http"] },
+          command: { type: "string" },
+          args: { type: "array", items: { type: "string" } },
+          url: { type: "string" },
+        },
+        required: ["id", "kind"],
+        additionalProperties: false,
+      },
+      tool: { type: "string" },
+      arguments: { type: "object", additionalProperties: true },
+      args: { type: "array", items: { type: "string" } },
+      secrets: { type: "object", additionalProperties: { type: "string" } },
+    },
+    required: ["teamId", "action"],
+    additionalProperties: false,
+  },
+};
+
 const readAttachmentTool = {
   type: "function",
   name: "paws_read_attachment",
@@ -229,6 +294,8 @@ export async function runCodexTurn(
                     messageTool,
                     secretTool,
                     readAttachmentTool,
+                    teamTool,
+                    memoryTool,
                     finishTurnTool,
                   ],
                 }),
@@ -474,12 +541,49 @@ export async function runCodexTurn(
           "paws_send_message",
           "request_secret",
           "paws_read_attachment",
+          "paws_team_tool",
+          "paws_memory",
           "paws_finish_turn",
         ].includes(call.tool)
       )
         throw new Error("Unknown tool.");
 
       try {
+        if (call.tool === "paws_memory" || call.tool === "paws_team_tool") {
+          turn.signal.throwIfAborted();
+          const blocked = turn.onTool?.(call.tool, "running");
+
+          if (blocked)
+            return {
+              success: false,
+              contentItems: [{ type: "inputText", text: blocked }],
+            };
+
+          const execute =
+            call.tool === "paws_memory" ? turn.memoryTool : turn.teamTool;
+
+          if (!execute) throw new Error("Team resource unavailable.");
+
+          const result = await execute(call.arguments);
+          const failed =
+            typeof result === "object" &&
+            result !== null &&
+            "isError" in result &&
+            result.isError === true;
+          const checkpoint = turn.onTool?.(
+            call.tool,
+            failed ? "failed" : "completed",
+          );
+
+          return {
+            success: !failed,
+            contentItems: [
+              { type: "inputText", text: JSON.stringify(result) },
+              ...(checkpoint ? [{ type: "inputText", text: checkpoint }] : []),
+            ],
+          };
+        }
+
         if (call.tool === "paws_finish_turn") {
           const options = Schema.decodeUnknownSync(
             Schema.Struct({ silent: Schema.Literal(true) }),
@@ -567,7 +671,26 @@ export async function runCodexTurn(
             },
           ],
         };
-      } catch {
+      } catch (error) {
+        if (call.tool === "paws_memory" || call.tool === "paws_team_tool") {
+          turn.onTool?.(call.tool, "failed");
+
+          return {
+            success: false,
+            contentItems: [
+              {
+                type: "inputText",
+                text:
+                  error instanceof ChatToolError
+                    ? error.message
+                    : call.tool === "paws_memory"
+                      ? "Memory unavailable. Check team membership and use at most 16000 characters."
+                      : "Team integration failed. Check membership, configuration, authentication, and runtime availability. List integrations before using them.",
+              },
+            ],
+          };
+        }
+
         return {
           success: false,
           contentItems: [

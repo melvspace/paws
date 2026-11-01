@@ -333,9 +333,6 @@ select {
 .dialog-heading h2 {
   margin: 0;
 }
-.agent-settings-dialog .dialog-heading {
-  justify-content: flex-end;
-}
 .agent-dialog form {
   margin: 0;
   padding: 0;
@@ -505,4 +502,114 @@ select {
 }
 .workspace-welcome-content h1 {
   font-size: 18px;
+}
+
+.team-list {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.team-membership {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  font-weight: 400;
+}
+
+.team-membership input[type="checkbox"] {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+}
+
+.team-membership span {
+  min-width: 0;
+  overflow-wrap: normal;
+}
+
+.sidebar-team-heading {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.75rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-team-heading span {
+  opacity: 0.6;
+}
+
+.agent-settings-dialog .dialog-heading {
+  justify-content: flex-end;
+}
+
+.agent-settings-fields > .settings-row + .settings-row {
+  border-top: 1px solid var(--border);
+}
+
+.agent-teams-row {
+  align-items: flex-start;
+}
+
+.agent-teams-row > span,
+.agent-memory-row > label {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.agent-team-options {
+  display: flex;
+  flex: 0 0 42%;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.agent-memory-row {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-memory-row textarea {
+  min-height: 120px;
+}
+
+.sidebar-team[data-drop-target="true"] {
+  border-radius: 8px;
+  outline: 2px solid var(--ring);
+  background: var(--accent);
+}
+
+.sidebar-agent-row[draggable="true"] {
+  cursor: grab;
+}
+
+.sidebar-agent-row[data-dragging="true"] {
+  opacity: 0.5;
+}
+
+@media (max-width: 600px) {
+  .agent-team-options {
+    flex-basis: auto;
+    width: 100%;
+  }
 }

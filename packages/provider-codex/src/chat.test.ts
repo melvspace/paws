@@ -336,3 +336,72 @@ for await (const line of createInterface({input:process.stdin})) {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it("preserves explicitly safe tool diagnostics and hides unexpected errors", async () => {
+  const { ChatToolError } = await import("@paws/provider-core");
+  await mkdir("/tmp/codex", { recursive: true });
+  const root = await mkdtemp("/tmp/codex/paws-tool-diagnostics-");
+  const script = `${root}/provider.mjs`;
+  await writeFile(
+    script,
+    `
+import {createInterface} from 'node:readline';
+import {writeFileSync} from 'node:fs';
+const send=x=>process.stdout.write(JSON.stringify(x)+'\\n');
+for await (const line of createInterface({input:process.stdin})) {
+ const m=JSON.parse(line);
+ if(m.id==='tool') {
+  writeFileSync(${JSON.stringify(`${root}/result`)},JSON.stringify(m.result));
+  send({method:'turn/completed',params:{threadId:'thread',turn:{status:'completed'}}});
+ } else if(m.method==='initialized') continue;
+ else if(m.method==='turn/start') {
+  send({id:m.id,result:{turn:{id:'turn'}}});
+  send({id:'tool',method:'item/tool/call',params:{threadId:'thread',turnId:'turn',callId:'call',tool:'paws_team_tool',arguments:{action:'start'}}});
+ } else if(m.id) send({id:m.id,result:m.method?.startsWith('thread/')?{thread:{id:'thread'}}:{}});
+}
+`,
+  );
+
+  try {
+    for (const error of [
+      new ChatToolError("Container creation timed out; Docker is busy."),
+      new Error("private-unexpected-value"),
+    ]) {
+      await runCodexTurn(
+        {
+          command: process.execPath,
+          args: [script],
+          cwd: root,
+          signal: AbortSignal.timeout(3000),
+        },
+        {
+          agentId: "agent",
+          agentName: "Assistant",
+          nativeThreadId: null,
+          text: "Start login",
+          selection: { providerId: "codex", modelId: "model", options: {} },
+          signal: AbortSignal.timeout(3000),
+          onThread() {},
+          onText() {},
+          onMessage() {},
+          teamTool: async () => {
+            throw error;
+          },
+        },
+        async () => ({
+          accessToken: "test",
+          chatgptAccountId: "test",
+          chatgptPlanType: null,
+        }),
+      );
+      const result = JSON.parse(await readFile(`${root}/result`, "utf8"));
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result)).not.toContain("private-unexpected-value");
+
+      if (error instanceof ChatToolError)
+        expect(JSON.stringify(result)).toContain(error.message);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
