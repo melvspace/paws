@@ -42,7 +42,12 @@ export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
           "tools",
           "call",
           "exec",
+          "start",
+          "read",
+          "cancel",
+          "sessions",
         ]),
+        sessionId: z.string().optional(),
         script: z.string().optional(),
         integrationId: z.string().optional(),
         integration: z

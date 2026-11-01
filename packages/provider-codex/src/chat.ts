@@ -149,8 +149,20 @@ const teamTool = {
       teamId: { type: "string" },
       action: {
         type: "string",
-        enum: ["list", "install", "configure", "tools", "call", "exec"],
+        enum: [
+          "list",
+          "install",
+          "configure",
+          "tools",
+          "call",
+          "exec",
+          "start",
+          "read",
+          "cancel",
+          "sessions",
+        ],
       },
+      sessionId: { type: "string" },
       script: { type: "string" },
       integrationId: { type: "string" },
       integration: {

@@ -102,6 +102,13 @@ are available to every member through team integrations. Ordinary agent shells
 remain separate. Failed installations keep the previous OS image. Shared files
 are read-only during installation; integration authentication is excluded.
 
+CLI commands that wait for browser approval can run in command sessions. Agents
+start the command, read its sign-in link, and resume the same session after your
+approval. Sessions keep the integration's authentication home, survive chat turns,
+and expire after 30 minutes. Cancelling a session, deleting its integration or
+team, or shutting down Paws stops its container. Completed output stays private
+and redacted for later reads.
+
 Team environment image references live in the state directory; their filesystem
 layers live in Docker's image store. Include both when backing up installed team
 software. Rebuild the base images with `pnpm runtime:build` after runtime updates.

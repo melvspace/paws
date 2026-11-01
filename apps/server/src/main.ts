@@ -1,4 +1,5 @@
 import { saveIntegrationSecrets } from "./teamIntegrations.ts";
+import { closeTeamCommands } from "./teamCommandSessions.ts";
 import { teamResources } from "./teamResources.ts";
 import { isAllowedRequestOrigin } from "./requestOrigin.ts";
 import * as Http from "node:http";
@@ -130,6 +131,7 @@ export function createServer(
           if (agent.teamIds?.includes(teamId)) await chat.stop(agent.id);
         }
 
+        await closeTeamCommands(root, teamId);
         const removed = await Effect.runPromise(agents.removeTeam(teamId));
         await broadcast();
         response.writeHead(removed ? 204 : 404).end();
@@ -222,6 +224,14 @@ export function createServer(
         if (isTeamCreate || isTeamUpdate) {
           const input = Schema.decodeUnknownSync(SaveTeam)(JSON.parse(body));
           const team = await Effect.runPromise(agents.saveTeam(input, teamId));
+
+          if (team && input.integrations)
+            await closeTeamCommands(
+              root,
+              team.id,
+              input.integrations.map((item) => item.id),
+            );
+
           await broadcast();
           response
             .writeHead(team ? (isTeamCreate ? 201 : 200) : 404)
@@ -303,6 +313,7 @@ export function createServer(
       sockets.close();
       server.close();
       await chat.close();
+      await closeTeamCommands(root);
       await providers.close();
       agents.close();
     },

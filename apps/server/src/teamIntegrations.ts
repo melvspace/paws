@@ -16,6 +16,12 @@ import {
   installTeamEnvironment,
   teamEnvironmentImage,
 } from "./teamEnvironment.ts";
+import {
+  commandIntegration,
+  listTeamCommands,
+  readTeamCommand,
+  startTeamCommand,
+} from "./teamCommandSessions.ts";
 
 const exec = promisify(execFile);
 const integrationIdPattern = /^[a-z][a-z0-9-]{0,63}$/;
@@ -112,6 +118,7 @@ export async function teamTool(
 
   if (!team) throw new Error("Join this team before using its integrations.");
   if (input.action === "list") return team.integrations ?? [];
+  if (input.action === "sessions") return listTeamCommands(root, team.id);
 
   if (input.action === "install") {
     if (!input.script) throw new Error("An installation script is required.");
@@ -174,8 +181,25 @@ export async function teamTool(
     return { configured: input.integration.id };
   }
 
+  let integrationId = input.integrationId;
+
+  if (input.action === "read" || input.action === "cancel") {
+    if (!input.sessionId) throw new Error("A command session ID is required.");
+
+    const sessionIntegration = commandIntegration(
+      root,
+      team.id,
+      input.sessionId,
+    );
+
+    if (integrationId && integrationId !== sessionIntegration)
+      throw new Error("Command session belongs to another integration.");
+
+    integrationId = sessionIntegration;
+  }
+
   const integration = team.integrations?.find(
-    (item) => item.id === input.integrationId,
+    (item) => item.id === integrationId,
   );
 
   if (!integration)
@@ -204,6 +228,18 @@ export async function teamTool(
         return text;
       }),
     );
+  const redactOutput = (text: string) => String(redact(text));
+
+  if (input.action === "read" || input.action === "cancel") {
+    return readTeamCommand(
+      root,
+      team.id,
+      input.sessionId!,
+      redactOutput,
+      input.action === "cancel",
+    );
+  }
+
   const name = `paws-integration-${randomUUID()}`;
   const image = teamEnvironmentImage(root, team.id);
   const args = containerArgs({
@@ -222,18 +258,35 @@ export async function teamTool(
     0,
     ...Object.keys(secrets).flatMap((name) => ["--env", name]),
   );
+
+  if (input.action === "start" || input.action === "exec") {
+    if (integration.kind !== "cli")
+      throw new Error("Use MCP tools/call for MCP integrations.");
+    if (
+      (input.args ?? []).length > 100 ||
+      (input.args ?? []).some((arg) => arg.length > 4096)
+    )
+      throw new Error("Invalid CLI arguments.");
+  }
+
+  if (input.action === "start") {
+    return startTeamCommand({
+      root,
+      teamId: team.id,
+      integrationId: integration.id,
+      commandArgs: [...args, ...(input.args ?? [])],
+      args: input.args ?? [],
+      image,
+      secrets,
+      signal,
+      redact: redactOutput,
+    });
+  }
+
   const timeout = AbortSignal.any([signal, AbortSignal.timeout(60000)]);
 
   try {
     if (input.action === "exec") {
-      if (integration.kind !== "cli")
-        throw new Error("Use MCP tools/call for MCP integrations.");
-      if (
-        (input.args ?? []).length > 100 ||
-        (input.args ?? []).some((arg) => arg.length > 4096)
-      )
-        throw new Error("Invalid CLI arguments.");
-
       try {
         const result = await exec("docker", [...args, ...(input.args ?? [])], {
           env: { PATH: process.env.PATH, ...secrets },
