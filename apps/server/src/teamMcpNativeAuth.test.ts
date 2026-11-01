@@ -11,7 +11,12 @@ import {
 } from "./teamMcpNativeAuth.ts";
 import type { TeamMcpHarness } from "./teamMcpHarness.ts";
 
-function browser(url: string, body?: string, cookie?: string) {
+function browser(
+  url: string,
+  body?: string,
+  cookie?: string,
+  extraHeaders: Record<string, string> = {},
+) {
   return new Promise<{ status: number; text: string; cookie: string }>(
     (resolve, reject) => {
       const request = httpRequest(
@@ -20,6 +25,7 @@ function browser(url: string, body?: string, cookie?: string) {
           method: body ? "POST" : "GET",
           headers: {
             Host: "127.0.0.1:5173",
+            ...extraHeaders,
             ...(cookie ? { Cookie: cookie } : {}),
           },
         },
@@ -125,7 +131,12 @@ it("uses the selected harness, keeps browser approval private, and reuses team a
     expect(result).toMatchObject({ status: "authentication_required" });
     const path = `/api/teams/${team.id}/integrations/design/authorize`;
     const url = `http://127.0.0.1:${address.port}${path}`;
-    const page = await browser(url);
+    const navigation = {
+      "Sec-Fetch-Site": "cross-site",
+      "Sec-Fetch-Mode": "navigate",
+      "Sec-Fetch-Dest": "document",
+    };
+    const page = await browser(url, undefined, undefined, navigation);
     expect(page.status).toBe(200);
     expect(page.text).toContain("Open authorization");
     expect(page.text).not.toContain("code=approved");
@@ -139,6 +150,25 @@ it("uses the selected harness, keeps browser approval private, and reuses team a
     }).toString();
     expect((await browser(url, form)).status).toBe(400);
     expect(approved).toBe(false);
+    expect((await browser(url, form, page.cookie, navigation)).status).toBe(
+      403,
+    );
+    expect(
+      (
+        await browser(url, undefined, undefined, {
+          "Sec-Fetch-Site": "cross-site",
+          "Sec-Fetch-Mode": "cors",
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await browser(url, undefined, undefined, {
+          ...navigation,
+          Host: "foreign.example:5173",
+        })
+      ).status,
+    ).toBe(403);
     const response = await browser(url, form, page.cookie);
     expect(response.status, response.text).toBe(200);
     expect(approved).toBe(true);

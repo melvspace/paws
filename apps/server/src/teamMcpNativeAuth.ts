@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { TeamIntegration } from "@paws/contracts";
 import { ChatToolError, type McpHarnessClient } from "@paws/provider-core";
 import { rememberedMcpHarness, type TeamMcpHarness } from "./teamMcpHarness.ts";
-import { isAllowedRequestOrigin } from "./requestOrigin.ts";
+import { isAllowedSignInRequest } from "./requestOrigin.ts";
 
 interface Login {
   id: string;
@@ -171,10 +171,7 @@ export async function nativeMcpAuthHttp(
     "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   );
 
-  if (
-    !isAllowedRequestOrigin(request.headers) ||
-    !isAllowedRequestOrigin({ origin: `http://${request.headers.host}` })
-  ) {
+  if (!isAllowedSignInRequest(request.headers, request.method)) {
     response.writeHead(403).end("Origin not allowed");
 
     return true;

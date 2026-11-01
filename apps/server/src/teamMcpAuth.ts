@@ -14,7 +14,10 @@ import {
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { OAuthError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
-import { isAllowedRequestOrigin } from "./requestOrigin.ts";
+import {
+  isAllowedRequestOrigin,
+  isAllowedSignInRequest,
+} from "./requestOrigin.ts";
 
 const StoredAuth = Schema.Struct({
   serverUrl: Schema.String,
@@ -289,7 +292,7 @@ export async function teamMcpAuthHttp(
   // instead of the ordinary same-origin check. Host still must identify this machine.
   if (
     !isAllowedRequestOrigin({ origin }) ||
-    (!callback && !isAllowedRequestOrigin(request.headers))
+    (!callback && !isAllowedSignInRequest(request.headers, request.method))
   ) {
     response.writeHead(403).end("Origin not allowed");
 

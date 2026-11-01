@@ -30,3 +30,20 @@ export function isAllowedRequestOrigin(headers: IncomingHttpHeaders) {
     return false;
   }
 }
+
+// Sign-in links may be opened from another app. This exception applies only to
+// top-level GET navigation, never fetches, embedded pages, or form submissions.
+export function isAllowedSignInRequest(
+  headers: IncomingHttpHeaders,
+  method: string | undefined,
+) {
+  if (!isAllowedRequestOrigin({ origin: `http://${headers.host}` }))
+    return false;
+  if (isAllowedRequestOrigin(headers)) return true;
+
+  return (
+    method === "GET" &&
+    headers["sec-fetch-mode"] === "navigate" &&
+    headers["sec-fetch-dest"] === "document"
+  );
+}
