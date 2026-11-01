@@ -169,12 +169,17 @@ it("moves idle agents atomically, preserves other teams, and rejects busy or sta
         })
       ).status,
     ).toBe(400);
-    await app.providers.refresh("codex");
+    const provider = await Effect.runPromise(app.providers.create("codex"));
+    await app.providers.refresh(provider.config.id);
     await Effect.runPromise(
       app.chat.send(agent.id, {
         requestId: "busy",
         text: "Work",
-        selection: { providerId: "codex", modelId: "test-model", options: {} },
+        selection: {
+          providerId: provider.config.id,
+          modelId: "test-model",
+          options: {},
+        },
       }),
     );
     await expect.poll(() => app.chat.get(agent.id).status).toBe("running");
