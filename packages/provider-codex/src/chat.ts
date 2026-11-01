@@ -1,5 +1,6 @@
 import {
   chatInstructions,
+  teamToolDescription,
   ChatSessionUnavailableError,
 } from "@paws/provider-core";
 // Thread lifecycle and dynamic tool translation follow T3 Code's Codex adapter (MIT).
@@ -141,16 +142,16 @@ const memoryTool = {
 const teamTool = {
   type: "function",
   name: "paws_team_tool",
-  description:
-    "Manage and use shared team integrations. list: show configurations; configure: save integration {id,kind: cli|mcp-stdio|mcp-http,command,args,url}, secrets maps env names or BEARER_TOKEN to request_secret references (use saved for the private input received this turn); tools: discover MCP tools; call: MCP tool + arguments; exec: CLI args. Local commands run in a separate container with private authentication home and shared files at /workspace. Install shared executables in team files: /teams/<teamId>/files in your shell becomes /workspace for integration commands. CLI execution returns exitCode, stdout, and stderr; use failures to correct the command. Reuse existing integrations. Never store credentials in shared files or memories.",
+  description: teamToolDescription,
   inputSchema: {
     type: "object",
     properties: {
       teamId: { type: "string" },
       action: {
         type: "string",
-        enum: ["list", "configure", "tools", "call", "exec"],
+        enum: ["list", "install", "configure", "tools", "call", "exec"],
       },
+      script: { type: "string" },
       integrationId: { type: "string" },
       integration: {
         type: "object",

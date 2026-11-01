@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Schema } from "effect";
 import { ChatCard, ChatFileInputs, validateChatCard } from "@paws/contracts";
-import type { ChatTurn } from "@paws/provider-core";
+import { teamToolDescription, type ChatTurn } from "@paws/provider-core";
 
 export interface ChatToolRuntime {
   execute(command: string, signal: AbortSignal): Promise<string>;
@@ -32,11 +32,18 @@ export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
     },
     {
       name: "paws_team_tool",
-      description:
-        "Manage and use team integrations. Actions: list, configure (integration {id,kind,command,args,url}, optional secrets maps environment names or BEARER_TOKEN to private request_secret references (use saved for the private input received this turn)), tools (MCP discovery), call (MCP tool + arguments), exec (CLI args). Local commands run in a separate container with a private team authentication home and shared files at /workspace. Install shared executables in /teams/<teamId>/files in your shell, then configure their /workspace path for integration commands. CLI execution returns exitCode, stdout, and stderr. Reuse existing integrations; never put credentials in shared files or memories.",
+      description: teamToolDescription,
       schema: z.object({
         teamId: z.string(),
-        action: z.enum(["list", "configure", "tools", "call", "exec"]),
+        action: z.enum([
+          "list",
+          "install",
+          "configure",
+          "tools",
+          "call",
+          "exec",
+        ]),
+        script: z.string().optional(),
         integrationId: z.string().optional(),
         integration: z
           .object({

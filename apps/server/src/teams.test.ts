@@ -174,6 +174,14 @@ it("discovers team skills only for members with personal skills taking precedenc
         new AbortController().signal,
       ),
     ).rejects.toThrow("Join this team");
+    await expect(
+      teamTool(
+        root,
+        agent.id,
+        { teamId: team.id, action: "install", script: "touch /installed" },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("Join this team");
   } finally {
     service.close();
     await Fs.rm(root, { recursive: true, force: true });
@@ -382,7 +390,7 @@ it("discovers and calls a remote MCP with private team authentication and redact
   }
 });
 
-it("returns redacted command diagnostics and cleans up failed CLI containers", async () => {
+it("uses the team's installed image, returns redacted diagnostics and cleans up failed CLI containers", async () => {
   await Fs.mkdir("/tmp/codex", { recursive: true });
   const root = await Fs.mkdtemp("/tmp/codex/paws-cli-errors-");
   const service = makeAgentService(root);
@@ -414,6 +422,12 @@ it("returns redacted command diagnostics and cleans up failed CLI containers", a
       },
       signal,
       () => 'private-"token"',
+    );
+    const image = `sha256:${"a".repeat(64)}`;
+    await Fs.mkdir(join(root, "teams", team.id), { recursive: true });
+    await Fs.writeFile(
+      join(root, "teams", team.id, "environment.json"),
+      JSON.stringify({ image }),
     );
     await Fs.writeFile(
       join(root, "docker"),
@@ -447,6 +461,8 @@ if (args[0] === 'run') {
       .split("\n")
       .map((line) => JSON.parse(line));
     const launch = calls[0];
+    expect(launch).toContain(image);
+    expect(launch).not.toContain("paws-chat-runtime:1");
     expect(calls[1]).toEqual([
       "rm",
       "--force",

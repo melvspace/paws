@@ -95,6 +95,17 @@ Deleting an agent removes it and its conversation from Paws, but preserves its
 workspace and home files. Back up your state directory if you want to keep your
 agents and conversations safe.
 
+Team integrations run in a shared Debian environment. Agents can install software
+and system dependencies with the `paws_team_tool` install action, then configure
+CLI or MCP commands to use it. Successful installations survive new sessions and
+are available to every member through team integrations. Ordinary agent shells
+remain separate. Failed installations keep the previous OS image. Shared files
+are read-only during installation; integration authentication is excluded.
+
+Team environment image references live in the state directory; their filesystem
+layers live in Docker's image store. Include both when backing up installed team
+software. Rebuild the base images with `pnpm runtime:build` after runtime updates.
+
 Agents can run commands and edit files in their containers without approval
 prompts. Containers have outbound network access. Provider credentials remain
 outside agent workspaces, but provider executables run on the host, so use ones

@@ -12,6 +12,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { agentContext } from "./teamContext.ts";
+import {
+  installTeamEnvironment,
+  teamEnvironmentImage,
+} from "./teamEnvironment.ts";
 
 const exec = promisify(execFile);
 const integrationIdPattern = /^[a-z][a-z0-9-]{0,63}$/;
@@ -109,6 +113,12 @@ export async function teamTool(
   if (!team) throw new Error("Join this team before using its integrations.");
   if (input.action === "list") return team.integrations ?? [];
 
+  if (input.action === "install") {
+    if (!input.script) throw new Error("An installation script is required.");
+
+    return installTeamEnvironment(root, team.id, input.script, signal);
+  }
+
   if (input.action === "configure") {
     if (!input.integration)
       throw new Error("Integration configuration is required.");
@@ -195,8 +205,10 @@ export async function teamTool(
       }),
     );
   const name = `paws-integration-${randomUUID()}`;
+  const image = teamEnvironmentImage(root, team.id);
   const args = containerArgs({
     name,
+    image,
     identity: runtimeIdentity(root),
     workspace: join(root, "teams", team.id, "files"),
     home: join(directory, "home"),
@@ -204,7 +216,7 @@ export async function teamTool(
     gid: process.getgid?.() ?? 1000,
     entrypoint: [integration.command ?? "true", ...(integration.args ?? [])],
   });
-  const imageIndex = args.indexOf("paws-chat-runtime:1");
+  const imageIndex = args.indexOf(image);
   args.splice(
     imageIndex,
     0,

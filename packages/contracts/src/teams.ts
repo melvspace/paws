@@ -11,7 +11,15 @@ export type TeamIntegration = typeof TeamIntegration.Type;
 
 export const TeamToolRequest = Schema.Struct({
   teamId: Schema.String,
-  action: Schema.Literals(["list", "configure", "tools", "call", "exec"]),
+  action: Schema.Literals([
+    "list",
+    "install",
+    "configure",
+    "tools",
+    "call",
+    "exec",
+  ]),
+  script: Schema.optional(Schema.String),
   integrationId: Schema.optional(Schema.String),
   integration: Schema.optional(TeamIntegration),
   tool: Schema.optional(Schema.String),

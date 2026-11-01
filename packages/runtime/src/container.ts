@@ -86,6 +86,7 @@ export function containerArgs(input: {
   workspace: string;
   home: string;
   identity?: string;
+  image?: string;
   teamIds?: readonly string[];
   root?: string;
   binary?: string;
@@ -145,7 +146,7 @@ export function containerArgs(input: {
     "HOME=/home/agent",
     "--env",
     "CODEX_HOME=/home/agent/.codex",
-    runtimeImage,
+    input.image ?? runtimeImage,
     ...(input.entrypoint ?? ["codex", "app-server", "--listen", "stdio://"]),
   ];
 }
