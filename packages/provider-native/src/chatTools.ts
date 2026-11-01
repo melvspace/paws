@@ -17,6 +17,55 @@ export const toolText = (text: string) => ({
 export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
   const entries = [
     {
+      name: "paws_memory",
+      description:
+        "Read or update persistent memories. Omit teamId for your own private memories; provide a teamId to share with that team's members. Omit memory to read. To update, first read and then provide the complete replacement memory, preserving useful existing facts. Never store credentials.",
+      schema: z.object({
+        teamId: z.string().optional(),
+        memory: z.string().max(16000).optional(),
+      }),
+      async execute(value: unknown) {
+        if (!turn.memoryTool) throw new Error("Memories unavailable.");
+
+        return toolText(JSON.stringify(await turn.memoryTool(value)));
+      },
+    },
+    {
+      name: "paws_team_tool",
+      description:
+        "Manage and use team integrations. Actions: list, configure (integration {id,kind,command,args,url}, optional secrets maps environment names or BEARER_TOKEN to private request_secret references (use saved for the private input received this turn)), tools (MCP discovery), call (MCP tool + arguments), exec (CLI args). Local commands run in a separate container with a private team authentication home and shared files at /workspace. Install shared executables in /teams/<teamId>/files in your shell, then configure their /workspace path for integration commands. CLI execution returns exitCode, stdout, and stderr. Reuse existing integrations; never put credentials in shared files or memories.",
+      schema: z.object({
+        teamId: z.string(),
+        action: z.enum(["list", "configure", "tools", "call", "exec"]),
+        integrationId: z.string().optional(),
+        integration: z
+          .object({
+            id: z.string(),
+            kind: z.enum(["cli", "mcp-stdio", "mcp-http"]),
+            command: z.string().optional(),
+            args: z.array(z.string()).optional(),
+            url: z.string().optional(),
+          })
+          .optional(),
+        tool: z.string().optional(),
+        arguments: z.record(z.string(), z.unknown()).optional(),
+        args: z.array(z.string()).optional(),
+        secrets: z.record(z.string(), z.string()).optional(),
+      }),
+      async execute(value: unknown) {
+        if (!turn.teamTool) throw new Error("Team tools unavailable.");
+
+        const result = await turn.teamTool(value);
+        const isError =
+          typeof result === "object" &&
+          result !== null &&
+          "isError" in result &&
+          result.isError === true;
+
+        return { ...toolText(JSON.stringify(result)), isError };
+      },
+    },
+    {
       name: "paws_finish_turn",
       description:
         "Finish this turn silently when the user does not want a reply. Call with silent: true, then end immediately without an acknowledgement or final message. Applies only to this turn; already delivered messages remain visible.",

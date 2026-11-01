@@ -1,3 +1,5 @@
+import { memoryTool } from "./teamContext.ts";
+import { teamTool } from "./teamIntegrations.ts";
 import { makeNativeChatRunner } from "./nativeChatRunner.ts";
 import type { ProviderDriver } from "@paws/contracts";
 import { ChatExecutionError, type RunChatTurn } from "@paws/provider-core";
@@ -35,6 +37,34 @@ export function makeChatRunner(
         "Chat runtime unavailable for this provider.",
       );
 
-    await run(turn);
+    const privateInputs = new Map<string, string>();
+    const consumeSecret = (reference: string): string => {
+      const key =
+        reference === "saved" ? turn.interaction?.secretRef : reference;
+
+      if (!key) throw new Error("No private input is available for this turn.");
+
+      const cached = privateInputs.get(key);
+
+      if (cached !== undefined) return cached;
+      if (!turn.consumeSecret) throw new Error("Private input is unavailable.");
+
+      const value = turn.consumeSecret(key);
+      privateInputs.set(key, value);
+
+      return value;
+    };
+
+    try {
+      await run({
+        ...turn,
+        ...(turn.consumeSecret ? { consumeSecret } : {}),
+        memoryTool: async (input) => memoryTool(root, turn.agentId, input),
+        teamTool: (input) =>
+          teamTool(root, turn.agentId, input, turn.signal, consumeSecret),
+      });
+    } finally {
+      privateInputs.clear();
+    }
   };
 }

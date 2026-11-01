@@ -1,10 +1,18 @@
+import { saveIntegrationSecrets } from "./teamIntegrations.ts";
+import { teamResources } from "./teamResources.ts";
 import { isAllowedRequestOrigin } from "./requestOrigin.ts";
 import * as Http from "node:http";
+import { homedir } from "node:os";
 import * as Path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Effect, Schema } from "effect";
 import { WebSocketServer } from "ws";
-import { CreateAgent, UpdateAgent } from "@paws/contracts";
+import {
+  CreateAgent,
+  UpdateAgent,
+  SaveTeam,
+  MoveAgentTeam,
+} from "@paws/contracts";
 import { makeAgentService } from "./AgentService.ts";
 import { makeProviderService } from "./ProviderService.ts";
 import { providerHttp } from "./providerHttp.ts";
@@ -33,9 +41,10 @@ export function createServer(
     },
   );
   const snapshot = () =>
-    Effect.runPromise(agents.list()).then((items) => ({
+    Effect.runPromise(agents.list()).then(async (items) => ({
       agents: items,
       providers: providers.list(),
+      teams: await Effect.runPromise(agents.listTeams()),
       conversations: chat.list(),
     }));
   const server = Http.createServer(async (request, response) => {
@@ -50,11 +59,80 @@ export function createServer(
     }
 
     try {
+      const credentials =
+        /^\/api\/teams\/([^/]+)\/integrations\/([^/]+)\/credentials$/.exec(
+          request.url ?? "",
+        );
+
+      if (credentials && request.method === "POST") {
+        const team = (await Effect.runPromise(agents.listTeams())).find(
+          (team) => team.id === credentials[1],
+        );
+
+        if (!team?.integrations?.some((item) => item.id === credentials[2])) {
+          response
+            .writeHead(404)
+            .end(JSON.stringify({ error: "Integration not found." }));
+
+          return;
+        }
+
+        if (request.headers["content-type"] !== "application/json") {
+          response.writeHead(415).end();
+
+          return;
+        }
+
+        let body = "";
+
+        for await (const chunk of request) {
+          body += chunk;
+
+          if (Buffer.byteLength(body) > 65536) {
+            response.writeHead(413).end();
+
+            return;
+          }
+        }
+
+        const input = Schema.decodeUnknownSync(
+          Schema.Struct({ name: Schema.String, value: Schema.String }),
+        )(JSON.parse(body));
+        saveIntegrationSecrets(root, team.id, credentials[2]!, {
+          [input.name]: input.value,
+        });
+        response.writeHead(204).end();
+
+        return;
+      }
+
+      if (
+        await teamResources(request, response, root, async (id) =>
+          (await Effect.runPromise(agents.listTeams())).some(
+            (team) => team.id === id,
+          ),
+        )
+      )
+        return;
       if (await providerHttp(request, response, providers)) return;
       if (await chatHttp(request, response, chat)) return;
 
       if (request.method === "GET" && request.url === "/api/agents") {
         response.end(JSON.stringify(await snapshot()));
+
+        return;
+      }
+
+      const teamId = /^\/api\/teams\/([^/]+)$/.exec(request.url ?? "")?.[1];
+
+      if (request.method === "DELETE" && teamId) {
+        for (const agent of await Effect.runPromise(agents.list())) {
+          if (agent.teamIds?.includes(teamId)) await chat.stop(agent.id);
+        }
+
+        const removed = await Effect.runPromise(agents.removeTeam(teamId));
+        await broadcast();
+        response.writeHead(removed ? 204 : 404).end();
 
         return;
       }
@@ -88,7 +166,15 @@ export function createServer(
       const isCreate =
         request.method === "POST" && request.url === "/api/agents";
 
-      if (isCreate || updateId) {
+      const moveId =
+        request.method === "POST"
+          ? /^\/api\/agents\/([^/]+)\/move$/.exec(request.url ?? "")?.[1]
+          : undefined;
+      const isTeamCreate =
+        request.method === "POST" && request.url === "/api/teams";
+      const isTeamUpdate = request.method === "PATCH" && teamId;
+
+      if (isCreate || updateId || isTeamCreate || isTeamUpdate || moveId) {
         if (request.headers["content-type"] !== "application/json") {
           response
             .writeHead(415)
@@ -111,6 +197,39 @@ export function createServer(
           }
         }
 
+        if (moveId) {
+          const input = Schema.decodeUnknownSync(MoveAgentTeam)(
+            JSON.parse(body),
+          );
+
+          if (chat.get(moveId).status !== "idle") {
+            response.writeHead(409).end(
+              JSON.stringify({
+                error: "Only idle agents can move between teams.",
+              }),
+            );
+
+            return;
+          }
+
+          const moved = Effect.runSync(agents.moveTeam(moveId, input));
+          await broadcast();
+          response.end(JSON.stringify(moved));
+
+          return;
+        }
+
+        if (isTeamCreate || isTeamUpdate) {
+          const input = Schema.decodeUnknownSync(SaveTeam)(JSON.parse(body));
+          const team = await Effect.runPromise(agents.saveTeam(input, teamId));
+          await broadcast();
+          response
+            .writeHead(team ? (isTeamCreate ? 201 : 200) : 404)
+            .end(JSON.stringify(team));
+
+          return;
+        }
+
         const input = Schema.decodeUnknownSync(
           isCreate ? CreateAgent : UpdateAgent,
         )(JSON.parse(body));
@@ -126,6 +245,8 @@ export function createServer(
           return;
         }
 
+        if (updateId && input.teamIds) await chat.stop(updateId);
+
         await broadcast();
 
         response.writeHead(isCreate ? 201 : 200).end(JSON.stringify(agent));
@@ -137,7 +258,7 @@ export function createServer(
     } catch {
       response.writeHead(400).end(
         JSON.stringify({
-          error: "Unable to process request. Check the agent fields.",
+          error: "Unable to process request. Check the submitted fields.",
         }),
       );
     }
@@ -192,9 +313,7 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const root =
-    process.env.PAWS_HOME ??
-    Path.resolve(import.meta.dirname, "../../../.paws");
+  const root = process.env.PAWS_HOME ?? Path.join(homedir(), ".paws");
   const app = createServer(root);
   app.server.listen(4310, "127.0.0.1", () =>
     console.log("Paws server: http://127.0.0.1:4310"),

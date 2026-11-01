@@ -87,9 +87,9 @@ node node_modules/.pnpm/electron@44.10.0/node_modules/electron/install.js
 
 ## Your data and agent access
 
-Paws stores its application state in `.paws/` by default. Set `PAWS_HOME` before
+Paws stores its application state in `$HOME/.paws/` by default. Set `PAWS_HOME` before
 starting the app to use another location. Each agent's working folder is at
-`.paws/agents/<uuid>/workspace`.
+`$HOME/.paws/agents/<uuid>/workspace`.
 
 Deleting an agent removes it and its conversation from Paws, but preserves its
 workspace and home files. Back up your state directory if you want to keep your

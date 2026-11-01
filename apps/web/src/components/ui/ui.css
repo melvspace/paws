@@ -153,3 +153,44 @@
   margin: 8px;
   background: var(--border);
 }
+
+/* Adapted from T3 Code's checkbox states and focus treatment (MIT). */
+.ui-checkbox {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--input);
+  border-radius: 4px;
+  background: var(--background);
+  outline: none;
+  cursor: pointer;
+}
+.ui-checkbox:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.ui-checkbox[data-disabled] {
+  opacity: 0.64;
+  cursor: default;
+}
+.ui-checkbox-indicator {
+  position: absolute;
+  inset: -1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.ui-checkbox-indicator[data-unchecked] {
+  display: none;
+}
+.ui-checkbox-indicator svg {
+  width: 12px;
+  height: 12px;
+}

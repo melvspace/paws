@@ -1,3 +1,4 @@
+import { agentContext } from "./teamContext.ts";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -80,6 +81,7 @@ export function makeCodexChatRunner(
       root,
       turn.agentId,
       provider.config.binaryPath,
+      agentContext(root, turn.agentId).teams.map((team) => team.id),
     );
 
     try {
