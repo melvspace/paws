@@ -164,7 +164,8 @@ export async function nativeMcpAuthHttp(
   if (!providerId) return false;
 
   response.setHeader("Cache-Control", "no-store");
-  response.setHeader("Referrer-Policy", "no-referrer");
+  // Preserve the same-origin form Origin header while withholding cross-site referrers.
+  response.setHeader("Referrer-Policy", "same-origin");
   response.setHeader("Content-Type", "text/html; charset=utf-8");
   response.setHeader(
     "Content-Security-Policy",
