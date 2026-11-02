@@ -11,6 +11,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   agentsAtom,
   loadRoutines,
+  loadRoutineRun,
   saveRoutine,
   routinePath,
   routineRequest,
@@ -117,6 +118,8 @@ export function RoutinesSettings({
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Routine | "new" | null>(null);
   const [selectedRun, setSelectedRun] = useState<RoutineRun | null>(null);
+  const [runCursors, setRunCursors] = useState<readonly number[]>([]);
+  const runCursor = runCursors.at(-1);
   const [secret, setSecret] = useState<{
     endpoint: string;
     secret: string;
@@ -131,16 +134,22 @@ export function RoutinesSettings({
 
     async function refresh() {
       try {
-        const next = await loadRoutines(agentId, controller.signal);
+        const next = await loadRoutines(agentId, controller.signal, runCursor);
+        const requestedId = initialRun.current ?? selectedRun?.id;
+        const linked = requestedId
+          ? (next.runs.find((item) => item.id === requestedId) ??
+            (await loadRoutineRun(requestedId, controller.signal)))
+          : undefined;
+
+        if (linked && linked.agentId !== agentId)
+          throw new Error("This run belongs to another agent.");
 
         if (active) {
           setState(next);
           setError(null);
 
-          if (initialRun.current) {
-            setSelectedRun(
-              next.runs.find((item) => item.id === initialRun.current) ?? null,
-            );
+          if (linked) {
+            setSelectedRun(linked);
             initialRun.current = undefined;
           }
         }
@@ -167,7 +176,7 @@ export function RoutinesSettings({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [agentId]);
+  }, [agentId, runCursor, selectedRun?.id]);
 
   useEffect(() => {
     const save = async () => {
@@ -205,6 +214,8 @@ export function RoutinesSettings({
               void Promise.resolve(flush.current?.())
                 .then(() => {
                   setAgentId(next);
+                  setRunCursors([]);
+                  initialRun.current = undefined;
                   setEditing(null);
                   setSelectedRun(null);
                   setSecret(null);
@@ -318,7 +329,7 @@ export function RoutinesSettings({
                         routine.id,
                         routine.revision,
                       )
-                        .then(() => loadRoutines(agentId))
+                        .then(() => loadRoutines(agentId, undefined, runCursor))
                         .then(setState)
                         .catch((cause) => setError(String(cause)));
                     }}
@@ -329,7 +340,7 @@ export function RoutinesSettings({
           )}
           {!!state.runs.length && (
             <>
-              <h3 className="routine-section-title">Recent runs</h3>
+              <h3 className="routine-section-title">Run history</h3>
               <div className="settings-group">
                 {state.runs.map((run) => (
                   <div className="settings-row routine-run-row" key={run.id}>
@@ -346,6 +357,27 @@ export function RoutinesSettings({
                 ))}
               </div>
             </>
+          )}
+          {(runCursors.length > 0 || state.nextRunCursor != null) && (
+            <div className="routine-actions">
+              <Button
+                disabled={loading || runCursors.length === 0}
+                onClick={() => setRunCursors((cursors) => cursors.slice(0, -1))}
+              >
+                Newer runs
+              </Button>
+              <Button
+                disabled={loading || state.nextRunCursor == null}
+                onClick={() => {
+                  const cursor = state.nextRunCursor;
+
+                  if (cursor != null)
+                    setRunCursors((cursors) => [...cursors, cursor]);
+                }}
+              >
+                Older runs
+              </Button>
+            </div>
           )}
           {!!state.events.length && (
             <details>

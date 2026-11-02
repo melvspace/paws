@@ -284,6 +284,7 @@ it("deleting an agent removes its routines, histories and ingress secrets", asyn
   expect(fixture.service.list(fixture.agent.id)).toEqual({
     routines: [],
     runs: [],
+    nextRunCursor: null,
     events: [],
   });
   const db = new DatabaseSync(`${fixture.root}/state.sqlite`, {
@@ -677,5 +678,37 @@ it("starts main-chat timeouts after acquiring the routine execution slot", async
       .toBe("succeeded");
   } finally {
     release();
+  }
+});
+
+it("paginates retained runs without hiding older runs or mixing agents", async () => {
+  await using fixture = await setup();
+  const routine = fixture.service.save(
+    fixture.agent.id,
+    definition({ enabled: false }),
+  );
+  const ids: string[] = [];
+
+  for (let index = 0; index < 201; index++) {
+    const run = fixture.service.enqueue(routine.id, "manual");
+    ids.push(run.id);
+    await fixture.service.cancel(run.id);
+  }
+
+  const first = fixture.service.list(fixture.agent.id);
+  expect(first.runs.map((run) => run.id)).toEqual(ids.slice(1).reverse());
+  expect(first.nextRunCursor).not.toBeNull();
+  const second = fixture.service.list(fixture.agent.id, first.nextRunCursor!);
+  expect(second.runs.map((run) => run.id)).toEqual([ids[0]]);
+  expect(second.nextRunCursor).toBeNull();
+  expect(fixture.service.getRun(ids[0]!).id).toBe(ids[0]);
+  expect(
+    fixture.service.list(fixture.other.id, first.nextRunCursor!).runs,
+  ).toHaveLength(0);
+
+  for (const invalid of [NaN, 0, -1, 1.5, Infinity]) {
+    expect(() => fixture.service.list(fixture.agent.id, invalid)).toThrow(
+      "cursor",
+    );
   }
 });

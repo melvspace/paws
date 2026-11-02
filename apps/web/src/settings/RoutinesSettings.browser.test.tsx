@@ -492,3 +492,139 @@ it.each([
     fetchMock.mockRestore();
   }
 });
+
+it.each(["link", "pagination", "missing"])(
+  "opens retained run history through %s",
+  async (mode) => {
+    appAtomRegistry.set(agentsAtom, {
+      connected: true,
+      error: null,
+      snapshot: {
+        agents: [
+          {
+            id: "ada",
+            name: "Ada",
+            provider: "codex",
+            status: "configured",
+            createdAt: "2026-11-01",
+          },
+        ],
+      },
+    });
+    const oldId = "00000000-0000-4000-8000-000000000001";
+    const run = {
+      id: oldId,
+      agentId: "ada",
+      routineId: "digest",
+      status: "waiting",
+      source: "manual",
+      createdAt: "2026-11-01T00:00:00Z",
+      selection: { providerId: "codex", modelId: "model", options: {} },
+    };
+    const newest = {
+      ...run,
+      id: "00000000-0000-4000-8000-000000000002",
+      status: "cancelled",
+      createdAt: "2026-11-02T00:00:00Z",
+    };
+    const paths: string[] = [];
+    const fetchMock = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async (input) => {
+        const path = String(input);
+        paths.push(path);
+
+        if (path.endsWith("/details")) {
+          if (mode === "missing")
+            return Response.json({ error: "Run not found." }, { status: 404 });
+
+          return Response.json(run);
+        }
+
+        if (path === `/api/routine-runs/${oldId}`)
+          return Response.json({
+            agentId: oldId,
+            revision: 1,
+            status: "idle",
+            error: null,
+            selection: run.selection,
+            messages: [],
+          });
+        if (path.includes("?before=2"))
+          return Response.json({
+            routines: [],
+            runs: [run],
+            events: [],
+            nextRunCursor: null,
+          });
+
+        return Response.json({
+          routines: [],
+          runs: [newest],
+          events: [],
+          nextRunCursor: 2,
+        });
+      });
+
+    try {
+      await using _screen = await render(
+        <AppSettingsDialog
+          initialPage="Routines"
+          initialRoutine={
+            mode === "pagination" ? undefined : { agentId: "ada", runId: oldId }
+          }
+          onDismiss={() => {}}
+        />,
+      );
+
+      if (mode === "missing") {
+        await expect
+          .element(page.getByRole("alert"))
+          .toHaveTextContent("Run not found.");
+
+        return;
+      }
+
+      if (mode === "pagination") {
+        await page
+          .getByRole("button", { name: "Older runs", exact: true })
+          .click();
+        await expect
+          .poll(() => paths.includes("/api/agents/ada/routines?before=2"))
+          .toBe(true);
+        await page.getByRole("button", { name: /^Deleted routine/ }).click();
+      }
+
+      await expect
+        .element(page.getByRole("textbox", { name: "Message", exact: true }))
+        .toBeVisible();
+      await expect
+        .element(page.getByRole("button", { name: "Cancel run", exact: true }))
+        .toBeVisible();
+      await expect
+        .poll(() => paths.includes(`/api/routine-runs/${oldId}`))
+        .toBe(true);
+
+      if (mode === "link")
+        expect(paths).toContain(`/api/routine-runs/${oldId}/details`);
+      if (mode === "pagination") {
+        await page.getByRole("button", { name: "Back", exact: true }).click();
+        await page
+          .getByRole("button", { name: "Newer runs", exact: true })
+          .click();
+        await expect
+          .element(
+            page.getByRole("button", { name: "Older runs", exact: true }),
+          )
+          .toBeEnabled();
+        await expect
+          .element(
+            page.getByRole("button", { name: "Newer runs", exact: true }),
+          )
+          .toBeDisabled();
+      }
+    } finally {
+      fetchMock.mockRestore();
+    }
+  },
+);

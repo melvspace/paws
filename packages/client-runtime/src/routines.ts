@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import {
   Conversation,
   RoutineState,
+  RoutineRun,
   Routine,
   type SaveRoutine,
   type SendChat,
@@ -38,9 +39,25 @@ export async function routineRequest(
 
 export const routinePath = (agentId: string, id?: string) =>
   `/api/agents/${encodeURIComponent(agentId)}/routines${id ? `/${encodeURIComponent(id)}` : ""}`;
-export async function loadRoutines(agentId: string, signal?: AbortSignal) {
+export async function loadRoutines(
+  agentId: string,
+  signal?: AbortSignal,
+  before?: number,
+) {
+  const path = `${routinePath(agentId)}${before === undefined ? "" : `?before=${before}`}`;
+
   return Schema.decodeUnknownSync(RoutineState)(
-    await routineRequest(routinePath(agentId), "GET", undefined, signal),
+    await routineRequest(path, "GET", undefined, signal),
+  );
+}
+export async function loadRoutineRun(id: string, signal?: AbortSignal) {
+  return Schema.decodeUnknownSync(RoutineRun)(
+    await routineRequest(
+      `/api/routine-runs/${encodeURIComponent(id)}/details`,
+      "GET",
+      undefined,
+      signal,
+    ),
   );
 }
 export async function saveRoutine(

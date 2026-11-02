@@ -87,6 +87,14 @@ it("blocks chat execution aliases for cancelled, expired and deleted routine run
     for (const run of [cancelled, expired, deleted]) {
       const path = `${base}/api/agents/${run.id}/chat`;
       expect((await fetch(path)).status).toBe(200);
+      const metadata = await fetch(
+        `${base}/api/routine-runs/${run.id}/details`,
+      );
+      expect(metadata.status).toBe(200);
+      expect(await metadata.json()).toMatchObject({
+        id: run.id,
+        agentId: agent.id,
+      });
 
       for (const suffix of ["", "/stop", "/continue", "/compact", "/queue"]) {
         const response = await fetch(`${path}${suffix}`, {
@@ -105,6 +113,26 @@ it("blocks chat execution aliases for cancelled, expired and deleted routine run
         run.id === expired.id ? "expired" : "cancelled",
       );
     }
+
+    expect(
+      (await fetch(`${base}/api/agents/${agent.id}/routines?before=invalid`))
+        .status,
+    ).toBe(400);
+    const history = await fetch(
+      `${base}/api/agents/${agent.id}/routines?before=1`,
+    );
+    expect(history.status).toBe(200);
+    expect(await history.json()).toMatchObject({
+      runs: [],
+      nextRunCursor: null,
+    });
+    expect(
+      (
+        await fetch(
+          `${base}/api/routine-runs/00000000-0000-4000-8000-000000000001/details`,
+        )
+      ).status,
+    ).toBe(404);
 
     expect(executed).not.toHaveBeenCalled();
   } finally {

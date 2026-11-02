@@ -850,6 +850,27 @@ export function makeRoutineService(
     }
   };
 
+  function runPage(agentId: string, before?: number) {
+    if (before !== undefined && (!Number.isSafeInteger(before) || before < 1))
+      throw new ChatError(400, "Invalid run history cursor.");
+
+    const rows = db
+      .prepare(`
+      SELECT rowid, data FROM routine_runs
+      WHERE json_extract(data, '$.agentId') = ? AND rowid < ?
+      ORDER BY rowid DESC LIMIT 201
+    `)
+      .all(agentId, before ?? Number.MAX_SAFE_INTEGER);
+    const page = rows.slice(0, 200);
+
+    return {
+      runs: page.map((row) =>
+        Schema.decodeUnknownSync(RoutineRun)(JSON.parse(String(row.data))),
+      ),
+      nextRunCursor: rows.length > 200 ? Number(page.at(-1)!.rowid) : null,
+    };
+  }
+
   return {
     limits,
     ready,
@@ -863,13 +884,11 @@ export function makeRoutineService(
     remove,
     conversations,
     getRun: findRun,
-    list: (agentId: string) => ({
+    list: (agentId: string, before?: number) => ({
       routines: definitions().filter(
         (item) => item.agentId === agentId && !item.deleted,
       ),
-      runs: runs()
-        .filter((item) => item.agentId === agentId)
-        .slice(0, 200),
+      ...runPage(agentId, before),
       events: events()
         .filter((item) =>
           definitions().some(

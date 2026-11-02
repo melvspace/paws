@@ -84,5 +84,6 @@ export type RoutineEvent = typeof RoutineEvent.Type;
 export const RoutineState = Schema.Struct({
   routines: Schema.Array(Routine),
   runs: Schema.Array(RoutineRun),
+  nextRunCursor: Schema.optional(Schema.NullOr(Schema.Number)),
   events: Schema.Array(RoutineEvent),
 });

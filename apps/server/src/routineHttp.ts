@@ -66,12 +66,13 @@ export async function routineHttp(
   const webhook = /^\/hooks\/routines\/([a-f0-9-]{36})$/.exec(
     request.url ?? "",
   );
+  const url = new URL(request.url ?? "/", "http://localhost");
   const match =
     /^\/api\/agents\/([^/]+)\/routines(?:\/([a-f0-9-]{36})(?:\/(run|rotate))?)?$/.exec(
-      request.url ?? "",
+      url.pathname,
     );
   const run =
-    /^\/api\/routine-runs\/([a-f0-9-]{36})(?:\/(cancel|retry|respond))?$/.exec(
+    /^\/api\/routine-runs\/([a-f0-9-]{36})(?:\/(cancel|retry|respond|details))?$/.exec(
       request.url ?? "",
     );
 
@@ -120,7 +121,11 @@ export async function routineHttp(
     if (match) {
       const agentId = match[1]!;
       const id = match[2];
-      const state = service.list(agentId);
+      const before = url.searchParams.get("before");
+      const state = service.list(
+        agentId,
+        before === null ? undefined : Number(before),
+      );
 
       if (id && !state.routines.some((item) => item.id === id))
         throw new ChatError(404, "Routine not found.");
@@ -165,9 +170,11 @@ export async function routineHttp(
       } else throw new ChatError(405, "Method not allowed.");
     } else if (run) {
       const id = run[1]!;
-      const conversation = service.conversations.get(id);
 
-      if (request.method === "GET" && !run[2]) result = conversation;
+      if (request.method === "GET" && run[2] === "details")
+        result = service.getRun(id);
+      else if (request.method === "GET" && !run[2])
+        result = service.conversations.get(id);
       else if (request.method === "POST" && run[2] === "cancel") {
         await service.cancel(id);
         result = { cancelled: true };
