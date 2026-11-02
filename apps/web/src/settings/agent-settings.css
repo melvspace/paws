@@ -16,6 +16,8 @@
   display: none;
 }
 .agent-settings-content form {
+  width: 100%;
+  max-width: none;
   display: flex;
   flex-direction: column;
   gap: 24px;
