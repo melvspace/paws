@@ -152,19 +152,17 @@ it("authenticates signed raw payloads, filters events, durably deduplicates deli
   );
   const { secret } = fixture.service.rotate(routine.id);
   const body = Buffer.from('{"type":"issue","data":{"repo":"paws"}}');
-  const timestamp = String(Math.floor(Date.now() / 1000));
   const headers = {
-    "x-paws-timestamp": timestamp,
-    "x-paws-signature": createHmac("sha256", secret)
-      .update(`${timestamp}.`)
+    "x-github-event": "issue",
+    "x-hub-signature-256": `sha256=${createHmac("sha256", secret)
       .update(body)
-      .digest("hex"),
-    "x-paws-delivery-id": "delivery-1",
+      .digest("hex")}`,
+    "x-github-delivery": "delivery-1",
   };
   expect(() =>
     fixture.service.webhook(
       routine.id,
-      { ...headers, "x-paws-signature": "0".repeat(64) },
+      { ...headers, "x-hub-signature-256": "0".repeat(64) },
       body,
     ),
   ).toThrow("signature");
@@ -181,11 +179,11 @@ it("authenticates signed raw payloads, filters events, durably deduplicates deli
       routine.id,
       {
         ...headers,
-        "x-paws-delivery-id": "delivery-2",
-        "x-paws-signature": createHmac("sha256", secret)
-          .update(`${timestamp}.`)
+        "x-github-delivery": "delivery-2",
+        "x-github-event": "other",
+        "x-hub-signature-256": `sha256=${createHmac("sha256", secret)
           .update(skipped)
-          .digest("hex"),
+          .digest("hex")}`,
       },
       skipped,
     ),
@@ -363,17 +361,15 @@ it("rejects paused, stale, oversized and excessive webhook deliveries with no ex
   );
   const { secret } = fixture.service.rotate(routine.id);
   const body = Buffer.from("{}");
-  const headers = (timestamp = String(Math.floor(Date.now() / 1000))) => ({
-    "x-paws-timestamp": timestamp,
-    "x-paws-signature": createHmac("sha256", secret)
-      .update(`${timestamp}.`)
-      .update(body)
-      .digest("hex"),
-  });
+  const headers = () => ({ authorization: `Bearer ${secret}` });
   expect(() =>
     fixture.service.webhook(
       routine.id,
-      headers(String(Math.floor(Date.now() / 1000) - 301)),
+      {
+        "webhook-id": "stale",
+        "webhook-timestamp": String(Math.floor(Date.now() / 1000) - 301),
+        "webhook-signature": "v1,invalid",
+      },
       body,
     ),
   ).toThrow("timestamp");
@@ -483,13 +479,11 @@ it("preserves webhook signatures after filter edits and revokes them when leavin
     routine.revision,
   );
   const body = Buffer.from('{"type":"issue"}');
-  const timestamp = String(Math.floor(Date.now() / 1000));
   const headers = {
-    "x-paws-timestamp": timestamp,
-    "x-paws-signature": createHmac("sha256", secret)
-      .update(`${timestamp}.`)
+    "x-github-event": "issue",
+    "x-hub-signature-256": `sha256=${createHmac("sha256", secret)
       .update(body)
-      .digest("hex"),
+      .digest("hex")}`,
   };
   expect(fixture.service.webhook(routine.id, headers, body).outcome).toBe(
     "accepted",
@@ -509,7 +503,7 @@ it("preserves webhook signatures after filter edits and revokes them when leavin
     interval.revision,
   );
   expect(() => fixture.service.webhook(routine.id, headers, body)).toThrow(
-    "signature",
+    "secret",
   );
 });
 
@@ -711,4 +705,122 @@ it("paginates retained runs without hiding older runs or mixing agents", async (
       "cursor",
     );
   }
+});
+
+it("deduplicates native GitLab and generic deliveries across restarts without changing payloads", async () => {
+  await using fixture = await setup();
+  const routine = fixture.service.save(
+    fixture.agent.id,
+    definition({ trigger: { kind: "webhook", filters: [] } }),
+  );
+  const { secret } = fixture.service.rotate(
+    routine.id,
+    "sender-generated-secret",
+  );
+  const body = Buffer.from('{"object_kind":"merge_request","title":"Fix"}');
+  const deliveries = [
+    {
+      "x-gitlab-token": secret,
+      "x-gitlab-event": "Merge Request Hook",
+      "idempotency-key": "same-id",
+    },
+    { authorization: `Bearer ${secret}`, "idempotency-key": "same-id" },
+  ];
+
+  for (const headers of deliveries) {
+    expect(fixture.service.webhook(routine.id, headers, body).outcome).toBe(
+      "accepted",
+    );
+  }
+
+  await fixture.reopen();
+
+  for (const headers of deliveries) {
+    expect(fixture.service.webhook(routine.id, headers, body).outcome).toBe(
+      "duplicate",
+    );
+  }
+
+  const state = fixture.service.list(fixture.agent.id);
+  expect(state.runs).toHaveLength(2);
+  expect(state.runs.every((run) => run.payload === body.toString())).toBe(true);
+  expect(JSON.stringify(state)).not.toContain(secret);
+});
+
+it("filters by native event headers and acknowledges GitHub pings without starting runs", async () => {
+  await using fixture = await setup();
+  const routine = fixture.service.save(
+    fixture.agent.id,
+    definition({
+      trigger: {
+        kind: "webhook",
+        eventType: "Merge Request Hook",
+        filters: [],
+      },
+    }),
+  );
+  const { secret } = fixture.service.rotate(routine.id);
+  const body = Buffer.from('{"object_kind":"merge_request"}');
+  expect(
+    fixture.service.webhook(
+      routine.id,
+      {
+        "x-gitlab-token": secret,
+        "x-gitlab-event": "Merge Request Hook",
+      },
+      body,
+    ).outcome,
+  ).toBe("accepted");
+  expect(
+    fixture.service.webhook(
+      routine.id,
+      {
+        "x-gitlab-token": secret,
+        "x-gitlab-event": "Push Hook",
+      },
+      body,
+    ).outcome,
+  ).toBe("filtered");
+  fixture.service.save(
+    fixture.agent.id,
+    { ...routine, trigger: { kind: "webhook", filters: [] } },
+    routine.id,
+    "user",
+    routine.revision,
+  );
+  expect(
+    fixture.service.webhook(
+      routine.id,
+      {
+        "x-github-event": "ping",
+        "x-github-delivery": "ping-1",
+        "x-hub-signature-256": `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`,
+      },
+      body,
+    ).outcome,
+  ).toBe("filtered");
+  expect(fixture.service.list(fixture.agent.id).runs).toHaveLength(1);
+});
+
+it("does not consume a delivery ID when payload validation fails and revokes imported tokens", async () => {
+  await using fixture = await setup();
+  const routine = fixture.service.save(
+    fixture.agent.id,
+    definition({ trigger: { kind: "webhook", filters: [] } }),
+  );
+  fixture.service.rotate(routine.id, "imported-token");
+  const headers = {
+    authorization: "Bearer imported-token",
+    "idempotency-key": "retry",
+  };
+  expect(() =>
+    fixture.service.webhook(routine.id, headers, Buffer.from("invalid")),
+  ).toThrow("JSON");
+  expect(
+    fixture.service.webhook(routine.id, headers, Buffer.from("{}")).outcome,
+  ).toBe("accepted");
+  fixture.service.rotate(routine.id);
+  expect(() =>
+    fixture.service.webhook(routine.id, headers, Buffer.from("{}")),
+  ).toThrow("token");
 });

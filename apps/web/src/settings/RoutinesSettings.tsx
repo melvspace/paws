@@ -255,7 +255,7 @@ export function RoutinesSettings({
         setSecretBlocked(true);
 
         throw new Error(
-          "Acknowledge the signing secret before leaving settings.",
+          "Acknowledge the webhook secret before leaving settings.",
         );
       }
     };
@@ -325,7 +325,7 @@ export function RoutinesSettings({
         ))}
         {secret && (
           <div className="settings-group routine-secret">
-            <p>Copy this signing secret now. It is shown once.</p>
+            <p>Copy this webhook secret now. It is shown once.</p>
             {secretBlocked && (
               <p role="alert">
                 Copy and dismiss this secret before leaving settings.
@@ -336,14 +336,14 @@ export function RoutinesSettings({
               <Input readOnly value={secret.endpoint} />
             </label>
             <label>
-              Signing secret
+              Webhook secret
               <Input readOnly value={secret.secret} />
             </label>
             <p>
-              POST JSON with X-Paws-Timestamp (Unix seconds), X-Paws-Signature
-              (hex HMAC-SHA256 of timestamp + “.” + raw body), and optional
-              X-Paws-Delivery-Id. Public delivery requires your configured
-              ingress.
+              GitHub, GitLab, and Standard Webhooks (HMAC) are recognized
+              automatically. Use this secret in the sender’s webhook settings.
+              Other senders can POST JSON with Authorization: Bearer followed by
+              this secret.
             </p>
             <Button
               onClick={() => {
@@ -517,6 +517,8 @@ function RoutineEditor({
   const [draft, setDraft] = useState<SaveRoutine>(routine ?? defaultRoutine());
   const current = useRef(draft);
   const saved = useRef(routine ? JSON.stringify(draft) : "");
+  const senderSecret = useRef("");
+  const [secretDraft, setSecretDraft] = useState("");
   const version = useRef(routine?.revision);
   const routineId = useRef(routine?.id);
   const failedCreation = useRef(false);
@@ -537,6 +539,11 @@ function RoutineEditor({
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   function change(next: Partial<SaveRoutine>) {
+    if (next.trigger && next.trigger.kind !== "webhook") {
+      senderSecret.current = "";
+      setSecretDraft("");
+    }
+
     current.current = { ...current.current, ...next };
     setDraft(current.current);
     setError(null);
@@ -552,24 +559,44 @@ function RoutineEditor({
         do {
           const next = current.current;
 
-          if (saved.current === JSON.stringify(next)) break;
+          if (saved.current === JSON.stringify(next) && !senderSecret.current)
+            break;
           if (!connected) throw new Error("Reconnect to save your changes.");
 
-          const result = await saveRoutine(
-            agentId,
-            next,
-            routineId.current,
-            version.current,
-          );
-          pendingRoutine.current = result.routine;
-          routineId.current = result.routine.id;
-          failedCreation.current = false;
-          version.current = result.routine.revision;
-          saved.current = JSON.stringify(next);
-          onPersisted(result.routine);
+          if (saved.current !== JSON.stringify(next)) {
+            const result = await saveRoutine(
+              agentId,
+              next,
+              routineId.current,
+              version.current,
+            );
+            pendingRoutine.current = result.routine;
+            routineId.current = result.routine.id;
+            failedCreation.current = false;
+            version.current = result.routine.revision;
+            saved.current = JSON.stringify(next);
+            onPersisted(result.routine);
 
-          if (result.webhook) onSecret(result.webhook);
-        } while (saved.current !== JSON.stringify(current.current));
+            if (result.webhook) onSecret(result.webhook);
+          }
+
+          if (next.trigger.kind === "webhook" && senderSecret.current) {
+            const secret = senderSecret.current;
+            await routineRequest(
+              `${routinePath(agentId, routineId.current!)}/rotate`,
+              "POST",
+              { secret },
+            );
+
+            if (senderSecret.current === secret) {
+              senderSecret.current = "";
+              setSecretDraft("");
+            }
+          }
+        } while (
+          saved.current !== JSON.stringify(current.current) ||
+          !!senderSecret.current
+        );
 
         if (pendingRoutine.current) {
           onSaved(pendingRoutine.current);
@@ -718,7 +745,7 @@ function RoutineEditor({
     if (!routine || inFlight.current || secretPending) return;
     if (
       !window.confirm(
-        "Rotate the signing secret? Existing senders must use the new secret.",
+        "Rotate the webhook secret? Existing senders must use the new secret.",
       )
     )
       return;
@@ -995,6 +1022,24 @@ function RoutineEditor({
             />
           </label>
         )}
+        {routine && draft.trigger.kind === "webhook" && (
+          <label className="settings-row">
+            Sender secret
+            <Input
+              type="password"
+              autoComplete="new-password"
+              aria-description="Paste a secret generated by your webhook sender to replace the current secret."
+              disabled={!connected || secretPending}
+              value={secretDraft}
+              onChange={(event) => {
+                senderSecret.current = event.target.value;
+                setSecretDraft(event.target.value);
+                setError(null);
+              }}
+              onBlur={blur}
+            />
+          </label>
+        )}
         {draft.trigger.kind === "webhook" && (
           <>
             <label className="settings-row">
@@ -1197,7 +1242,7 @@ function RoutineEditor({
                 disabled={!connected || pending || secretPending}
                 onClick={rotateSecret}
               >
-                Rotate signing secret
+                Rotate webhook secret
               </Button>
             )}
             <Button

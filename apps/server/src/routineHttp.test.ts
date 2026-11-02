@@ -186,3 +186,83 @@ it("rejects malformed raw request targets and keeps both listeners alive", async
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it("imports sender secrets privately and receives native webhooks through the ingress listener", async () => {
+  await mkdir("/tmp/codex", { recursive: true });
+  const root = await mkdtemp("/tmp/codex/paws-routine-http-");
+  const agents = makeAgentService(root);
+  const agent = await Effect.runPromise(agents.create({ name: "Ada" }));
+  agents.close();
+  const app = createServer(root);
+  await app.routines.ready;
+
+  try {
+    app.server.listen(0, "127.0.0.1");
+    app.webhookServer.listen(0, "127.0.0.1");
+    await Promise.all([
+      once(app.server, "listening"),
+      once(app.webhookServer, "listening"),
+    ]);
+    const management = app.server.address();
+    const ingress = app.webhookServer.address();
+
+    if (
+      !management ||
+      typeof management === "string" ||
+      !ingress ||
+      typeof ingress === "string"
+    )
+      throw new Error("Expected listeners.");
+
+    const routine = app.routines.save(agent.id, {
+      name: "Incoming",
+      instruction: "Summarize",
+      enabled: true,
+      trigger: { kind: "webhook", eventType: "Push Hook", filters: [] },
+      missed: "skip",
+      timeoutMinutes: 60,
+    });
+    const endpoint = `http://127.0.0.1:${ingress.port}/hooks/routines/${routine.id}`;
+    const managementPath = `http://127.0.0.1:${management.port}/api/agents/${agent.id}/routines/${routine.id}/rotate`;
+    const imported = await fetch(managementPath, {
+      method: "POST",
+      body: JSON.stringify({ secret: "external-secret" }),
+    });
+    expect(imported.status).toBe(200);
+    const options = {
+      method: "POST",
+      headers: {
+        "x-gitlab-token": "external-secret",
+        "x-gitlab-event": "Push Hook",
+        "idempotency-key": "push-1",
+      },
+      body: '{"object_kind":"push"}',
+    };
+    const accepted = await fetch(endpoint, options);
+    expect(accepted.status).toBe(202);
+    expect(await accepted.json()).toMatchObject({ outcome: "accepted" });
+    expect(await (await fetch(endpoint, options)).json()).toEqual({
+      outcome: "duplicate",
+    });
+    expect(
+      (await fetch(managementPath, { method: "POST", body: '{"secret":""}' }))
+        .status,
+    ).toBe(400);
+    expect(
+      (
+        await fetch(endpoint, {
+          ...options,
+          headers: { "x-gitlab-token": "wrong" },
+        })
+      ).status,
+    ).toBe(401);
+    expect(JSON.stringify(app.routines.list(agent.id))).not.toContain(
+      "external-secret",
+    );
+    expect((await fetch(managementPath, { method: "POST" })).status).toBe(200);
+    expect((await fetch(endpoint, options)).status).toBe(401);
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

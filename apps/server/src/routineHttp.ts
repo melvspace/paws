@@ -134,9 +134,13 @@ export async function routineHttp(
       else if (request.method === "DELETE" && id) {
         await service.remove(id);
         result = { deleted: true };
-      } else if (request.method === "POST" && id && match[3] === "rotate")
-        result = service.rotate(id);
-      else if (request.method === "POST" && id && match[3] === "run") {
+      } else if (request.method === "POST" && id && match[3] === "rotate") {
+        const raw = await body(request, 4096);
+        const input = Schema.decodeUnknownSync(
+          Schema.Struct({ secret: Schema.optional(Schema.String) }),
+        )(raw.length ? JSON.parse(raw.toString()) : {});
+        result = service.rotate(id, input.secret);
+      } else if (request.method === "POST" && id && match[3] === "run") {
         const input = Schema.decodeUnknownSync(
           Schema.Struct({ payload: Schema.optional(Schema.String) }),
         )(JSON.parse((await body(request, 300000)).toString()));

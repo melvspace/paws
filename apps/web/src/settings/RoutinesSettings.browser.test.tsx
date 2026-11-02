@@ -562,7 +562,7 @@ it.each(["success", "failure"])(
     try {
       await using _screen = await render(<RoutinesPanel onDismiss={dismiss} />);
       await page.getByRole("button", { name: "Digest", exact: true }).click();
-      await page.getByRole("button", { name: "Rotate signing secret" }).click();
+      await page.getByRole("button", { name: "Rotate webhook secret" }).click();
       const instruction = page.getByRole("textbox", {
         name: "Instruction",
         exact: true,
@@ -584,7 +584,7 @@ it.each(["success", "failure"])(
       if (result === "success") {
         await expect
           .element(
-            page.getByRole("textbox", { name: "Signing secret", exact: true }),
+            page.getByRole("textbox", { name: "Webhook secret", exact: true }),
           )
           .toHaveValue("rotated-secret");
         await expect
@@ -596,7 +596,7 @@ it.each(["success", "failure"])(
         expect(writes).toEqual([1]);
         await expect.element(instruction).toHaveValue("Edited during rotation");
         await expect
-          .element(page.getByRole("button", { name: "Rotate signing secret" }))
+          .element(page.getByRole("button", { name: "Rotate webhook secret" }))
           .toBeDisabled();
         await page.getByRole("button", { name: "Back to routines" }).click();
         await expect
@@ -607,7 +607,7 @@ it.each(["success", "failure"])(
           .click();
         await expect
           .element(
-            page.getByRole("textbox", { name: "Signing secret", exact: true }),
+            page.getByRole("textbox", { name: "Webhook secret", exact: true }),
           )
           .toBeVisible();
         await page.getByRole("button", { name: "Dismiss secret" }).click();
@@ -622,11 +622,11 @@ it.each(["success", "failure"])(
         expect(dismiss).not.toHaveBeenCalled();
         await expect.element(instruction).toHaveValue("Edited during rotation");
         await expect
-          .element(page.getByRole("button", { name: "Rotate signing secret" }))
+          .element(page.getByRole("button", { name: "Rotate webhook secret" }))
           .toBeEnabled();
         await expect
           .element(
-            page.getByRole("textbox", { name: "Signing secret", exact: true }),
+            page.getByRole("textbox", { name: "Webhook secret", exact: true }),
           )
           .not.toBeInTheDocument();
       }
@@ -669,7 +669,7 @@ it.each(["trigger", "deletion"])(
       await page
         .getByRole("button", { name: "Delete routine", exact: true })
         .click();
-      await page.getByRole("button", { name: "Rotate signing secret" }).click();
+      await page.getByRole("button", { name: "Rotate webhook secret" }).click();
       const guarded =
         control === "trigger"
           ? page.getByRole("combobox", { name: "Trigger", exact: true })
@@ -680,7 +680,7 @@ it.each(["trigger", "deletion"])(
       );
       await expect
         .element(
-          page.getByRole("textbox", { name: "Signing secret", exact: true }),
+          page.getByRole("textbox", { name: "Webhook secret", exact: true }),
         )
         .toHaveValue("rotated-secret");
       await expect.element(guarded).toBeDisabled();
@@ -1191,7 +1191,7 @@ it.each([
         await page.getByRole("button", { name: "Discard edits" }).click();
         await expect
           .element(
-            page.getByRole("textbox", { name: "Signing secret", exact: true }),
+            page.getByRole("textbox", { name: "Webhook secret", exact: true }),
           )
           .toHaveValue("original-secret");
         await expect
@@ -1222,7 +1222,7 @@ it.each([
       }
       await expect
         .element(
-          page.getByRole("textbox", { name: "Signing secret", exact: true }),
+          page.getByRole("textbox", { name: "Webhook secret", exact: true }),
         )
         .toHaveValue("original-secret");
     }
@@ -1251,7 +1251,7 @@ it.each([
       expect(dismiss).not.toHaveBeenCalled();
       await expect
         .element(
-          page.getByRole("textbox", { name: "Signing secret", exact: true }),
+          page.getByRole("textbox", { name: "Webhook secret", exact: true }),
         )
         .toHaveValue("original-secret");
       await page.getByRole("button", { name: "Dismiss secret" }).click();
@@ -1460,6 +1460,77 @@ it.each(["accepted", "failed"])(
     } finally {
       finish(Response.json({ status: "queued" }));
       fetchMock.mockRestore();
+    }
+  },
+);
+
+it.each(["success", "failure"])(
+  "flushes an imported sender secret before dismissal and retains %s feedback",
+  async (result) => {
+    const routine: Routine = {
+      ...routineListFixture(),
+      trigger: { kind: "webhook", filters: [] },
+    };
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    const imported: unknown[] = [];
+    const requests = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async (input, init) => {
+        if (String(input) === "/api/routine-preview") return Response.json([]);
+        if (String(input).endsWith("/rotate")) {
+          imported.push(JSON.parse(String(init?.body)));
+
+          return pending;
+        }
+
+        expect(init?.method).not.toBe("PATCH");
+
+        return Response.json({ routines: [routine], runs: [], events: [] });
+      });
+    const dismiss = vi.fn();
+
+    try {
+      await using _screen = await render(<RoutinesPanel onDismiss={dismiss} />);
+      await page.getByRole("button", { name: "Digest", exact: true }).click();
+      const input = page.getByLabelText("Sender secret", { exact: true });
+      await input.fill("sender-generated-secret");
+      await page
+        .getByRole("button", { name: "Close settings", exact: true })
+        .click();
+      await expect
+        .poll(() => imported)
+        .toEqual([{ secret: "sender-generated-secret" }]);
+      expect(dismiss).not.toHaveBeenCalled();
+      finish(
+        result === "success"
+          ? Response.json({
+              endpoint: "/hooks/digest",
+              secret: "sender-generated-secret",
+            })
+          : Response.json({ error: "Secret update failed." }, { status: 500 }),
+      );
+
+      if (result === "success") {
+        await expect.poll(() => dismiss.mock.calls.length).toBe(1);
+        await expect.element(input).toHaveValue("");
+      } else {
+        await expect
+          .element(page.getByRole("alert"))
+          .toHaveTextContent("Secret update failed.");
+        await expect.element(input).toHaveValue("sender-generated-secret");
+        expect(dismiss).not.toHaveBeenCalled();
+      }
+    } finally {
+      finish(
+        Response.json({
+          endpoint: "/hooks/digest",
+          secret: "sender-generated-secret",
+        }),
+      );
+      requests.mockRestore();
     }
   },
 );

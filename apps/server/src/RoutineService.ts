@@ -1,9 +1,4 @@
-import {
-  randomUUID,
-  randomBytes,
-  createHmac,
-  timingSafeEqual,
-} from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
@@ -30,6 +25,11 @@ import {
   advanceRoutineTime,
   matchesRoutineEvent,
 } from "./routineSchedule.ts";
+import {
+  verifyWebhook,
+  webhookSecret,
+  type WebhookDelivery,
+} from "./webhooks.ts";
 
 const DAY = 86400000;
 export const routineLimits = {
@@ -290,11 +290,11 @@ export function makeRoutineService(
     return routine;
   }
 
-  function rotate(id: string) {
+  function rotate(id: string, value?: string) {
     if (find(id).trigger.kind !== "webhook")
       throw new ChatError(400, "This routine has no webhook.");
 
-    const secret = randomBytes(32).toString("hex");
+    const secret = webhookSecret(value);
     db.prepare(
       "INSERT INTO routine_secrets VALUES (?,?) ON CONFLICT(id) DO UPDATE SET secret=excluded.secret",
     ).run(id, secret);
@@ -657,47 +657,32 @@ export function makeRoutineService(
     if (Number(recent?.count) >= limits.requestsPerMinute)
       throw new ChatError(429, "Webhook rate limit reached. Retry later.");
 
-    const timestamp = headers["x-paws-timestamp"];
-    const signature = headers["x-paws-signature"];
-    const deliveryId = headers["x-paws-delivery-id"];
+    if (routine.trigger.kind !== "webhook")
+      throw new ChatError(404, "Webhook not found.");
+
     const row = db
       .prepare("SELECT secret FROM routine_secrets WHERE id = ?")
       .get(id);
+    let delivery: WebhookDelivery;
 
-    if (routine.trigger.kind !== "webhook")
-      throw new ChatError(404, "Webhook not found.");
-    if (
-      !row ||
-      typeof timestamp !== "string" ||
-      !/^\d{10}$/.test(timestamp) ||
-      Math.abs(Date.now() - Number(timestamp) * 1000) > 300000 ||
-      typeof signature !== "string" ||
-      !/^[a-f0-9]{64}$/.test(signature)
-    ) {
+    try {
+      if (!row) throw new ChatError(401, "Webhook secret is not configured.");
+
+      delivery = verifyWebhook({ headers, body, secret: String(row.secret) });
+    } catch (error) {
       event(id, "rejected_authentication");
-      throw new ChatError(401, "Invalid webhook signature or timestamp.");
+
+      throw error;
     }
 
-    const expected = createHmac("sha256", String(row.secret))
-      .update(`${timestamp}.`)
-      .update(body)
-      .digest();
-
-    if (!timingSafeEqual(expected, Buffer.from(signature, "hex"))) {
-      event(id, "rejected_authentication");
-      throw new ChatError(401, "Invalid webhook signature.");
-    }
+    const deliveryId = delivery.deliveryId
+      ? `${delivery.source}:${delivery.deliveryId}`
+      : undefined;
 
     if (!routine.enabled) {
       event(id, "rejected_paused");
       throw new ChatError(409, "Routine is paused.");
     }
-    if (
-      typeof deliveryId !== "undefined" &&
-      (typeof deliveryId !== "string" ||
-        !/^[a-zA-Z0-9_.:-]{1,200}$/.test(deliveryId))
-    )
-      throw new ChatError(400, "Invalid delivery ID.");
     if (
       deliveryId &&
       db
@@ -711,8 +696,11 @@ export function makeRoutineService(
       return { outcome: "duplicate" };
     }
 
-    if (body.length > limits.webhookBytes)
+    if (body.length > limits.webhookBytes) {
+      event(id, "rejected_payload");
+
       throw new ChatError(413, "Payload too large.");
+    }
 
     let payload: unknown;
 
@@ -725,9 +713,11 @@ export function makeRoutineService(
     db.exec("BEGIN IMMEDIATE");
 
     try {
-      const run = matchesRoutineEvent(routine.trigger, payload)
-        ? enqueue(id, "webhook", body.toString("utf8"))
-        : undefined;
+      const run =
+        !delivery.ignore &&
+        matchesRoutineEvent(routine.trigger, payload, delivery.eventType)
+          ? enqueue(id, "webhook", body.toString("utf8"))
+          : undefined;
 
       if (deliveryId)
         db.prepare("INSERT INTO routine_deliveries VALUES (?,?,?)").run(

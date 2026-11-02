@@ -129,7 +129,7 @@ const routineTool = {
   type: "function",
   name: "paws_routine",
   description:
-    "Manage your own routines and history. list; save with routine {name,instruction,enabled,trigger,missed:skip/latest,timeoutMinutes}, id/revision for updates; delete/run with id; history with optional run id or text search; message with text to main chat. trigger is {kind:once,at:ISO date}, {kind:interval,minutes}, {kind:cron,expression:five fields,timezone:IANA}, or {kind:webhook,filters:[{path,operator:equals/in/exists,value?}],eventType?}. Manual webhook run needs payload JSON string. User controls signing secrets.",
+    "Manage your own routines and history. list; save with routine {name,instruction,enabled,trigger,missed:skip/latest,timeoutMinutes}, id/revision for updates; delete/run with id; history with optional run id or text search; message with text to main chat. trigger is {kind:once,at:ISO date}, {kind:interval,minutes}, {kind:cron,expression:five fields,timezone:IANA}, or {kind:webhook,filters:[{path,operator:equals/in/exists,value?}],eventType?}. Manual webhook run needs payload JSON string. User controls webhook secrets. GitHub, GitLab, Standard Webhooks HMAC, and bearer authentication are detected automatically; eventType matches the native event header or payload type.",
   inputSchema: {
     type: "object",
     properties: {
