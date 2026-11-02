@@ -13,9 +13,11 @@ import {
   type CreateAgent,
   type UpdateAgent,
 } from "@paws/contracts";
+import { migrateAgents } from "./agentMigration.ts";
 import { validateIntegrations } from "./teamIntegrations.ts";
 import {
   provisionWorkspace,
+  workspaceLayout,
   placeWorkspace,
   stopEnvironment,
 } from "@paws/runtime";
@@ -50,7 +52,10 @@ export function makeAgentService(
   db.exec(
     "CREATE TABLE IF NOT EXISTS teams (id TEXT PRIMARY KEY, data TEXT NOT NULL)",
   );
+  migrateAgents(db);
   const transitions = new Set<string>();
+  const deletingTeams = new Set<string>();
+  const pendingTeams = new Map<string, string | null>();
 
   const decodeTeam = Schema.decodeUnknownSync(Team);
   const listTeams = Effect.fn("AgentService.listTeams")(() =>
@@ -64,6 +69,9 @@ export function makeAgentService(
   const saveTeam = Effect.fn("AgentService.saveTeam")(
     (input: UpdateTeam & { template?: string | undefined }, id?: string) =>
       Effect.try(() => {
+        if (id && deletingTeams.has(id))
+          throw new Error("Team environment is changing.");
+
         const row = id
           ? db.prepare("SELECT data FROM teams WHERE id = ?").get(id)
           : undefined;
@@ -136,22 +144,43 @@ export function makeAgentService(
         return team;
       }),
   );
-  const removeTeam = Effect.fn("AgentService.removeTeam")((id: string) =>
-    Effect.try(() => {
-      const members = db
-        .prepare(
-          "SELECT id FROM agents WHERE json_extract(data, '$.teamId') = ?",
-        )
-        .all(id);
+  const removeTeam = Effect.fn("AgentService.removeTeam")(
+    (id: string, cleanup: () => Promise<void> = async () => {}) =>
+      Effect.tryPromise(async () => {
+        if (deletingTeams.has(id))
+          throw new Error("Team environment is changing.");
 
-      if (members.length)
-        throw new Error("Move the team's agents before deleting it.");
+        if (!db.prepare("SELECT id FROM teams WHERE id = ?").get(id))
+          return false;
 
-      return db.prepare("DELETE FROM teams WHERE id = ?").run(id).changes > 0;
-    }),
+        const members = db
+          .prepare(
+            "SELECT id FROM agents WHERE json_extract(data, '$.teamId') = ?",
+          )
+          .all(id);
+
+        if (members.length || [...pendingTeams.values()].includes(id))
+          throw new Error("Move the team's agents before deleting it.");
+
+        deletingTeams.add(id);
+
+        try {
+          await cleanup();
+          await stopEnvironment(root, id, "team");
+
+          return (
+            db.prepare("DELETE FROM teams WHERE id = ?").run(id).changes > 0
+          );
+        } finally {
+          deletingTeams.delete(id);
+        }
+      }),
   );
 
   function validateTeam(id: string | null) {
+    if (id && deletingTeams.has(id))
+      throw new Error("Team environment is changing.");
+
     if (
       id !== null &&
       !db.prepare("SELECT id FROM teams WHERE id = ?").get(id)
@@ -197,22 +226,29 @@ export function makeAgentService(
         status: "configured",
         createdAt: new Date().toISOString(),
       };
-      const layout = await provisionWorkspace(root, agent.id, agent.teamId);
+      pendingTeams.set(id, agent.teamId ?? null);
 
       try {
-        db.prepare("INSERT INTO agents (id, data) VALUES (?, ?)").run(
-          agent.id,
-          JSON.stringify(agent),
-        );
-      } catch (error) {
-        const actual = await Fs.promises.realpath(layout.base);
-        await Fs.promises.unlink(layout.base);
-        await Fs.promises.rm(actual, { recursive: true, force: true });
+        await provisionWorkspace(root, agent.id, agent.teamId);
+        const layout = workspaceLayout(root, agent.id);
 
-        throw error;
+        try {
+          db.prepare("INSERT INTO agents (id, data) VALUES (?, ?)").run(
+            agent.id,
+            JSON.stringify(agent),
+          );
+        } catch (error) {
+          const actual = await Fs.promises.realpath(layout.base);
+          await Fs.promises.unlink(layout.base);
+          await Fs.promises.rm(actual, { recursive: true, force: true });
+
+          throw error;
+        }
+
+        return agent;
+      } finally {
+        pendingTeams.delete(id);
       }
-
-      return agent;
     }),
   );
 
@@ -286,6 +322,7 @@ export function makeAgentService(
 
         const teamId = validateTeam(input.toTeamId);
         transitions.add(id);
+        pendingTeams.set(id, teamId);
 
         try {
           if (!agent.teamId && agent.sandbox)
@@ -307,18 +344,34 @@ export function makeAgentService(
 
           return moved;
         } finally {
+          pendingTeams.delete(id);
           transitions.delete(id);
         }
       }),
   );
 
-  const remove = Effect.fn("AgentService.remove")((id: string) =>
-    Effect.try(() => {
-      if (transitions.has(id))
-        throw new Error("Agent environment is changing.");
+  const remove = Effect.fn("AgentService.remove")(
+    (id: string, cleanup: () => Promise<void> = async () => {}) =>
+      Effect.tryPromise(async () => {
+        if (transitions.has(id))
+          throw new Error("Agent environment is changing.");
 
-      return db.prepare("DELETE FROM agents WHERE id = ?").run(id).changes > 0;
-    }),
+        if (!db.prepare("SELECT id FROM agents WHERE id = ?").get(id))
+          return false;
+
+        transitions.add(id);
+
+        try {
+          await cleanup();
+          await stopEnvironment(root, id, "agent");
+
+          return (
+            db.prepare("DELETE FROM agents WHERE id = ?").run(id).changes > 0
+          );
+        } finally {
+          transitions.delete(id);
+        }
+      }),
   );
 
   return {

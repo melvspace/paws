@@ -171,3 +171,95 @@ it("rejects unknown animals and colors at the wire boundary", () => {
     }
   }
 });
+
+it("migrates legacy memberships and retired integrations idempotently while archiving originals", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { randomUUID } = await import("node:crypto");
+  const root = await temporaryRoot();
+  const db = new DatabaseSync(Path.join(root, "state.sqlite"));
+  const first = randomUUID();
+  const second = randomUUID();
+  const id = randomUUID();
+  const hostId = randomUUID();
+  const createdAt = new Date().toISOString();
+  const original = {
+    id,
+    name: "Legacy",
+    provider: "codex",
+    status: "configured",
+    teamIds: [first, second],
+    createdAt,
+  };
+  const cli = { id: "old-cli", kind: "cli", command: "tool", args: ["run"] };
+  db.exec("CREATE TABLE agents (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  db.exec("CREATE TABLE teams (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+
+  for (const teamId of [first, second]) {
+    db.prepare("INSERT INTO teams VALUES (?, ?)").run(
+      teamId,
+      JSON.stringify({
+        id: teamId,
+        name: "Legacy team",
+        memory: "",
+        integrations: [
+          cli,
+          { id: "remote", kind: "mcp-http", url: "https://example.com/mcp" },
+        ],
+        createdAt,
+      }),
+    );
+  }
+
+  db.prepare("INSERT INTO agents VALUES (?, ?)").run(
+    id,
+    JSON.stringify(original),
+  );
+  db.prepare("INSERT INTO agents VALUES (?, ?)").run(
+    hostId,
+    JSON.stringify({ ...original, id: hostId, teamIds: undefined }),
+  );
+  db.close();
+
+  try {
+    for (let restart = 0; restart < 2; restart++) {
+      const service = makeAgentService(root);
+
+      try {
+        expect(await Effect.runPromise(service.list())).toMatchObject([
+          { id, teamId: first, sandbox: true },
+          { id: hostId, teamId: null, sandbox: true },
+        ]);
+        expect(
+          (await Effect.runPromise(service.listTeams()))[0]?.integrations,
+        ).toEqual([
+          { id: "remote", kind: "mcp-http", url: "https://example.com/mcp" },
+        ]);
+      } finally {
+        service.close();
+      }
+    }
+
+    const archived = new DatabaseSync(Path.join(root, "state.sqlite"));
+
+    try {
+      expect(
+        JSON.parse(
+          String(
+            archived
+              .prepare(
+                "SELECT data FROM environment_migration_archive WHERE entity = 'agents' AND id = ?",
+              )
+              .get(id)?.data,
+          ),
+        ),
+      ).toEqual(original);
+      expect(
+        archived.prepare("SELECT * FROM environment_migration_archive").all(),
+      ).toHaveLength(4);
+    } finally {
+      archived.close();
+    }
+  } finally {
+    await Fs.rm(root, { recursive: true, force: true });
+  }
+});

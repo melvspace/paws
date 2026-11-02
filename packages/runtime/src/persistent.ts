@@ -70,6 +70,7 @@ export interface Environment {
   teamId?: string | null;
   sandbox?: boolean;
   template?: string | undefined;
+  ephemeral?: boolean;
 }
 
 export function environmentName(
@@ -96,7 +97,7 @@ export async function ensureEnvironment(
   const teamId = environment.teamId;
   const name = environmentName(
     root,
-    teamId ?? agentId,
+    environment.ephemeral ? randomUUID() : (teamId ?? agentId),
     teamId ? "team" : "agent",
   );
   const pending = preparations.get(name);
@@ -105,90 +106,106 @@ export async function ensureEnvironment(
 
   const preparation = (async () => {
     let exists = true;
+    let created = false;
 
     try {
-      await exec("docker", ["container", "inspect", name], { timeout: 10_000 });
-    } catch (error) {
-      // A daemon outage is not evidence that a persisted environment is absent.
-      if (
-        !error ||
-        typeof error !== "object" ||
-        !("stderr" in error) ||
-        typeof error.stderr !== "string" ||
-        !/No such (container|object)/i.test(error.stderr)
-      )
-        throw error;
+      try {
+        await exec("docker", ["container", "inspect", name], {
+          timeout: 10_000,
+        });
+      } catch (error) {
+        // A daemon outage is not evidence that a persisted environment is absent.
+        if (
+          !error ||
+          typeof error !== "object" ||
+          !("stderr" in error) ||
+          typeof error.stderr !== "string" ||
+          !/No such (container|object)/i.test(error.stderr)
+        )
+          throw error;
 
-      exists = false;
-    }
+        exists = false;
+      }
 
-    if (!exists) {
-      const source = teamId
-        ? join(root, "teams", teamId)
-        : join(root, "standalone", agentId);
-      await mkdir(source, { recursive: true, mode: 0o700 });
+      if (!exists) {
+        const source = teamId
+          ? join(root, "teams", teamId)
+          : join(root, "standalone", agentId);
+        await mkdir(source, { recursive: true, mode: 0o700 });
+        await exec(
+          "docker",
+          [
+            "create",
+            "--name",
+            name,
+            "--label",
+            "app=paws",
+            ...(environment.ephemeral
+              ? ["--rm", "--restart=no"]
+              : ["--restart=unless-stopped"]),
+            "--init",
+            "--cap-drop=ALL",
+            ...[
+              "CHOWN",
+              "DAC_OVERRIDE",
+              "FOWNER",
+              "SETUID",
+              "SETGID",
+              "AUDIT_WRITE",
+              "KILL",
+            ].flatMap((cap) => ["--cap-add", cap]),
+            "--pids-limit=1024",
+            "--memory=4g",
+            "--cpus=4",
+            "--user=0:0",
+            "--mount",
+            `type=bind,src=${resolve(source)},dst=${teamId ? "/team" : "/agent"}`,
+            "--env=DEBIAN_FRONTEND=noninteractive",
+            environment.template ?? template,
+            "sleep",
+            "infinity",
+          ],
+          { timeout: 120_000 },
+        );
+        created = true;
+      }
+
+      if (!environment.ephemeral) {
+        await mkdir(join(root, "runtime", "environments"), {
+          recursive: true,
+          mode: 0o700,
+        });
+        await writeFile(join(root, "runtime", "environments", name), "", {
+          mode: 0o600,
+        });
+      }
+
+      await exec("docker", ["start", name], { timeout: 30_000 });
+      // Ordinary files use the server's uid; sudo grants full control inside this
+      // environment without making every private home/file host-root-owned.
       await exec(
         "docker",
         [
-          "create",
-          "--name",
-          name,
-          "--label",
-          "app=paws",
-          "--restart=unless-stopped",
-          "--init",
-          "--cap-drop=ALL",
-          ...[
-            "CHOWN",
-            "DAC_OVERRIDE",
-            "FOWNER",
-            "SETUID",
-            "SETGID",
-            "AUDIT_WRITE",
-            "KILL",
-          ].flatMap((cap) => ["--cap-add", cap]),
-          "--pids-limit=1024",
-          "--memory=4g",
-          "--cpus=4",
+          "exec",
           "--user=0:0",
-          "--mount",
-          `type=bind,src=${resolve(source)},dst=${teamId ? "/team" : "/agent"}`,
-          "--env=DEBIAN_FRONTEND=noninteractive",
-          environment.template ?? template,
-          "sleep",
-          "infinity",
+          name,
+          "/bin/sh",
+          "-c",
+          'if ! getent group "$2" >/dev/null; then groupadd --gid "$2" paws; fi; if ! getent passwd "$1" >/dev/null; then useradd --no-create-home --uid "$1" --gid "$2" --shell /bin/bash --password "*" paws; fi; mkdir -p /etc/sudoers.d; printf "#%s ALL=(ALL) NOPASSWD: ALL\\n" "$1" > /etc/sudoers.d/paws; chmod 440 /etc/sudoers.d/paws',
+          "paws-identity",
+          String(process.getuid?.() ?? 1000),
+          String(process.getgid?.() ?? 1000),
         ],
-        { timeout: 120_000 },
+        { timeout: 10_000 },
       );
+
+      return name;
+    } catch (error) {
+      if (environment.ephemeral && created)
+        await exec("docker", ["rm", "--force", name], { timeout: 30_000 });
+
+      throw error;
     }
-
-    await mkdir(join(root, "runtime", "environments"), {
-      recursive: true,
-      mode: 0o700,
-    });
-    await writeFile(join(root, "runtime", "environments", name), "", {
-      mode: 0o600,
-    });
-    await exec("docker", ["start", name], { timeout: 30_000 });
-    // Ordinary files use the server's uid; sudo grants full control inside this
-    // environment without making every private home/file host-root-owned.
-    await exec(
-      "docker",
-      [
-        "exec",
-        "--user=0:0",
-        name,
-        "/bin/sh",
-        "-c",
-        'if ! getent group "$2" >/dev/null; then groupadd --gid "$2" paws; fi; if ! getent passwd "$1" >/dev/null; then useradd --no-create-home --uid "$1" --gid "$2" --shell /bin/bash --password "*" paws; fi; mkdir -p /etc/sudoers.d; printf "#%s ALL=(ALL) NOPASSWD: ALL\\n" "$1" > /etc/sudoers.d/paws; chmod 440 /etc/sudoers.d/paws',
-        "paws-identity",
-        String(process.getuid?.() ?? 1000),
-        String(process.getgid?.() ?? 1000),
-      ],
-      { timeout: 10_000 },
-    );
-
-    return name;
   })();
   preparations.set(name, preparation);
 
@@ -386,6 +403,9 @@ export async function leaseToolRuntime(
           }).catch(() => {});
         else await rm(path, { force: true });
       }
+
+      if (name && environment.ephemeral)
+        await exec("docker", ["rm", "--force", name], { timeout: 30_000 });
     },
   } satisfies RuntimeLease & Record<string, unknown>;
 }
@@ -397,51 +417,68 @@ export async function leaseCodexRuntime(
   environment: Environment = {},
 ) {
   const lease = await leaseToolRuntime(root, agentId, environment);
-  const binary = await resolveExecutable(binaryPath || "codex");
-  let executable = binary;
 
-  if (lease.container) {
-    // Content addressing avoids replacing a binary another agent is executing.
-    const directory = `/opt/paws/harness/${createHash("sha256")
-      .update(await readFile(binary))
-      .digest("hex")
-      .slice(0, 16)}`;
-    await exec("docker", ["exec", lease.container, "mkdir", "-p", directory], {
-      timeout: 10_000,
-    });
-    for (const source of [
-      binary,
-      ...["codex-code-mode-host", "codex-exec-server"].map((helper) =>
-        join(dirname(binary), helper),
-      ),
-    ]) {
-      try {
-        await access(source);
-      } catch {
-        continue;
-      }
+  try {
+    const binary = await resolveExecutable(binaryPath || "codex");
+    let executable = binary;
 
-      const temporary = `${directory}/copy-${randomUUID()}`;
-      await exec("docker", ["cp", source, `${lease.container}:${temporary}`], {
-        timeout: 30_000,
-      });
+    if (lease.container) {
+      // Content addressing avoids replacing a binary another agent is executing.
+      const directory = `/opt/paws/harness/${createHash("sha256")
+        .update(await readFile(binary))
+        .digest("hex")
+        .slice(0, 16)}`;
       await exec(
         "docker",
-        [
-          "exec",
-          lease.container,
-          "mv",
-          temporary,
-          `${directory}/${basename(source)}`,
-        ],
-        { timeout: 10_000 },
+        ["exec", lease.container, "mkdir", "-p", directory],
+        {
+          timeout: 10_000,
+        },
       );
-    }
-    executable = `${directory}/${basename(binary)}`;
-  }
 
-  return {
-    ...lease,
-    ...lease.launch(executable, ["app-server", "--listen", "stdio://"]),
-  };
+      for (const source of [
+        binary,
+        ...["codex-code-mode-host", "codex-exec-server"].map((helper) =>
+          join(dirname(binary), helper),
+        ),
+      ]) {
+        try {
+          await access(source);
+        } catch {
+          continue;
+        }
+
+        const temporary = `${directory}/copy-${randomUUID()}`;
+        await exec(
+          "docker",
+          ["cp", source, `${lease.container}:${temporary}`],
+          {
+            timeout: 30_000,
+          },
+        );
+        await exec(
+          "docker",
+          [
+            "exec",
+            lease.container,
+            "mv",
+            temporary,
+            `${directory}/${basename(source)}`,
+          ],
+          { timeout: 10_000 },
+        );
+      }
+
+      executable = `${directory}/${basename(binary)}`;
+    }
+
+    return {
+      ...lease,
+      ...lease.launch(executable, ["app-server", "--listen", "stdio://"]),
+    };
+  } catch (error) {
+    await lease.dispose();
+
+    throw error;
+  }
 }

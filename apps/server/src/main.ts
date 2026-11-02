@@ -15,7 +15,6 @@ import { teamMcpAuthHttp } from "./teamMcpAuth.ts";
 import { saveIntegrationSecrets } from "./teamIntegrations.ts";
 import { teamResources } from "./teamResources.ts";
 import { isAllowedRequestOrigin } from "./requestOrigin.ts";
-import { stopEnvironment } from "@paws/runtime";
 import * as Http from "node:http";
 import { homedir } from "node:os";
 import * as Path from "node:path";
@@ -254,10 +253,9 @@ export function createServer(
           return;
         }
 
-        const removed = await Effect.runPromise(agents.removeTeam(teamId));
-        await closeNativeMcpLogins(root, teamId);
-
-        if (removed) await stopEnvironment(root, teamId, "team");
+        const removed = await Effect.runPromise(
+          agents.removeTeam(teamId, () => closeNativeMcpLogins(root, teamId)),
+        );
         await broadcast();
         response.writeHead(removed ? 204 : 404).end();
 
@@ -277,16 +275,12 @@ export function createServer(
           return;
         }
 
-        const exists = (await Effect.runPromise(agents.list())).some(
-          (agent) => agent.id === agentId,
+        const removed = await Effect.runPromise(
+          agents.remove(agentId, async () => {
+            await routines.removeAgent(agentId);
+            await chat.remove(agentId);
+          }),
         );
-
-        if (exists) {
-          await routines.removeAgent(agentId);
-          await chat.remove(agentId);
-        }
-
-        const removed = await Effect.runPromise(agents.remove(agentId));
 
         if (!removed) {
           response
@@ -296,7 +290,6 @@ export function createServer(
           return;
         }
 
-        await stopEnvironment(root, agentId, "agent");
         await broadcast();
         response.writeHead(204).end();
 

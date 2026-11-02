@@ -61,7 +61,7 @@ export function teamMcpHarness(
           privateRoot,
           teamId,
           config.binaryPath,
-          { sandbox: true },
+          { sandbox: true, ephemeral: true },
         );
 
         try {

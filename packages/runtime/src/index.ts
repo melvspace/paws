@@ -52,6 +52,59 @@ export function resolveWorkspaceDirectory(
   return directory;
 }
 
+// Hold each parent directory open so a concurrent replacement cannot redirect a
+// move through a link supplied by a team container.
+function workspaceParent(root: string, relative: string) {
+  const descriptors: number[] = [];
+  const descriptorRoot =
+    process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";
+
+  try {
+    let directory = root;
+
+    for (const part of ["", ...relative.split(Path.sep)]) {
+      if (part) {
+        directory = Path.join(directory, part);
+
+        try {
+          SyncFs.mkdirSync(directory, { mode: 0o700 });
+        } catch (error) {
+          if (
+            !(
+              error instanceof Error &&
+              "code" in error &&
+              error.code === "EEXIST"
+            )
+          )
+            throw error;
+        }
+      }
+
+      const descriptor = SyncFs.openSync(
+        directory,
+        SyncFs.constants.O_RDONLY |
+          SyncFs.constants.O_DIRECTORY |
+          SyncFs.constants.O_NOFOLLOW,
+      );
+      descriptors.push(descriptor);
+      directory = Path.join(descriptorRoot, String(descriptor));
+    }
+
+    return {
+      directory,
+      close() {
+        for (const descriptor of descriptors.reverse())
+          SyncFs.closeSync(descriptor);
+      },
+    };
+  } catch (error) {
+    for (const descriptor of descriptors.reverse())
+      SyncFs.closeSync(descriptor);
+
+    throw error;
+  }
+}
+
 // The server-only alias keeps personal file references stable across team moves.
 export function placeWorkspace(
   root: string,
@@ -68,27 +121,68 @@ export function placeWorkspace(
   const existing = SyncFs.existsSync(layout.base)
     ? resolveWorkspaceDirectory(root, agentId, ".")
     : undefined;
-  SyncFs.mkdirSync(Path.dirname(destination), { recursive: true, mode: 0o700 });
 
-  if (existing !== destination) {
-    if (SyncFs.existsSync(destination))
-      throw new Error("Agent destination already exists.");
+  if (existing === destination) return layout;
 
-    if (existing) SyncFs.renameSync(existing, destination);
-    else SyncFs.mkdirSync(destination, { recursive: true, mode: 0o700 });
+  const wasAlias =
+    existing !== undefined && SyncFs.lstatSync(layout.base).isSymbolicLink();
+  const parent = workspaceParent(
+    root,
+    Path.relative(root, Path.dirname(destination)),
+  );
+  let source: ReturnType<typeof workspaceParent> | undefined;
+
+  try {
+    const target = Path.join(parent.directory, agentId);
 
     try {
-      if (existing) SyncFs.unlinkSync(layout.base);
-      SyncFs.symlinkSync(destination, layout.base, "dir");
+      SyncFs.lstatSync(target);
+      throw new Error("Agent destination already exists.");
     } catch (error) {
-      if (existing) {
-        SyncFs.renameSync(destination, existing);
-        if (!SyncFs.existsSync(layout.base))
-          SyncFs.symlinkSync(existing, layout.base, "dir");
-      }
+      if (
+        !(error instanceof Error && "code" in error && error.code === "ENOENT")
+      )
+        throw error;
+    }
+
+    if (existing)
+      source = workspaceParent(
+        root,
+        Path.relative(root, Path.dirname(existing)),
+      );
+
+    const original = source ? Path.join(source.directory, agentId) : undefined;
+
+    if (original) SyncFs.renameSync(original, target);
+    else SyncFs.mkdirSync(target, { mode: 0o700 });
+
+    try {
+      if (SyncFs.realpathSync(parent.directory) !== Path.dirname(destination))
+        throw new Error("Workspace destination changed during relocation.");
+
+      if (wasAlias) SyncFs.unlinkSync(layout.base);
+
+      SyncFs.symlinkSync(destination, layout.base, "dir");
+      resolveWorkspaceDirectory(root, agentId, ".");
+    } catch (error) {
+      if (
+        SyncFs.lstatSync(layout.base, {
+          throwIfNoEntry: false,
+        })?.isSymbolicLink()
+      )
+        SyncFs.unlinkSync(layout.base);
+
+      if (original) {
+        SyncFs.renameSync(target, original);
+
+        if (wasAlias) SyncFs.symlinkSync(existing!, layout.base, "dir");
+      } else SyncFs.rmdirSync(target);
 
       throw error;
     }
+  } finally {
+    source?.close();
+    parent.close();
   }
 
   return layout;

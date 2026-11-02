@@ -5,6 +5,8 @@ import {
   ensureEnvironment,
   environmentName,
   leaseToolRuntime,
+  leaseCodexRuntime,
+  stopEnvironment,
 } from "./persistent.ts";
 
 async function dockerFixture() {
@@ -18,10 +20,11 @@ import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(`${root}/calls`)}, JSON.stringify(args)+'\\n');
 if (existsSync(${JSON.stringify(`${root}/outage`)})) { console.error('Cannot connect to Docker'); process.exit(1); }
-if (args[0] === 'container' && !existsSync(${JSON.stringify(`${root}/created`)})) {
+if (args[0] === 'container' && !existsSync(${JSON.stringify(`${root}/created-`)} + args.at(-1))) {
  console.error('Error: No such container'); process.exit(1);
 }
-if (args[0] === 'create') writeFileSync(${JSON.stringify(`${root}/created`)}, 'created');
+if (args[0] === 'create') writeFileSync(${JSON.stringify(`${root}/created-`)} + args[2], 'created');
+if (args[0] === 'start' && existsSync(${JSON.stringify(`${root}/fail-start`)})) process.exit(1);
 `,
     { mode: 0o700 },
   );
@@ -157,4 +160,77 @@ it("kills a cancelled host process group without stopping other agent work", asy
     await lease.dispose();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+it("gives simultaneous MCP helpers disposable containers while retaining their shared auth home", async () => {
+  await using fixture = await dockerFixture();
+  const id = randomUUID();
+  const first = await leaseToolRuntime(fixture.root, id, {
+    sandbox: true,
+    ephemeral: true,
+  });
+  await writeFile(
+    `${fixture.root}/standalone/${id}/home/auth.json`,
+    "saved-auth",
+  );
+  const second = await leaseToolRuntime(fixture.root, id, {
+    sandbox: true,
+    ephemeral: true,
+  });
+  expect(first.container).not.toBe(second.container);
+  expect(
+    await readFile(`${fixture.root}/standalone/${id}/home/auth.json`, "utf8"),
+  ).toBe("saved-auth");
+  await first.dispose();
+  await second.dispose();
+  const calls = await fixture.calls();
+  const create = calls.find(([operation]) => operation === "create")!;
+  expect(create).toContain("--rm");
+  expect(create).toContain("--restart=no");
+  expect(calls.filter(([operation]) => operation === "rm")).toEqual([
+    ["rm", "--force", first.container],
+    ["rm", "--force", second.container],
+  ]);
+});
+
+it("removes disposable helper containers after startup or harness setup failures", async () => {
+  await using fixture = await dockerFixture();
+  await writeFile(`${fixture.root}/fail-start`, "fail");
+  await expect(
+    leaseToolRuntime(fixture.root, randomUUID(), {
+      sandbox: true,
+      ephemeral: true,
+    }),
+  ).rejects.toThrow();
+  await rm(`${fixture.root}/fail-start`);
+  await expect(
+    leaseCodexRuntime(fixture.root, randomUUID(), "/missing/codex", {
+      sandbox: true,
+      ephemeral: true,
+    }),
+  ).rejects.toThrow();
+  const calls = await fixture.calls();
+  const names = calls
+    .filter(([operation]) => operation === "create")
+    .map((args) => args[2]);
+  expect(calls.filter(([operation]) => operation === "rm")).toEqual(
+    names.map((name) => ["rm", "--force", name]),
+  );
+});
+
+it("reports failed persistent stops and permits retry after daemon recovery", async () => {
+  await using fixture = await dockerFixture();
+  const id = randomUUID();
+  const lease = await leaseToolRuntime(fixture.root, id, { sandbox: true });
+  await lease.dispose();
+  await writeFile(`${fixture.root}/outage`, "offline");
+  await expect(stopEnvironment(fixture.root, id, "agent")).rejects.toThrow();
+  await rm(`${fixture.root}/outage`);
+  await stopEnvironment(fixture.root, id, "agent");
+  expect(
+    (await fixture.calls()).filter(([operation]) => operation === "stop"),
+  ).toEqual([
+    ["stop", lease.container],
+    ["stop", lease.container],
+  ]);
 });
