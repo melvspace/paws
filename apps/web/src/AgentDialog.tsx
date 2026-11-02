@@ -13,11 +13,7 @@ import {
 } from "react";
 import { Trash2Icon, XIcon, Clock3Icon, ChevronRightIcon } from "lucide-react";
 import { createAgent, deleteAgent, updateAgent } from "@paws/client-runtime";
-import {
-  defaultAgentAvatar,
-  type Agent,
-  type AgentAvatar,
-} from "@paws/contracts";
+import { defaultAgentAvatar, type Agent } from "@paws/contracts";
 import { AvatarPicker } from "./AvatarPicker.tsx";
 import { Form } from "@base-ui/react/form";
 import {
@@ -56,16 +52,15 @@ export function AgentDialog({
   const keepAgentRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const saveInFlight = useRef<Promise<boolean> | null>(null);
-  const initialAvatar = useRef<AgentAvatar>(
-    agent?.avatar ?? defaultAgentAvatar(agent?.id ?? crypto.randomUUID()),
-  );
   const { snapshot } = useAtomValue(agentsAtom);
-  const [draft, setDraft] = useState({
+  const [draft, setDraft] = useState(() => ({
     name: agent?.name ?? "",
-    avatar: initialAvatar.current,
+    avatar:
+      agent?.avatar ??
+      defaultAgentAvatar(agent?.id ?? Math.random().toString(36)),
     teamIds: agent?.teamIds ?? [],
     memory: agent?.memory ?? "",
-  });
+  }));
   const draftRef = useRef(draft);
   const saved = useRef(draft);
   const { name, avatar, teamIds, memory } = draft;
