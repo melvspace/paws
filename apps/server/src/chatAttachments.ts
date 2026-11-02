@@ -19,7 +19,7 @@ import {
   extname,
 } from "node:path";
 import type { ChatAttachment, ChatFileInput } from "@paws/contracts";
-import { resolveWorkspaceDirectory } from "@paws/runtime";
+import { resolveWorkspaceDirectory, workspaceLayout } from "@paws/runtime";
 
 function inside(root: string, path: string) {
   const suffix = relative(root, path);
@@ -163,24 +163,30 @@ export async function saveWorkspaceAttachments(
 
   const workspace = resolveWorkspaceDirectory(root, agentId, "workspace");
   const virtual = agentExecutionPaths(root, agentId).workspace;
+  const prefixes =
+    virtual === workspaceLayout(root, agentId).workspace
+      ? [virtual, workspace]
+      : [virtual];
   const saved: { attachment: ChatAttachment; data: Buffer }[] = [];
   let total = 0;
 
   for (const file of files) {
-    if (
-      !file.path ||
-      file.path.length > 4096 ||
-      file.path.includes("\0") ||
-      (isAbsolute(file.path) && !file.path.startsWith(`${virtual}/`))
-    )
+    if (!file.path || file.path.length > 4096 || file.path.includes("\0"))
       throw new Error("Attach a file inside /workspace.");
 
-    const source = await realpath(
-      resolve(
-        workspace,
-        isAbsolute(file.path) ? file.path.slice(virtual.length + 1) : file.path,
-      ),
-    );
+    let path = file.path;
+
+    if (isAbsolute(path)) {
+      const prefix = prefixes.find((directory) =>
+        path.startsWith(`${directory}/`),
+      );
+
+      if (!prefix) throw new Error("Attach a file inside /workspace.");
+
+      path = relative(prefix, path);
+    }
+
+    const source = await realpath(resolve(workspace, path));
 
     if (!inside(workspace, source))
       throw new Error("Attachment outside workspace.");
