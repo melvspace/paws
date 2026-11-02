@@ -647,6 +647,67 @@ it.each(["success", "failure"])(
   },
 );
 
+it.each(["trigger", "deletion"])(
+  "guards %s while rotation is pending and its secret is unacknowledged",
+  async (control) => {
+    const routine: Routine = {
+      ...routineListFixture(),
+      trigger: { kind: "webhook", filters: [] },
+    };
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const requests = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async (input, _init) => {
+        if (String(input) === "/api/routine-preview") return Response.json([]);
+        if (String(input).endsWith("/rotate")) return pending;
+
+        return Response.json({ routines: [routine], runs: [], events: [] });
+      });
+
+    try {
+      await using _screen = await render(
+        <RoutinesPanel onDismiss={() => {}} />,
+      );
+      await page.getByRole("button", { name: "Digest", exact: true }).click();
+      await page
+        .getByRole("button", { name: "Delete routine", exact: true })
+        .click();
+      await page.getByRole("button", { name: "Rotate signing secret" }).click();
+      const guarded =
+        control === "trigger"
+          ? page.getByRole("combobox", { name: "Trigger", exact: true })
+          : page.getByRole("button", { name: "Confirm deletion" });
+      await expect.element(guarded).toBeDisabled();
+      finish(
+        Response.json({ endpoint: "/hooks/digest", secret: "rotated-secret" }),
+      );
+      await expect
+        .element(
+          page.getByRole("textbox", { name: "Signing secret", exact: true }),
+        )
+        .toHaveValue("rotated-secret");
+      await expect.element(guarded).toBeDisabled();
+      expect(
+        requests.mock.calls.some(
+          ([, init]) => init?.method === "PATCH" || init?.method === "DELETE",
+        ),
+      ).toBe(false);
+      await page.getByRole("button", { name: "Dismiss secret" }).click();
+      await expect.element(guarded).toBeEnabled();
+    } finally {
+      finish(
+        Response.json({ endpoint: "/hooks/digest", secret: "rotated-secret" }),
+      );
+      confirm.mockRestore();
+      requests.mockRestore();
+    }
+  },
+);
+
 it("keeps a failed routine edit visible when dismissal cannot save it", async () => {
   appAtomRegistry.set(agentsAtom, {
     connected: true,
@@ -843,6 +904,7 @@ it.each([
   "dismissal",
   "navigation",
   "failed dismissal",
+  "discard",
 ])("preserves pending creation during %s", async (scenario) => {
   appAtomRegistry.set(agentsAtom, {
     connected: true,
@@ -890,7 +952,8 @@ it.each([
         if (
           (scenario === "retry" ||
             scenario === "revert retry" ||
-            scenario === "failed dismissal") &&
+            scenario === "failed dismissal" ||
+            scenario === "discard") &&
           writes.length === 2
         )
           return Response.json({ error: "Follow-up failed" }, { status: 500 });
@@ -922,6 +985,10 @@ it.each([
     });
 
   const dismiss = vi.fn();
+  const confirm =
+    scenario === "discard"
+      ? vi.spyOn(window, "confirm").mockReturnValue(true)
+      : undefined;
 
   try {
     await using _screen = await render(<RoutinesPanel onDismiss={dismiss} />);
@@ -975,17 +1042,45 @@ it.each([
       await expect.element(instruction).toBeVisible();
     }
 
+    if (scenario === "discard") instruction.element().blur();
+
     release();
     await expect.poll(() => writes.length).toBe(2);
     if (
       scenario === "retry" ||
       scenario === "revert retry" ||
-      scenario === "failed dismissal"
+      scenario === "failed dismissal" ||
+      scenario === "discard"
     ) {
       await expect
         .element(page.getByRole("alert"))
         .toHaveTextContent("Follow-up failed");
       expect(dismiss).not.toHaveBeenCalled();
+
+      if (scenario === "discard") {
+        await page.getByRole("button", { name: "Discard edits" }).click();
+        await expect
+          .element(
+            page.getByRole("textbox", { name: "Signing secret", exact: true }),
+          )
+          .toHaveValue("original-secret");
+        await expect
+          .element(page.getByText("Original instruction", { exact: true }))
+          .toBeVisible();
+        await page
+          .getByRole("button", { name: "Close settings", exact: true })
+          .click();
+        expect(dismiss).not.toHaveBeenCalled();
+        await page.getByRole("button", { name: "Dismiss secret" }).click();
+        await page
+          .getByRole("button", { name: "Close settings", exact: true })
+          .click();
+        await expect.poll(() => dismiss.mock.calls.length).toBe(1);
+        expect(writes.map((write) => write.method)).toEqual(["POST", "PATCH"]);
+
+        return;
+      }
+
       if (scenario === "revert retry") {
         await instruction.fill("Original instruction");
         await page.getByRole("textbox", { name: "Name", exact: true }).click();
@@ -1049,6 +1144,7 @@ it.each([
     }
   } finally {
     release();
+    confirm?.mockRestore();
     fetchMock.mockRestore();
   }
 });

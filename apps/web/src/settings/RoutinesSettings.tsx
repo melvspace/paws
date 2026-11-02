@@ -368,12 +368,8 @@ export function RoutinesSettings({
             flush={flush}
             secretPending={!!secret}
             onSecret={revealSecret}
-            onSaved={(routine, webhook) => {
-              acceptSaved(routine);
-              setEditing(routine);
-
-              if (webhook) revealSecret(webhook);
-            }}
+            onPersisted={acceptSaved}
+            onSaved={setEditing}
             onClose={() => void select(null)}
             onDeleted={(id) => {
               mutation.current++;
@@ -514,6 +510,7 @@ function RoutineEditor({
   connected,
   flush,
   onSaved,
+  onPersisted,
   onClose,
   onDeleted,
   secretPending,
@@ -523,7 +520,8 @@ function RoutineEditor({
   routine: Routine | null;
   connected: boolean;
   flush: MutableRefObject<(() => Promise<void>) | null>;
-  onSaved(routine: Routine, webhook?: WebhookSecret): void;
+  onSaved(routine: Routine): void;
+  onPersisted(routine: Routine): void;
   onClose(): void;
   onDeleted(id: string): void;
   secretPending: boolean;
@@ -539,8 +537,6 @@ function RoutineEditor({
   const [pending, setPending] = useState(false);
   const filters = draft.trigger.kind === "webhook" ? draft.trigger.filters : [];
   const pendingRoutine = useRef<Routine | undefined>(undefined);
-  const pendingWebhook =
-    useRef<Awaited<ReturnType<typeof saveRoutine>>["webhook"]>(undefined);
   const [customSchedule, setCustomSchedule] = useState(
     draft.trigger.kind === "cron" && !calendarParts(draft.trigger.expression),
   );
@@ -577,17 +573,15 @@ function RoutineEditor({
           pendingRoutine.current = result.routine;
           routineId.current = result.routine.id;
           version.current = result.routine.revision;
-          pendingWebhook.current =
-            result.routine.trigger.kind === "webhook"
-              ? (result.webhook ?? pendingWebhook.current)
-              : undefined;
           saved.current = JSON.stringify(next);
+          onPersisted(result.routine);
+
+          if (result.webhook) onSecret(result.webhook);
         } while (saved.current !== JSON.stringify(current.current));
 
         if (pendingRoutine.current) {
-          onSaved(pendingRoutine.current, pendingWebhook.current);
+          onSaved(pendingRoutine.current);
           pendingRoutine.current = undefined;
-          pendingWebhook.current = undefined;
         }
       } catch (cause) {
         setError(
@@ -684,7 +678,7 @@ function RoutineEditor({
   }
 
   function remove() {
-    if (!routine || inFlight.current) return;
+    if (!routine || inFlight.current || secretPending) return;
 
     void runPendingOperation(async () => {
       await routineRequest(routinePath(agentId, routine.id), "DELETE");
@@ -718,21 +712,20 @@ function RoutineEditor({
       .catch(() => {});
   }
 
+  async function discard() {
+    if (!window.confirm("Discard unsaved routine edits?")) return;
+
+    await inFlight.current?.catch(() => {});
+    flush.current = null;
+    onClose();
+  }
+
   return (
     <div className="routine-editor">
       {error && (
         <>
           <p role="alert">{error}</p>
-          <Button
-            onClick={() => {
-              if (!window.confirm("Discard unsaved routine edits?")) return;
-
-              flush.current = null;
-              onClose();
-            }}
-          >
-            Discard edits
-          </Button>
+          <Button onClick={() => void discard()}>Discard edits</Button>
         </>
       )}
       <div className="settings-group routine-fields">
@@ -768,9 +761,11 @@ function RoutineEditor({
         <label className="settings-row">
           Trigger
           <select
-            disabled={secretPending}
+            disabled={pending || secretPending}
             value={draft.trigger.kind}
             onChange={(event) => {
+              if (inFlight.current || secretPending) return;
+
               const kind = event.target.value;
               change({
                 ...(kind === "once" ? { missed: "latest" as const } : {}),
@@ -1133,7 +1128,9 @@ function RoutineEditor({
       )}
       {!routine ? (
         <Button
-          disabled={pending || !connected || secretPending}
+          disabled={
+            pending || !connected || (secretPending && !routineId.current)
+          }
           onClick={() => void save().catch(() => {})}
         >
           Create routine
@@ -1193,7 +1190,7 @@ function RoutineEditor({
               </Button>
               <Button
                 variant="destructive"
-                disabled={!connected || pending}
+                disabled={!connected || pending || secretPending}
                 onClick={remove}
               >
                 Confirm deletion
