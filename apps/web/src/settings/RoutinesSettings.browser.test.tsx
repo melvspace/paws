@@ -280,3 +280,93 @@ it.each([
     await page.viewport(800, 600);
   }
 });
+
+it("patches the created routine when the draft changes during creation", async () => {
+  appAtomRegistry.set(agentsAtom, {
+    connected: true,
+    error: null,
+    snapshot: {
+      agents: [
+        {
+          id: "ada",
+          name: "Ada",
+          provider: "codex",
+          status: "configured",
+          createdAt: "2026-11-01",
+        },
+      ],
+    },
+  });
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const writes: {
+    path: string;
+    method: string;
+    body: { routine: Routine; revision?: number };
+  }[] = [];
+  const id = "00000000-0000-4000-8000-000000000001";
+  const fetchMock = vi
+    .spyOn(window, "fetch")
+    .mockImplementation(async (input, init) => {
+      const path = String(input);
+
+      if (path === "/api/routine-preview") return Response.json([]);
+      if (init?.method === "POST" || init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body));
+        writes.push({ path, method: init.method, body });
+
+        if (init.method === "POST") await pending;
+
+        return Response.json({
+          routine: {
+            ...body.routine,
+            id,
+            agentId: "ada",
+            revision: (body.revision ?? 0) + 1,
+            createdAt: "2026-11-01",
+            updatedAt: "2026-11-01",
+            nextAt: null,
+            changedBy: "user",
+            deleted: false,
+          },
+        });
+      }
+
+      return Response.json({ routines: [], runs: [], events: [] });
+    });
+
+  try {
+    await using _screen = await render(
+      <AppSettingsDialog initialPage="Routines" onDismiss={() => {}} />,
+    );
+    await page
+      .getByRole("button", { name: "Create routine", exact: true })
+      .click();
+    await page
+      .getByRole("textbox", { name: "Name", exact: true })
+      .fill("Digest");
+    const instruction = page.getByRole("textbox", {
+      name: "Instruction",
+      exact: true,
+    });
+    await instruction.fill("Original instruction");
+    await page
+      .getByRole("button", { name: "Create routine", exact: true })
+      .click();
+    await expect.poll(() => writes.length).toBe(1);
+    await instruction.fill("Edited during creation");
+    release();
+    await expect.poll(() => writes.length).toBe(2);
+    expect(writes.map((write) => write.method)).toEqual(["POST", "PATCH"]);
+    expect(writes[1]).toMatchObject({
+      path: `/api/agents/ada/routines/${id}`,
+      body: { revision: 1, routine: { instruction: "Edited during creation" } },
+    });
+    await expect.element(instruction).toHaveValue("Edited during creation");
+  } finally {
+    release();
+    fetchMock.mockRestore();
+  }
+});

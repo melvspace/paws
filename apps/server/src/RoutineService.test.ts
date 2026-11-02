@@ -390,13 +390,13 @@ it("rejects paused, stale, oversized and excessive webhook deliveries with no ex
     paused.revision,
   );
 
-  for (let index = 0; index < 60; index++)
+  for (let index = 0; index < 57; index++)
     fixture.service.webhook(routine.id, headers(), body);
 
   expect(() => fixture.service.webhook(routine.id, headers(), body)).toThrow(
     "rate limit",
   );
-  expect(fixture.service.list(fixture.agent.id).runs).toHaveLength(60);
+  expect(fixture.service.list(fixture.agent.id).runs).toHaveLength(57);
 });
 
 it("cancels a running routine and releases the agent execution slot", async () => {
@@ -455,4 +455,145 @@ it("delivers routine output as clean message text with separate provenance", asy
   const message = fixture.main.get(fixture.agent.id).messages.at(-1);
   expect(message?.text).toBe("He was outstanding in his field.");
   expect(message).toMatchObject({ routine: { name: "Digest", runId: run.id } });
+});
+
+it("preserves webhook signatures after filter edits and revokes them when leaving webhook mode", async () => {
+  await using fixture = await setup();
+  const routine = fixture.service.save(
+    fixture.agent.id,
+    definition({ trigger: { kind: "webhook", filters: [] } }),
+  );
+  const { secret } = fixture.service.rotate(routine.id);
+  const updated = fixture.service.save(
+    fixture.agent.id,
+    {
+      ...routine,
+      trigger: { kind: "webhook", eventType: "issue", filters: [] },
+    },
+    routine.id,
+    "user",
+    routine.revision,
+  );
+  const body = Buffer.from('{"type":"issue"}');
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const headers = {
+    "x-paws-timestamp": timestamp,
+    "x-paws-signature": createHmac("sha256", secret)
+      .update(`${timestamp}.`)
+      .update(body)
+      .digest("hex"),
+  };
+  expect(fixture.service.webhook(routine.id, headers, body).outcome).toBe(
+    "accepted",
+  );
+  const interval = fixture.service.save(
+    fixture.agent.id,
+    { ...updated, trigger: { kind: "interval", minutes: 60 } },
+    routine.id,
+    "user",
+    updated.revision,
+  );
+  fixture.service.save(
+    fixture.agent.id,
+    updated,
+    routine.id,
+    "user",
+    interval.revision,
+  );
+  expect(() => fixture.service.webhook(routine.id, headers, body)).toThrow(
+    "signature",
+  );
+});
+
+it("rejects stale editor saves after a one-time schedule disables itself", async () => {
+  await using fixture = await setup();
+  const at = new Date(Date.now() + 60000).toISOString();
+  const routine = fixture.service.save(
+    fixture.agent.id,
+    definition({ trigger: { kind: "once", at }, missed: "latest" }),
+  );
+  await fixture.service.tick(Date.parse(at));
+  expect(fixture.service.list(fixture.agent.id).routines[0]?.revision).toBe(
+    routine.revision + 1,
+  );
+  expect(() =>
+    fixture.service.save(
+      fixture.agent.id,
+      { ...routine, name: "Renamed" },
+      routine.id,
+      "user",
+      routine.revision,
+    ),
+  ).toThrow("Routine changed");
+  expect(fixture.service.list(fixture.agent.id).routines[0]?.enabled).toBe(
+    false,
+  );
+  expect(fixture.service.list(fixture.agent.id).runs).toHaveLength(1);
+});
+
+it("bounds unauthenticated webhook history across restarts", async () => {
+  await using fixture = await setup();
+  const routine = fixture.service.save(
+    fixture.agent.id,
+    definition({ trigger: { kind: "webhook", filters: [] } }),
+  );
+  fixture.service.rotate(routine.id);
+
+  for (
+    let index = 0;
+    index < fixture.service.limits.requestsPerMinute;
+    index++
+  ) {
+    expect(() =>
+      fixture.service.webhook(routine.id, {}, Buffer.from("{}")),
+    ).toThrow("signature");
+  }
+
+  await fixture.reopen();
+
+  for (let index = 0; index < 100; index++) {
+    expect(() =>
+      fixture.service.webhook(routine.id, {}, Buffer.from("{}")),
+    ).toThrow("rate limit");
+  }
+
+  expect(
+    fixture.service
+      .list(fixture.agent.id)
+      .events.filter((event) => event.outcome === "rejected_authentication"),
+  ).toHaveLength(fixture.service.limits.requestsPerMinute);
+  expect(fixture.service.list(fixture.agent.id).runs).toHaveLength(0);
+});
+
+it("expires waiting work and strips old payloads in the same retention pass", async () => {
+  await using fixture = await setup();
+  const routine = fixture.service.save(fixture.agent.id, definition());
+  const run = fixture.service.enqueue(routine.id, "manual", "{}");
+  const old = new Date(Date.now() - 8 * 86400000).toISOString();
+  const db = new DatabaseSync(`${fixture.root}/state.sqlite`);
+
+  try {
+    db.prepare("UPDATE routine_runs SET data = ? WHERE id = ?").run(
+      JSON.stringify({
+        ...run,
+        status: "waiting",
+        createdAt: old,
+        finishedAt: old,
+      }),
+      run.id,
+    );
+  } finally {
+    db.close();
+  }
+
+  await fixture.service.tick();
+  expect(fixture.service.getRun(run.id)).toMatchObject({ status: "expired" });
+  expect(fixture.service.getRun(run.id).payload).toBeUndefined();
+  await expect(
+    fixture.service.respond(run.id, {
+      requestId: "late",
+      text: "Continue",
+      selection,
+    }),
+  ).rejects.toThrow("not available");
 });

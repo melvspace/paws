@@ -1,6 +1,9 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { once } from "node:events";
-import { expect, it } from "vite-plus/test";
+import { DatabaseSync } from "node:sqlite";
+import { Effect } from "effect";
+import { makeAgentService } from "./AgentService.ts";
+import { expect, it, vi } from "vite-plus/test";
 import { createServer } from "./main.ts";
 
 it("keeps management endpoints off the dedicated webhook listener", async () => {
@@ -28,6 +31,82 @@ it("keeps management endpoints off the dedicated webhook listener", async () => 
         )
       ).status,
     ).toBe(404);
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("blocks chat execution aliases for cancelled, expired and deleted routine runs", async () => {
+  await mkdir("/tmp/codex", { recursive: true });
+  const root = await mkdtemp("/tmp/codex/paws-routine-http-");
+  const agents = makeAgentService(root);
+  const agent = await Effect.runPromise(agents.create({ name: "Ada" }));
+  agents.close();
+  const executed = vi.fn();
+  const app = createServer(root, { runChat: executed });
+  await app.routines.ready;
+  app.server.listen(0, "127.0.0.1");
+  await once(app.server, "listening");
+  const address = app.server.address();
+
+  if (!address || typeof address === "string")
+    throw new Error("Expected listener.");
+
+  try {
+    const base = `http://127.0.0.1:${address.port}`;
+    const routine = app.routines.save(agent.id, {
+      name: "Digest",
+      instruction: "Summarize",
+      enabled: false,
+      trigger: { kind: "interval", minutes: 60 },
+      missed: "skip",
+      timeoutMinutes: 60,
+    });
+    const cancelled = app.routines.enqueue(routine.id, "manual");
+    await app.routines.cancel(cancelled.id);
+    const expired = app.routines.enqueue(routine.id, "manual");
+    await app.routines.cancel(expired.id);
+    const db = new DatabaseSync(`${root}/state.sqlite`);
+
+    try {
+      db.prepare("UPDATE routine_runs SET data = ? WHERE id = ?").run(
+        JSON.stringify({
+          ...app.routines.getRun(expired.id),
+          status: "expired",
+        }),
+        expired.id,
+      );
+    } finally {
+      db.close();
+    }
+
+    const deleted = app.routines.enqueue(routine.id, "manual");
+    await app.routines.remove(routine.id);
+
+    for (const run of [cancelled, expired, deleted]) {
+      const path = `${base}/api/agents/${run.id}/chat`;
+      expect((await fetch(path)).status).toBe(200);
+
+      for (const suffix of ["", "/stop", "/continue", "/compact", "/queue"]) {
+        const response = await fetch(`${path}${suffix}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            requestId: "bypass",
+            text: "Run again",
+            selection: { providerId: "codex", modelId: "model", options: {} },
+          }),
+        });
+        expect(response.status).toBe(405);
+      }
+
+      expect(app.routines.getRun(run.id).status).toBe(
+        run.id === expired.id ? "expired" : "cancelled",
+      );
+    }
+
+    expect(executed).not.toHaveBeenCalled();
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

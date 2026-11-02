@@ -2,6 +2,7 @@ import { nextRoutineTime, validateTrigger } from "./routineSchedule.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Schema } from "effect";
 import { SaveRoutine, RoutineTrigger } from "@paws/contracts";
+import { chatHttp } from "./chatHttp.ts";
 import { ChatError } from "./ChatService.ts";
 import type { makeRoutineService } from "./RoutineService.ts";
 
@@ -27,6 +28,40 @@ export async function routineHttp(
   service: ReturnType<typeof makeRoutineService>,
   ingressOnly = false,
 ) {
+  const chatAlias =
+    !ingressOnly &&
+    /^\/api\/agents\/([^/]+)\/chat(?:\/(.*))?$/.exec(request.url ?? "");
+
+  if (chatAlias) {
+    const id = decodeURIComponent(chatAlias[1]!);
+
+    try {
+      service.getRun(id);
+    } catch {
+      return false;
+    }
+
+    const action = chatAlias[2];
+
+    if (
+      (request.method === "GET" &&
+        (!action ||
+          action === "skills" ||
+          /^attachments\/[a-f0-9]{64}$/.test(action))) ||
+      (request.method === "POST" && action === "uploads")
+    )
+      return chatHttp(request, response, service.conversations);
+
+    // Execution mutations must pass through the routine lifecycle endpoints.
+    response.writeHead(405).end(
+      JSON.stringify({
+        error: "Use the routine run respond, cancel, or retry endpoint.",
+      }),
+    );
+
+    return true;
+  }
+
   const preview = !ingressOnly && request.url === "/api/routine-preview";
   const webhook = /^\/hooks\/routines\/([a-f0-9-]{36})$/.exec(
     request.url ?? "",

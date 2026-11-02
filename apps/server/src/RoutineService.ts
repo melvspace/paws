@@ -266,7 +266,7 @@ export function makeRoutineService(
         400,
         "Choose a future one-time execution or enable latest missed execution.",
       );
-    if (triggerChanged && current?.trigger.kind === "webhook")
+    if (current?.trigger.kind === "webhook" && input.trigger.kind !== "webhook")
       db.prepare("DELETE FROM routine_secrets WHERE id = ?").run(routine.id);
 
     write("routines", routine);
@@ -558,6 +558,10 @@ export function makeRoutineService(
         write("routines", {
           ...routine,
           enabled: routine.trigger.kind === "once" ? false : routine.enabled,
+          revision:
+            routine.trigger.kind === "once"
+              ? routine.revision + 1
+              : routine.revision,
           nextAt: advanceRoutineTime(
             routine.trigger,
             Date.parse(routine.nextAt!),
@@ -566,23 +570,27 @@ export function makeRoutineService(
         });
       }
 
-      for (const run of runs()) {
+      for (const stored of runs()) {
+        let run = stored;
+
         if (
           run.status === "waiting" &&
           now - Date.parse(run.finishedAt ?? run.createdAt) >
             limits.waitingDays * DAY
         )
-          write("routine_runs", {
+          run = {
             ...run,
             status: "expired",
             finishedAt: new Date(now).toISOString(),
-          });
+          };
 
         if (
           run.payload !== undefined &&
           now - Date.parse(run.createdAt) > limits.payloadDays * DAY
         )
-          write("routine_runs", { ...run, payload: undefined });
+          run = { ...run, payload: undefined };
+
+        if (run !== stored) write("routine_runs", run);
 
         if (
           !["running", "waiting", "queued"].includes(run.status) &&
@@ -632,6 +640,23 @@ export function makeRoutineService(
     body: Buffer,
   ) {
     const routine = find(id);
+    // Count every delivery outcome before authentication so failed requests
+    // cannot produce unbounded persistent history. The budget survives restarts.
+    const recent = db
+      .prepare(`
+      SELECT COUNT(*) AS count FROM routine_events
+      WHERE json_extract(data, '$.routineId') = ?
+        AND json_extract(data, '$.createdAt') > ?
+        AND json_extract(data, '$.outcome') IN (
+          'accepted', 'filtered', 'duplicate', 'rejected_authentication',
+          'rejected_paused', 'rejected_payload', 'rejected_queue'
+        )
+    `)
+      .get(id, new Date(Date.now() - 60000).toISOString());
+
+    if (Number(recent?.count) >= limits.requestsPerMinute)
+      throw new ChatError(429, "Webhook rate limit reached. Retry later.");
+
     const timestamp = headers["x-paws-timestamp"];
     const signature = headers["x-paws-signature"];
     const deliveryId = headers["x-paws-delivery-id"];
@@ -686,15 +711,6 @@ export function makeRoutineService(
       return { outcome: "duplicate" };
     }
 
-    const recent = events().filter(
-      (item) =>
-        item.routineId === id &&
-        ["accepted", "filtered"].includes(item.outcome) &&
-        Date.parse(item.createdAt) > Date.now() - 60000,
-    );
-
-    if (recent.length >= limits.requestsPerMinute)
-      throw new ChatError(429, "Webhook rate limit reached. Retry later.");
     if (body.length > limits.webhookBytes)
       throw new ChatError(413, "Payload too large.");
 
@@ -865,6 +881,7 @@ export function makeRoutineService(
     }),
     async respond(id: string, value: unknown) {
       const run = findRun(id);
+      find(run.routineId);
 
       if (
         !["waiting", "succeeded", "failed"].includes(run.status) ||

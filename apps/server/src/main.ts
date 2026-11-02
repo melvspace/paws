@@ -220,19 +220,6 @@ export function createServer(
       )
         return;
       if (await providerHttp(request, response, providers)) return;
-      const runChatId = /^\/api\/agents\/([^/]+)\/chat/.exec(
-        request.url ?? "",
-      )?.[1];
-
-      if (runChatId) {
-        try {
-          routines.getRun(runChatId);
-          if (await chatHttp(request, response, routines.conversations)) return;
-        } catch {
-          /* Ordinary agent chat is handled below. */
-        }
-      }
-
       if (await chatHttp(request, response, chat)) return;
 
       if (request.method === "GET" && request.url === "/api/agents") {

@@ -389,6 +389,7 @@ function RoutineEditor({
   const current = useRef(draft);
   const saved = useRef(routine ? JSON.stringify(draft) : "");
   const version = useRef(routine?.revision);
+  const routineId = useRef(routine?.id);
   const inFlight = useRef<Promise<void> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -417,6 +418,9 @@ function RoutineEditor({
       setPending(true);
 
       try {
+        let result: Awaited<ReturnType<typeof saveRoutine>> | undefined;
+        let webhook: Awaited<ReturnType<typeof saveRoutine>>["webhook"];
+
         do {
           let next = current.current;
 
@@ -429,16 +433,19 @@ function RoutineEditor({
           if (saved.current === JSON.stringify(next)) return;
           if (!connected) throw new Error("Reconnect to save your changes.");
 
-          const result = await saveRoutine(
+          result = await saveRoutine(
             agentId,
             next,
-            routine?.id,
+            routineId.current,
             version.current,
           );
+          routineId.current = result.routine.id;
           version.current = result.routine.revision;
+          webhook = result.webhook ?? webhook;
           saved.current = JSON.stringify(next);
-          onSaved(result.routine, result.webhook);
         } while (saved.current !== JSON.stringify(current.current));
+
+        if (result) onSaved(result.routine, webhook);
       } catch (cause) {
         setError(
           cause instanceof Error
