@@ -28,57 +28,57 @@ export async function routineHttp(
   service: ReturnType<typeof makeRoutineService>,
   ingressOnly = false,
 ) {
-  const chatAlias =
-    !ingressOnly &&
-    /^\/api\/agents\/([^/]+)\/chat(?:\/(.*))?$/.exec(request.url ?? "");
+  try {
+    const chatAlias =
+      !ingressOnly &&
+      /^\/api\/agents\/([^/]+)\/chat(?:\/(.*))?$/.exec(request.url ?? "");
 
-  if (chatAlias) {
-    const id = decodeURIComponent(chatAlias[1]!);
+    if (chatAlias) {
+      const id = decodeURIComponent(chatAlias[1]!);
 
-    try {
-      service.getRun(id);
-    } catch {
-      return false;
+      try {
+        service.getRun(id);
+      } catch {
+        return false;
+      }
+
+      const action = chatAlias[2];
+
+      if (
+        (request.method === "GET" &&
+          (!action ||
+            action === "skills" ||
+            /^attachments\/[a-f0-9]{64}$/.test(action))) ||
+        (request.method === "POST" && action === "uploads")
+      )
+        return chatHttp(request, response, service.conversations);
+
+      // Execution mutations must pass through the routine lifecycle endpoints.
+      response.writeHead(405).end(
+        JSON.stringify({
+          error: "Use the routine run respond, cancel, or retry endpoint.",
+        }),
+      );
+
+      return true;
     }
 
-    const action = chatAlias[2];
-
-    if (
-      (request.method === "GET" &&
-        (!action ||
-          action === "skills" ||
-          /^attachments\/[a-f0-9]{64}$/.test(action))) ||
-      (request.method === "POST" && action === "uploads")
-    )
-      return chatHttp(request, response, service.conversations);
-
-    // Execution mutations must pass through the routine lifecycle endpoints.
-    response.writeHead(405).end(
-      JSON.stringify({
-        error: "Use the routine run respond, cancel, or retry endpoint.",
-      }),
-    );
-
-    return true;
-  }
-
-  const preview = !ingressOnly && request.url === "/api/routine-preview";
-  const webhook = /^\/hooks\/routines\/([a-f0-9-]{36})$/.exec(
-    request.url ?? "",
-  );
-  const url = new URL(request.url ?? "/", "http://localhost");
-  const match =
-    /^\/api\/agents\/([^/]+)\/routines(?:\/([a-f0-9-]{36})(?:\/(run|rotate))?)?$/.exec(
-      url.pathname,
-    );
-  const run =
-    /^\/api\/routine-runs\/([a-f0-9-]{36})(?:\/(cancel|retry|respond|details))?$/.exec(
+    const preview = !ingressOnly && request.url === "/api/routine-preview";
+    const webhook = /^\/hooks\/routines\/([a-f0-9-]{36})$/.exec(
       request.url ?? "",
     );
+    const url = new URL(request.url ?? "/", "http://localhost");
+    const match =
+      /^\/api\/agents\/([^/]+)\/routines(?:\/([a-f0-9-]{36})(?:\/(run|rotate))?)?$/.exec(
+        url.pathname,
+      );
+    const run =
+      /^\/api\/routine-runs\/([a-f0-9-]{36})(?:\/(cancel|retry|respond|details))?$/.exec(
+        request.url ?? "",
+      );
 
-  if (!preview && !webhook && (ingressOnly || (!match && !run))) return false;
+    if (!preview && !webhook && (ingressOnly || (!match && !run))) return false;
 
-  try {
     let result: unknown;
 
     if (preview) {

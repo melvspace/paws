@@ -393,8 +393,16 @@ export function createServer(
   const webhookServer = Http.createServer(async (request, response) => {
     response.setHeader("Content-Type", "application/json");
 
-    if (!(await routineHttp(request, response, routines, true)))
-      response.writeHead(404).end();
+    try {
+      if (!(await routineHttp(request, response, routines, true)))
+        response.writeHead(404).end();
+    } catch {
+      if (response.headersSent) response.destroy();
+      else
+        response
+          .writeHead(400)
+          .end(JSON.stringify({ error: "Unable to process webhook request." }));
+    }
   });
   const sockets = new WebSocketServer({ server, path: "/ws" });
 

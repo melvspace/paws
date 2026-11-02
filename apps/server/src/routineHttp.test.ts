@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { request } from "node:http";
 import { once } from "node:events";
 import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
@@ -135,6 +136,51 @@ it("blocks chat execution aliases for cancelled, expired and deleted routine run
     ).toBe(404);
 
     expect(executed).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("rejects malformed raw request targets and keeps both listeners alive", async () => {
+  await mkdir("/tmp/codex", { recursive: true });
+  const root = await mkdtemp("/tmp/codex/paws-routine-http-");
+  const app = createServer(root);
+
+  try {
+    for (const server of [app.server, app.webhookServer]) {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const address = server.address();
+
+      if (!address || typeof address === "string")
+        throw new Error("Expected listener.");
+
+      const status = await new Promise<number | undefined>(
+        (resolve, reject) => {
+          const outgoing = request(
+            {
+              hostname: "127.0.0.1",
+              port: address.port,
+              path: "//[",
+              method: "GET",
+            },
+            (response) => {
+              response.resume();
+              response.once("end", () => resolve(response.statusCode));
+              response.once("error", reject);
+            },
+          );
+          outgoing.once("error", reject);
+          outgoing.end();
+        },
+      );
+      expect(status).toBe(400);
+      expect(server.listening).toBe(true);
+      expect(
+        (await fetch(`http://127.0.0.1:${address.port}/not-found`)).status,
+      ).toBe(404);
+    }
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
