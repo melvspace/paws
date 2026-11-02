@@ -38,7 +38,6 @@ interface AgentWorkspaceProps {
   onProviderSettings: () => void;
   navigation?: ReactNode;
   settingsOpen?: boolean;
-  initialRunId?: string | undefined;
   beforeLeave?: MutableRefObject<(() => Promise<void>) | null>;
   onSettingsClosed?: () => void;
 }
@@ -49,7 +48,6 @@ export function AgentWorkspace({
   onProviderSettings,
   navigation,
   settingsOpen = false,
-  initialRunId,
   beforeLeave,
   onSettingsClosed,
 }: AgentWorkspaceProps) {
@@ -514,11 +512,9 @@ export function AgentWorkspace({
       >
         {settingsOpen && (
           <AgentSettingsPanel
-            key={initialRunId ?? "settings"}
             agent={agent}
             connected={connected}
             beforeClose={flush}
-            initialRunId={initialRunId}
             onDismiss={() => {
               onSettingsClosed?.();
               setState((current) => ({ ...current, sidebarOpen: false }));

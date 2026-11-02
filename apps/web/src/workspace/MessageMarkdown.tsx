@@ -10,16 +10,13 @@ export function MessageMarkdown({ text }: { text: string }) {
         remarkPlugins={[remarkGfm]}
         components={{
           a: ({ href, children, node }) =>
+            href?.startsWith("#routine/") ||
             node?.children.some(
               (child) => child.type === "element" && child.tagName === "img",
             ) ? (
               <span>{children}</span>
             ) : (
-              <a
-                href={href}
-                target={href?.startsWith("#routine/") ? undefined : "_blank"}
-                rel="noopener noreferrer"
-              >
+              <a href={href} target="_blank" rel="noopener noreferrer">
                 {children}
               </a>
             ),

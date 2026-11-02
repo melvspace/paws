@@ -10,13 +10,7 @@ import { AgentSettingsPanel } from "./AgentSettingsPanel.tsx";
 import { ChatRightPanel } from "../workspace/ChatRightPanel.tsx";
 import { Button } from "../components/ui/button.tsx";
 
-function RoutinesPanel({
-  onDismiss,
-  initialRunId,
-}: {
-  onDismiss: () => void;
-  initialRunId?: string | undefined;
-}) {
+function RoutinesPanel({ onDismiss }: { onDismiss: () => void }) {
   const beforeClose = useRef<(() => Promise<void>) | null>(null);
   const { snapshot, connected } = useAtomValue(agentsAtom);
 
@@ -50,7 +44,6 @@ function RoutinesPanel({
           beforeClose={beforeClose}
           onDismiss={onDismiss}
           initialPage="routines"
-          initialRunId={initialRunId}
         />
       </ChatRightPanel>
     </div>
@@ -1286,9 +1279,96 @@ it.each([
   }
 });
 
-it.each(["link", "pagination", "missing"])(
-  "opens retained run history through %s",
-  async (mode) => {
+it("keeps paginated run history read-only", async () => {
+  appAtomRegistry.set(agentsAtom, {
+    connected: true,
+    error: null,
+    snapshot: {
+      agents: [
+        {
+          id: "ada",
+          name: "Ada",
+          provider: "codex",
+          status: "configured",
+          createdAt: "2026-11-01",
+        },
+      ],
+    },
+  });
+  const oldId = "00000000-0000-4000-8000-000000000001";
+  const run = {
+    id: oldId,
+    agentId: "ada",
+    routineId: "digest",
+    status: "waiting",
+    source: "manual",
+    createdAt: "2026-11-01T00:00:00Z",
+    selection: { providerId: "codex", modelId: "model", options: {} },
+  };
+  const newest = {
+    ...run,
+    id: "00000000-0000-4000-8000-000000000002",
+    status: "cancelled",
+    createdAt: "2026-11-02T00:00:00Z",
+  };
+  const paths: string[] = [];
+  const fetchMock = vi
+    .spyOn(window, "fetch")
+    .mockImplementation(async (input) => {
+      const path = String(input);
+      paths.push(path);
+
+      if (path.includes("?before=2"))
+        return Response.json({
+          routines: [],
+          runs: [run],
+          events: [],
+          nextRunCursor: null,
+        });
+
+      return Response.json({
+        routines: [],
+        runs: [newest],
+        events: [],
+        nextRunCursor: 2,
+      });
+    });
+
+  try {
+    await using _screen = await render(<RoutinesPanel onDismiss={() => {}} />);
+    await expect
+      .element(page.getByText("cancelled", { exact: true }))
+      .toBeVisible();
+    const rows = () => [...document.querySelectorAll(".routine-run-row")];
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]?.querySelector("button, a")).toBeNull();
+    await page.getByRole("button", { name: "Older runs", exact: true }).click();
+    await expect
+      .element(page.getByText("waiting", { exact: true }))
+      .toBeVisible();
+    expect(paths).toContain("/api/agents/ada/routines?before=2");
+    expect(rows()[0]?.querySelector("button, a")).toBeNull();
+    expect(paths.some((path) => path.startsWith("/api/routine-runs/"))).toBe(
+      false,
+    );
+    await expect
+      .element(page.getByRole("heading", { name: "Run details", exact: true }))
+      .not.toBeInTheDocument();
+    await page.getByRole("button", { name: "Newer runs", exact: true }).click();
+    await expect
+      .element(page.getByText("cancelled", { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Newer runs", exact: true }))
+      .toBeDisabled();
+  } finally {
+    fetchMock.mockRestore();
+  }
+});
+
+it.each(["accepted", "failed"])(
+  "acknowledges a manual run while pending and after it is %s",
+  async (outcome) => {
     appAtomRegistry.set(agentsAtom, {
       connected: true,
       error: null,
@@ -1304,116 +1384,81 @@ it.each(["link", "pagination", "missing"])(
         ],
       },
     });
-    const oldId = "00000000-0000-4000-8000-000000000001";
-    const run = {
-      id: oldId,
+    const routine: Routine = {
+      id: "00000000-0000-4000-8000-000000000001",
       agentId: "ada",
-      routineId: "digest",
-      status: "waiting",
-      source: "manual",
-      createdAt: "2026-11-01T00:00:00Z",
-      selection: { providerId: "codex", modelId: "model", options: {} },
+      name: "Digest",
+      instruction: "Summarize tickets",
+      enabled: true,
+      missed: "skip",
+      timeoutMinutes: 60,
+      trigger: { kind: "interval", minutes: 60 },
+      revision: 1,
+      nextAt: null,
+      createdAt: "2026-11-01",
+      updatedAt: "2026-11-01",
+      changedBy: "user",
+      deleted: false,
     };
-    const newest = {
-      ...run,
-      id: "00000000-0000-4000-8000-000000000002",
-      status: "cancelled",
-      createdAt: "2026-11-02T00:00:00Z",
-    };
-    const paths: string[] = [];
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    let requests = 0;
     const fetchMock = vi
       .spyOn(window, "fetch")
       .mockImplementation(async (input) => {
-        const path = String(input);
-        paths.push(path);
+        if (String(input).endsWith("/run")) {
+          requests++;
 
-        if (path.endsWith("/details")) {
-          if (mode === "missing")
-            return Response.json({ error: "Run not found." }, { status: 404 });
-
-          return Response.json(run);
+          return pending;
         }
 
-        if (path === `/api/routine-runs/${oldId}`)
-          return Response.json({
-            agentId: oldId,
-            revision: 1,
-            status: "idle",
-            error: null,
-            selection: run.selection,
-            messages: [],
-          });
-        if (path.includes("?before=2"))
-          return Response.json({
-            routines: [],
-            runs: [run],
-            events: [],
-            nextRunCursor: null,
-          });
+        if (String(input) === "/api/routine-preview") return Response.json([]);
 
-        return Response.json({
-          routines: [],
-          runs: [newest],
-          events: [],
-          nextRunCursor: 2,
-        });
+        return Response.json({ routines: [routine], runs: [], events: [] });
       });
 
     try {
       await using _screen = await render(
-        <RoutinesPanel
-          initialRunId={mode === "pagination" ? undefined : oldId}
-          onDismiss={() => {}}
-        />,
+        <RoutinesPanel onDismiss={() => {}} />,
+      );
+      await page.getByRole("button", { name: "Digest", exact: true }).click();
+      await page.getByRole("button", { name: "Run now", exact: true }).click();
+      const starting = page.getByRole("button", {
+        name: "Starting…",
+        exact: true,
+      });
+      await expect.element(starting).toBeVisible();
+      await expect.element(starting).toBeDisabled();
+      expect(requests).toBe(1);
+      finish(
+        outcome === "accepted"
+          ? Response.json({ status: "queued" })
+          : Response.json(
+              { error: "Reconnect the provider and try again." },
+              { status: 400 },
+            ),
       );
 
-      if (mode === "missing") {
+      if (outcome === "accepted") {
+        await expect
+          .element(page.getByRole("status"))
+          .toHaveTextContent("Run queued");
+      } else {
         await expect
           .element(page.getByRole("alert"))
-          .toHaveTextContent("Run not found.");
-
-        return;
-      }
-
-      if (mode === "pagination") {
-        await page
-          .getByRole("button", { name: "Older runs", exact: true })
-          .click();
+          .toHaveTextContent("Reconnect the provider and try again.");
         await expect
-          .poll(() => paths.includes("/api/agents/ada/routines?before=2"))
-          .toBe(true);
-        await page.getByRole("button", { name: /^Deleted routine/ }).click();
+          .element(page.getByText("Run queued"))
+          .not.toBeInTheDocument();
       }
 
       await expect
-        .element(page.getByRole("textbox", { name: "Message", exact: true }))
-        .not.toBeInTheDocument();
-      await expect
-        .element(page.getByRole("button", { name: "Cancel run", exact: true }))
-        .toBeVisible();
-      expect(paths).not.toContain(`/api/routine-runs/${oldId}`);
-
-      if (mode === "link")
-        expect(paths).toContain(`/api/routine-runs/${oldId}/details`);
-      if (mode === "pagination") {
-        await page
-          .getByRole("button", { name: "Back to routines", exact: true })
-          .click();
-        await page
-          .getByRole("button", { name: "Newer runs", exact: true })
-          .click();
-        await expect
-          .element(
-            page.getByRole("button", { name: "Older runs", exact: true }),
-          )
-          .toBeEnabled();
-        await expect
-          .element(
-            page.getByRole("button", { name: "Newer runs", exact: true }),
-          )
-          .toBeDisabled();
-      }
+        .element(page.getByRole("button", { name: "Run now", exact: true }))
+        .toBeEnabled();
     } finally {
+      finish(Response.json({ status: "queued" }));
       fetchMock.mockRestore();
     }
   },

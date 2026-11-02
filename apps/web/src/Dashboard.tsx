@@ -37,11 +37,7 @@ export function Dashboard() {
   >(null);
   const [hash, setHash] = useState(() => window.location.hash);
   const acceptedHash = useRef(hash);
-  const linkedRun = /^#routine\/([a-f0-9-]{36})\/([a-f0-9-]{36})$/.exec(hash);
-  const agent = selectedAgent(
-    snapshot.agents,
-    linkedRun ? `#agent-${linkedRun[1]}` : hash,
-  );
+  const agent = selectedAgent(snapshot.agents, hash);
 
   async function navigate(action: () => void) {
     if (navigating.current) {
@@ -90,12 +86,6 @@ export function Dashboard() {
 
   function closeAgentSettings() {
     setSettingsAgentId(null);
-
-    if (linkedRun) {
-      acceptedHash.current = `#agent-${linkedRun[1]}`;
-      history.replaceState(null, "", acceptedHash.current);
-      setHash(acceptedHash.current);
-    }
   }
 
   function openAgentSettings(target: Agent) {
@@ -167,8 +157,7 @@ export function Dashboard() {
               agent={agent}
               navigation={navigation}
               onSettings={() => openAgentSettings(agent)}
-              settingsOpen={settingsAgentId === agent.id || !!linkedRun}
-              initialRunId={linkedRun?.[2]}
+              settingsOpen={settingsAgentId === agent.id}
               beforeLeave={beforeLeave}
               onSettingsClosed={closeAgentSettings}
               onProviderSettings={() => setSettingsOpen("Providers")}

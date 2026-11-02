@@ -1,4 +1,5 @@
 import {
+  CheckIcon,
   Clock3Icon,
   PlusIcon,
   ChevronLeftIcon,
@@ -11,7 +12,6 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   agentsAtom,
   loadRoutines,
-  loadRoutineRun,
   saveRoutine,
   routinePath,
   routineRequest,
@@ -21,7 +21,6 @@ import {
   type Routine,
   type SaveRoutine,
   RoutineState,
-  type RoutineRun,
   type RoutineFilter,
 } from "@paws/contracts";
 import { Button } from "../components/ui/button.tsx";
@@ -110,12 +109,10 @@ function RoutineLoading() {
 export function RoutinesSettings({
   beforeClose,
   agentId,
-  initialRunId,
   onBack,
 }: {
   beforeClose: MutableRefObject<(() => Promise<void>) | null>;
   agentId: string;
-  initialRunId?: string | undefined;
   onBack: () => void;
 }) {
   const { snapshot, connected } = useAtomValue(agentsAtom);
@@ -126,13 +123,11 @@ export function RoutinesSettings({
   >(() => new Map());
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Routine | "new" | null>(null);
-  const [selectedRun, setSelectedRun] = useState<RoutineRun | null>(null);
   const [runCursors, setRunCursors] = useState<readonly number[]>([]);
   const runCursor = runCursors.at(-1);
   const [secret, setSecret] = useState<WebhookSecret | null>(null);
   const unacknowledgedSecret = useRef<WebhookSecret | null>(null);
   const [secretBlocked, setSecretBlocked] = useState(false);
-  const initialRun = useRef(initialRunId);
   const flush = useRef<(() => Promise<void>) | null>(null);
   const mutation = useRef(0);
   const listSaves = useRef(new Map<string, Promise<Routine>>());
@@ -203,14 +198,6 @@ export function RoutinesSettings({
 
       try {
         const next = await loadRoutines(agentId, controller.signal, runCursor);
-        const requestedId = initialRun.current ?? selectedRun?.id;
-        const linked = requestedId
-          ? (next.runs.find((item) => item.id === requestedId) ??
-            (await loadRoutineRun(requestedId, controller.signal)))
-          : undefined;
-
-        if (linked && linked.agentId !== agentId)
-          throw new Error("This run belongs to another agent.");
 
         if (active) {
           setState((current) => {
@@ -233,11 +220,6 @@ export function RoutinesSettings({
             };
           });
           setLoadError(null);
-
-          if (linked) {
-            setSelectedRun(linked);
-            initialRun.current = undefined;
-          }
         }
       } catch (cause) {
         if (active)
@@ -262,7 +244,7 @@ export function RoutinesSettings({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [agentId, runCursor, selectedRun?.id]);
+  }, [agentId, runCursor]);
 
   useEffect(() => {
     const save = async () => {
@@ -292,7 +274,6 @@ export function RoutinesSettings({
           : undefined;
       await flush.current?.();
       setEditing(saved ?? next);
-      setSelectedRun(null);
     } catch {
       /* Keep failed edits visible. */
     }
@@ -300,15 +281,9 @@ export function RoutinesSettings({
 
   if (!snapshot.agents.length) return <p>Create an agent to add routines.</p>;
 
-  const detail = editing !== null || selectedRun !== null;
+  const detail = editing !== null;
   const title =
-    editing === "new"
-      ? "New routine"
-      : editing
-        ? editing.name
-        : selectedRun
-          ? "Run details"
-          : "Routines";
+    editing === "new" ? "New routine" : editing ? editing.name : "Routines";
 
   return (
     <section
@@ -405,14 +380,6 @@ export function RoutinesSettings({
               setEditing(null);
             }}
           />
-        ) : selectedRun ? (
-          <RunDetails
-            run={
-              state.runs.find((item) => item.id === selectedRun.id) ??
-              selectedRun
-            }
-            connected={connected}
-          />
         ) : (
           <>
             {loading ? (
@@ -466,15 +433,12 @@ export function RoutinesSettings({
                 <div className="settings-group">
                   {state.runs.map((run) => (
                     <div className="settings-row routine-run-row" key={run.id}>
-                      <Button
-                        variant="ghost"
-                        onClick={() => setSelectedRun(run)}
-                      >
+                      <span>
                         {state.routines.find(
                           (routine) => routine.id === run.routineId,
                         )?.name ?? "Deleted routine"}{" "}
                         · {new Date(run.createdAt).toLocaleString()}
-                      </Button>
+                      </span>
                       <span className="routine-status" data-status={run.status}>
                         {run.status}
                       </span>
@@ -565,6 +529,9 @@ function RoutineEditor({
     draft.trigger.kind === "cron" && !calendarParts(draft.trigger.expression),
   );
   const [payload, setPayload] = useState("{}");
+  const [starting, setStarting] = useState(false);
+  const [runQueued, setRunQueued] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [preview, setPreview] = useState<readonly string[]>([]);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -709,6 +676,32 @@ function RoutineEditor({
     inFlight.current = task;
 
     return task;
+  }
+
+  async function runNow() {
+    if (!routine || starting) return;
+
+    setStarting(true);
+    setRunQueued(false);
+    setRunError(null);
+
+    try {
+      await save();
+      await routineRequest(
+        `${routinePath(agentId, routine.id)}/run`,
+        "POST",
+        current.current.trigger.kind === "webhook" ? { payload } : {},
+      );
+      setRunQueued(true);
+    } catch (cause) {
+      setRunError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not start run. Try again.",
+      );
+    } finally {
+      setStarting(false);
+    }
   }
 
   function remove() {
@@ -1182,22 +1175,23 @@ function RoutineEditor({
           )}
           <div className="routine-actions">
             <Button
-              disabled={!connected || pending}
-              onClick={() =>
-                void save()
-                  .then(() =>
-                    routineRequest(
-                      `${routinePath(agentId, routine.id)}/run`,
-                      "POST",
-                      draft.trigger.kind === "webhook" ? { payload } : {},
-                    ),
-                  )
-                  .catch((cause) => setError(String(cause)))
-              }
+              disabled={!connected || pending || starting}
+              aria-busy={starting}
+              onClick={() => void runNow()}
             >
-              <PlayIcon size={13} aria-hidden />
-              Run now
+              {starting ? (
+                <Clock3Icon size={13} aria-hidden />
+              ) : (
+                <PlayIcon size={13} aria-hidden />
+              )}
+              {starting ? "Starting…" : "Run now"}
             </Button>
+            {runQueued && (
+              <span className="routine-run-feedback" role="status">
+                <CheckIcon size={14} aria-hidden />
+                Run queued
+              </span>
+            )}
             {draft.trigger.kind === "webhook" && (
               <Button
                 disabled={!connected || pending || secretPending}
@@ -1216,6 +1210,7 @@ function RoutineEditor({
               Delete routine
             </Button>
           </div>
+          {runError && <p role="alert">{runError}</p>}
           {confirmDelete && (
             <div role="alertdialog" aria-label="Delete routine">
               <p>Delete this routine and stop its queued and running work?</p>
@@ -1233,63 +1228,6 @@ function RoutineEditor({
           )}
         </>
       )}
-    </div>
-  );
-}
-
-function RunDetails({
-  run,
-  connected,
-}: {
-  run: RoutineRun;
-  connected: boolean;
-}) {
-  const [error, setError] = useState<string | null>(null);
-
-  return (
-    <div>
-      <p>
-        {run.status} · {new Date(run.createdAt).toLocaleString()}
-      </p>
-      {run.error && <p role="alert">{run.error}</p>}
-      <div className="routine-actions">
-        {["queued", "running", "waiting"].includes(run.status) && (
-          <Button
-            disabled={!connected}
-            onClick={() =>
-              void routineRequest(
-                `/api/routine-runs/${run.id}/cancel`,
-                "POST",
-              ).catch((cause) => setError(String(cause)))
-            }
-          >
-            Cancel run
-          </Button>
-        )}
-        {["failed", "interrupted", "expired", "cancelled"].includes(
-          run.status,
-        ) && (
-          <Button
-            disabled={!connected}
-            onClick={() => {
-              if (
-                run.payload &&
-                !window.confirm(
-                  "Retry using this previously accepted payload? Completed actions may be repeated.",
-                )
-              )
-                return;
-              void routineRequest(`/api/routine-runs/${run.id}/retry`, "POST", {
-                routineId: run.routineId,
-                ...(run.payload ? { payload: run.payload } : {}),
-              }).catch((cause) => setError(String(cause)));
-            }}
-          >
-            Retry
-          </Button>
-        )}
-      </div>
-      {error && <p role="alert">{error}</p>}
     </div>
   );
 }

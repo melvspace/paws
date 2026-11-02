@@ -2,7 +2,6 @@ import { Schema } from "effect";
 import {
   Conversation,
   RoutineState,
-  RoutineRun,
   Routine,
   type SaveRoutine,
   type SendChat,
@@ -48,16 +47,6 @@ export async function loadRoutines(
 
   return Schema.decodeUnknownSync(RoutineState)(
     await routineRequest(path, "GET", undefined, signal),
-  );
-}
-export async function loadRoutineRun(id: string, signal?: AbortSignal) {
-  return Schema.decodeUnknownSync(RoutineRun)(
-    await routineRequest(
-      `/api/routine-runs/${encodeURIComponent(id)}/details`,
-      "GET",
-      undefined,
-      signal,
-    ),
   );
 }
 export async function saveRoutine(

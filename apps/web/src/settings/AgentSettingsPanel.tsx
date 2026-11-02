@@ -9,17 +9,15 @@ export function AgentSettingsPanel({
   connected,
   beforeClose,
   onDismiss,
-  initialRunId,
   initialPage = "general",
 }: {
   agent: Agent;
   connected: boolean;
   beforeClose: MutableRefObject<(() => Promise<void>) | null>;
   onDismiss: () => void;
-  initialRunId?: string | undefined;
   initialPage?: "general" | "routines";
 }) {
-  const [page, setPage] = useState(initialRunId ? "routines" : initialPage);
+  const [page, setPage] = useState(initialPage);
   const scroll = useRef<HTMLDivElement>(null);
   const generalFlush = useRef<(() => Promise<void>) | null>(null);
   const routineFlush = useRef<(() => Promise<void>) | null>(null);
@@ -65,7 +63,6 @@ export function AgentSettingsPanel({
           <RoutinesSettings
             agentId={agent.id}
             beforeClose={routineFlush}
-            initialRunId={initialRunId}
             onBack={() => void navigate("general")}
           />
         </div>

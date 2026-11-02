@@ -212,6 +212,12 @@
   flex-wrap: wrap;
   align-items: center;
 }
+.routine-run-feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
 .routine-delete {
   color: light-dark(#c10007, #ff6467);
   margin-left: auto;
@@ -222,10 +228,9 @@
   font-weight: 500;
   color: var(--muted-foreground);
 }
-.routine-run-row .ui-button {
-  padding: 0;
-  text-align: left;
-  white-space: normal;
+.routine-run-row > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .routine-status {
   flex-shrink: 0;
