@@ -393,10 +393,9 @@ function RoutineEditor({
   const inFlight = useRef<Promise<void> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const [filters, setFilters] = useState<readonly RoutineFilter[]>(
-    draft.trigger.kind === "webhook" ? draft.trigger.filters : [],
-  );
-  const filtersRef = useRef(filters);
+  const filters = draft.trigger.kind === "webhook" ? draft.trigger.filters : [];
+  const pendingWebhook =
+    useRef<Awaited<ReturnType<typeof saveRoutine>>["webhook"]>(undefined);
   const [customSchedule, setCustomSchedule] = useState(
     draft.trigger.kind === "cron" && !calendarParts(draft.trigger.expression),
   );
@@ -419,16 +418,9 @@ function RoutineEditor({
 
       try {
         let result: Awaited<ReturnType<typeof saveRoutine>> | undefined;
-        let webhook: Awaited<ReturnType<typeof saveRoutine>>["webhook"];
 
         do {
-          let next = current.current;
-
-          if (next.trigger.kind === "webhook") {
-            const parsed = filtersRef.current;
-            next = { ...next, trigger: { ...next.trigger, filters: parsed } };
-            current.current = next;
-          }
+          const next = current.current;
 
           if (saved.current === JSON.stringify(next)) return;
           if (!connected) throw new Error("Reconnect to save your changes.");
@@ -441,11 +433,17 @@ function RoutineEditor({
           );
           routineId.current = result.routine.id;
           version.current = result.routine.revision;
-          webhook = result.webhook ?? webhook;
+          pendingWebhook.current =
+            result.routine.trigger.kind === "webhook"
+              ? (result.webhook ?? pendingWebhook.current)
+              : undefined;
           saved.current = JSON.stringify(next);
         } while (saved.current !== JSON.stringify(current.current));
 
-        if (result) onSaved(result.routine, webhook);
+        if (result) {
+          onSaved(result.routine, pendingWebhook.current);
+          pendingWebhook.current = undefined;
+        }
       } catch (cause) {
         setError(
           cause instanceof Error
@@ -470,7 +468,8 @@ function RoutineEditor({
 
   useEffect(() => {
     const persist = async () => {
-      if (routine) await saveRef.current();
+      if (inFlight.current) await inFlight.current;
+      if (routineId.current) await saveRef.current();
     };
     flush.current = persist;
 
@@ -509,12 +508,14 @@ function RoutineEditor({
   }, [draft.trigger]);
 
   function changeFilters(next: readonly RoutineFilter[]) {
-    filtersRef.current = next;
-    setFilters(next);
+    const trigger = current.current.trigger;
+
+    if (trigger.kind === "webhook")
+      change({ trigger: { ...trigger, filters: next } });
   }
 
   function blur() {
-    if (routine) void save().catch(() => {});
+    if (routineId.current) void save().catch(() => {});
   }
 
   return (

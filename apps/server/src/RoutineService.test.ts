@@ -597,3 +597,28 @@ it("expires waiting work and strips old payloads in the same retention pass", as
     }),
   ).rejects.toThrow("not available");
 });
+
+it("clears a previous failure after successful continuation", async () => {
+  let fail = true;
+  await using fixture = await setup(async (turn) => {
+    if (turn.text.includes("Paws routine") && fail)
+      throw new Error("Temporary failure");
+
+    turn.onText("reply", "Done", true);
+  });
+  const routine = fixture.service.save(fixture.agent.id, definition());
+  const run = fixture.service.enqueue(routine.id, "manual");
+  await fixture.service.tick();
+  await expect.poll(() => fixture.service.getRun(run.id).status).toBe("failed");
+  expect(fixture.service.getRun(run.id).error).toBeTruthy();
+  fail = false;
+  await fixture.service.respond(run.id, {
+    requestId: "recover",
+    text: "Try again",
+    selection,
+  });
+  await expect
+    .poll(() => fixture.service.getRun(run.id).status)
+    .toBe("succeeded");
+  expect(fixture.service.getRun(run.id).error).toBeUndefined();
+});

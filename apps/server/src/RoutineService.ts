@@ -452,7 +452,7 @@ export function makeRoutineService(
             : waiting
               ? "waiting"
               : "succeeded",
-        ...(conversation.error ? { error: conversation.error } : {}),
+        error: conversation.error ?? undefined,
         finishedAt: new Date().toISOString(),
       };
       write("routine_runs", finished);

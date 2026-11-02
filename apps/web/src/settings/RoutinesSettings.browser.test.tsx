@@ -281,7 +281,14 @@ it.each([
   }
 });
 
-it("patches the created routine when the draft changes during creation", async () => {
+it.each([
+  "instruction",
+  "filters",
+  "retry",
+  "dismissal",
+  "navigation",
+  "failed dismissal",
+])("preserves pending creation during %s", async (scenario) => {
   appAtomRegistry.set(agentsAtom, {
     connected: true,
     error: null,
@@ -290,6 +297,13 @@ it("patches the created routine when the draft changes during creation", async (
         {
           id: "ada",
           name: "Ada",
+          provider: "codex",
+          status: "configured",
+          createdAt: "2026-11-01",
+        },
+        {
+          id: "grace",
+          name: "Grace",
           provider: "codex",
           status: "configured",
           createdAt: "2026-11-01",
@@ -318,8 +332,21 @@ it("patches the created routine when the draft changes during creation", async (
         writes.push({ path, method: init.method, body });
 
         if (init.method === "POST") await pending;
+        if (
+          (scenario === "retry" || scenario === "failed dismissal") &&
+          writes.length === 2
+        )
+          return Response.json({ error: "Follow-up failed" }, { status: 500 });
 
         return Response.json({
+          ...(init.method === "POST"
+            ? {
+                webhook: {
+                  endpoint: `/hooks/routines/${id}`,
+                  secret: "original-secret",
+                },
+              }
+            : {}),
           routine: {
             ...body.routine,
             id,
@@ -337,9 +364,11 @@ it("patches the created routine when the draft changes during creation", async (
       return Response.json({ routines: [], runs: [], events: [] });
     });
 
+  const dismiss = vi.fn();
+
   try {
     await using _screen = await render(
-      <AppSettingsDialog initialPage="Routines" onDismiss={() => {}} />,
+      <AppSettingsDialog initialPage="Routines" onDismiss={dismiss} />,
     );
     await page
       .getByRole("button", { name: "Create routine", exact: true })
@@ -353,18 +382,93 @@ it("patches the created routine when the draft changes during creation", async (
     });
     await instruction.fill("Original instruction");
     await page
+      .getByRole("combobox", { name: "Trigger", exact: true })
+      .selectOptions("webhook");
+
+    if (scenario === "filters") {
+      await page
+        .getByRole("button", { name: "Add filter", exact: true })
+        .click();
+      await page
+        .getByRole("textbox", { name: "Field", exact: true })
+        .fill("repo");
+      await page
+        .getByRole("textbox", { name: "Value", exact: true })
+        .fill("paws");
+    }
+    await page
       .getByRole("button", { name: "Create routine", exact: true })
       .click();
     await expect.poll(() => writes.length).toBe(1);
-    await instruction.fill("Edited during creation");
+    if (scenario === "filters") {
+      await page
+        .getByRole("textbox", { name: "Value", exact: true })
+        .fill("updated");
+    } else {
+      await instruction.fill("Edited during creation");
+    }
+
+    if (scenario === "dismissal" || scenario === "failed dismissal") {
+      await page
+        .getByRole("button", { name: "Close settings", exact: true })
+        .click();
+      expect(dismiss).not.toHaveBeenCalled();
+    }
+
+    if (scenario === "navigation") {
+      await page
+        .getByRole("combobox", { name: "Agent", exact: true })
+        .selectOptions("grace");
+      await expect.element(instruction).toBeVisible();
+    }
+
     release();
     await expect.poll(() => writes.length).toBe(2);
-    expect(writes.map((write) => write.method)).toEqual(["POST", "PATCH"]);
+    if (scenario === "retry" || scenario === "failed dismissal") {
+      await expect
+        .element(page.getByRole("alert"))
+        .toHaveTextContent("Follow-up failed");
+      expect(dismiss).not.toHaveBeenCalled();
+      await page
+        .getByRole("button", { name: "Create routine", exact: true })
+        .click();
+      await expect.poll(() => writes.length).toBe(3);
+      await expect
+        .element(
+          page.getByRole("textbox", { name: "Signing secret", exact: true }),
+        )
+        .toHaveValue("original-secret");
+    }
+
+    expect(writes.map((write) => write.method)).toEqual(
+      scenario === "retry" || scenario === "failed dismissal"
+        ? ["POST", "PATCH", "PATCH"]
+        : ["POST", "PATCH"],
+    );
     expect(writes[1]).toMatchObject({
       path: `/api/agents/ada/routines/${id}`,
-      body: { revision: 1, routine: { instruction: "Edited during creation" } },
+      body: {
+        revision: 1,
+        routine:
+          scenario === "filters"
+            ? { trigger: { filters: [{ path: "repo", value: "updated" }] } }
+            : { instruction: "Edited during creation" },
+      },
     });
-    await expect.element(instruction).toHaveValue("Edited during creation");
+    if (scenario === "navigation") {
+      await expect
+        .element(page.getByRole("combobox", { name: "Agent", exact: true }))
+        .toHaveValue("grace");
+      await expect.element(instruction).not.toBeInTheDocument();
+    } else if (scenario === "dismissal") {
+      await expect.poll(() => dismiss.mock.calls.length).toBe(1);
+    } else if (scenario === "filters") {
+      await expect
+        .element(page.getByRole("textbox", { name: "Value", exact: true }))
+        .toHaveValue("updated");
+    } else {
+      await expect.element(instruction).toHaveValue("Edited during creation");
+    }
   } finally {
     release();
     fetchMock.mockRestore();
