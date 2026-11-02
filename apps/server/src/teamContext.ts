@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { Schema } from "effect";
 import { Agent, Team } from "@paws/contracts";
 
-export function agentContext(root: string, agentId: string) {
+export function agentContext(
+  root: string,
+  agentId: string,
+): { memory: string; teams: readonly Team[] } {
   const db = new DatabaseSync(join(root, "state.sqlite"), { readOnly: true });
 
   try {
@@ -29,8 +32,13 @@ export function agentContext(root: string, agentId: string) {
   }
 }
 
-export function withMemoryContext(root: string, agentId: string, text: string) {
-  const context = agentContext(root, agentId);
+export function withMemoryContext(
+  root: string,
+  agentId: string,
+  text: string,
+  captured?: ReturnType<typeof agentContext>,
+) {
+  const context = captured ?? agentContext(root, agentId);
 
   if (!context.memory && !context.teams.length) return text;
 

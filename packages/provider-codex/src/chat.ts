@@ -125,6 +125,28 @@ const finishTurnTool = {
     required: ["silent"],
   },
 };
+const routineTool = {
+  type: "function",
+  name: "paws_routine",
+  description:
+    "Manage your own routines and history. list; save with routine {name,instruction,enabled,trigger,missed:skip/latest,timeoutMinutes}, id/revision for updates; delete/run with id; history with optional run id or text search; message with text to main chat. trigger is {kind:once,at:ISO date}, {kind:interval,minutes}, {kind:cron,expression:five fields,timezone:IANA}, or {kind:webhook,filters:[{path,operator:equals/in/exists,value?}],eventType?}. Manual webhook run needs payload JSON string. User controls signing secrets.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: ["list", "save", "delete", "run", "history", "message"],
+      },
+      id: { type: "string" },
+      revision: { type: "number" },
+      routine: { type: "object", additionalProperties: true },
+      text: { type: "string" },
+      payload: { type: "string" },
+    },
+    required: ["action"],
+    additionalProperties: false,
+  },
+};
 const memoryTool = {
   type: "function",
   name: "paws_memory",
@@ -296,6 +318,7 @@ export async function runCodexTurn(
                     readAttachmentTool,
                     teamTool,
                     memoryTool,
+                    routineTool,
                     finishTurnTool,
                   ],
                 }),
@@ -543,13 +566,18 @@ export async function runCodexTurn(
           "paws_read_attachment",
           "paws_team_tool",
           "paws_memory",
+          "paws_routine",
           "paws_finish_turn",
         ].includes(call.tool)
       )
         throw new Error("Unknown tool.");
 
       try {
-        if (call.tool === "paws_memory" || call.tool === "paws_team_tool") {
+        if (
+          call.tool === "paws_memory" ||
+          call.tool === "paws_team_tool" ||
+          call.tool === "paws_routine"
+        ) {
           turn.signal.throwIfAborted();
           const blocked = turn.onTool?.(call.tool, "running");
 
@@ -560,7 +588,11 @@ export async function runCodexTurn(
             };
 
           const execute =
-            call.tool === "paws_memory" ? turn.memoryTool : turn.teamTool;
+            call.tool === "paws_routine"
+              ? turn.routineTool
+              : call.tool === "paws_memory"
+                ? turn.memoryTool
+                : turn.teamTool;
 
           if (!execute) throw new Error("Team resource unavailable.");
 
@@ -672,7 +704,11 @@ export async function runCodexTurn(
           ],
         };
       } catch (error) {
-        if (call.tool === "paws_memory" || call.tool === "paws_team_tool") {
+        if (
+          call.tool === "paws_memory" ||
+          call.tool === "paws_team_tool" ||
+          call.tool === "paws_routine"
+        ) {
           turn.onTool?.(call.tool, "failed");
 
           return {

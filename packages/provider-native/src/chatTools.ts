@@ -21,6 +21,35 @@ export const toolText = (text: string) => ({
 export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
   const entries = [
     {
+      name: "paws_routine",
+      description:
+        "Manage your own routines or query chat history. Actions: list; save with routine (name, instruction, enabled, trigger, missed skip/latest, timeoutMinutes), optional id and current revision; delete/run with id; history with optional run id or text search; message with text to your main chat. Trigger: {kind: once, at: ISO date}, {kind: interval, minutes}, {kind: cron, expression: five fields, timezone: IANA zone}, or {kind: webhook, filters: [{path, operator: equals/in/exists, value?}], eventType?}. Webhook run requires payload as a JSON string. No access to signing secrets.",
+      schema: z.object({
+        action: z.enum(["list", "save", "delete", "run", "history", "message"]),
+        id: z.string().optional(),
+        revision: z.number().optional(),
+        routine: z.record(z.string(), z.unknown()).optional(),
+        text: z.string().optional(),
+        payload: z.string().optional(),
+      }),
+      async execute(value: unknown) {
+        if (!turn.routineTool) throw new Error("Routines unavailable.");
+
+        try {
+          return toolText(JSON.stringify(await turn.routineTool(value)));
+        } catch (error) {
+          return {
+            ...toolText(
+              error instanceof ChatToolError
+                ? error.message
+                : "Routine operation failed. Check the input.",
+            ),
+            isError: true,
+          };
+        }
+      },
+    },
+    {
       name: "paws_memory",
       description:
         "Read or update persistent memories. Omit teamId for your own private memories; provide a teamId to share with that team's members. Omit memory to read. To update, first read and then provide the complete replacement memory, preserving useful existing facts. Never store credentials.",

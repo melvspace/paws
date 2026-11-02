@@ -92,6 +92,13 @@ export const ChatMessage = Schema.Struct({
   text: Schema.String,
   createdAt: Schema.String,
   model: Schema.optional(ChatModelReference),
+  routine: Schema.optional(
+    Schema.Struct({
+      id: Schema.String,
+      name: Schema.String,
+      runId: Schema.String,
+    }),
+  ),
   streaming: Schema.optional(Schema.Boolean),
   card: Schema.optional(ChatCard),
   attachments: Schema.optional(Schema.Array(ChatAttachment)),

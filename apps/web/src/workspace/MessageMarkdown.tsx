@@ -15,7 +15,11 @@ export function MessageMarkdown({ text }: { text: string }) {
             ) ? (
               <span>{children}</span>
             ) : (
-              <a href={href} target="_blank" rel="noopener noreferrer">
+              <a
+                href={href}
+                target={href?.startsWith("#routine/") ? undefined : "_blank"}
+                rel="noopener noreferrer"
+              >
                 {children}
               </a>
             ),

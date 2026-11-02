@@ -37,6 +37,7 @@ export function Dashboard() {
   >(null);
   const hash = useSyncExternalStore(subscribeToSelection, selectionSnapshot);
   const agent = selectedAgent(snapshot.agents, hash);
+  const linkedRun = /^#routine\/([a-f0-9-]{36})\/([a-f0-9-]{36})$/.exec(hash);
 
   // The WebSocket is an external resource owned by this mounted view.
   useEffect(() => {
@@ -122,10 +123,22 @@ export function Dashboard() {
             </div>
           )}
         </main>
-        {settingsOpen && (
+        {(settingsOpen || linkedRun) && (
           <AppSettingsDialog
-            initialPage={settingsOpen}
-            onDismiss={() => setSettingsOpen(null)}
+            key={linkedRun?.[2] ?? "settings"}
+            initialPage={
+              linkedRun ? "Routines" : (settingsOpen ?? "Appearance")
+            }
+            initialRoutine={
+              linkedRun
+                ? { agentId: linkedRun[1]!, runId: linkedRun[2]! }
+                : undefined
+            }
+            onDismiss={() => {
+              setSettingsOpen(null);
+
+              if (linkedRun) location.hash = `agent-${linkedRun[1]}`;
+            }}
           />
         )}
         {dialog && (

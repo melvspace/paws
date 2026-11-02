@@ -847,3 +847,87 @@ it("keeps bubble dimensions stable from sending through queued and sent, includi
     .toBe(3);
   expect(dimensions()).toEqual(before);
 });
+
+it("shows routine provenance separately from output and preserves distinct messages", async () => {
+  const conversation: Conversation = {
+    agentId: "agent",
+    revision: 1,
+    status: "idle",
+    error: null,
+    selection: null,
+    messages: [
+      {
+        id: "confirmation",
+        role: "assistant",
+        text: "I’ll send you a joke every five minutes.",
+        createdAt: "2026-11-02T10:30:00Z",
+      },
+      {
+        id: "joke",
+        role: "assistant",
+        text: "He was outstanding in his field.",
+        createdAt: "2026-11-02T10:35:00Z",
+        routine: {
+          id: "routine",
+          name: "A joke every five minutes",
+          runId: "run",
+        },
+      },
+    ],
+  };
+  await using _screen = await render(
+    <ChatHistory
+      conversation={conversation}
+      busy={false}
+      error={null}
+      onReply={async () => true}
+    />,
+  );
+  expect(document.querySelectorAll("article")).toHaveLength(2);
+  const message = document.querySelectorAll("article")[1]!;
+  expect(message.querySelector(".message-markdown")?.textContent).toBe(
+    "He was outstanding in his field.",
+  );
+  expect(message.querySelector(".chat-routine-origin")?.textContent).toBe(
+    "A joke every five minutes",
+  );
+  expect(
+    message.querySelector(".chat-routine-origin")?.getAttribute("href"),
+  ).toBe("#routine/agent/run");
+});
+
+it("cleans up earlier inline routine prefixes for display without rewriting history", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000001";
+  const runId = "00000000-0000-4000-8000-000000000002";
+  const original = `A joke every five minutes · [Open run](#routine/${agentId}/${runId})\nHe was outstanding in his field.`;
+  const conversation: Conversation = {
+    agentId,
+    revision: 1,
+    status: "idle",
+    error: null,
+    selection: null,
+    messages: [
+      {
+        id: "old-joke",
+        role: "assistant",
+        text: original,
+        createdAt: "2026-11-02T10:35:00Z",
+      },
+    ],
+  };
+  await using _screen = await render(
+    <ChatHistory
+      conversation={conversation}
+      busy={false}
+      error={null}
+      onReply={async () => true}
+    />,
+  );
+  expect(document.querySelector(".message-markdown")?.textContent).toBe(
+    "He was outstanding in his field.",
+  );
+  expect(document.querySelector(".chat-routine-origin")?.textContent).toBe(
+    "A joke every five minutes",
+  );
+  expect(conversation.messages[0]?.text).toBe(original);
+});

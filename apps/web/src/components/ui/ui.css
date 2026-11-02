@@ -194,3 +194,39 @@
   width: 12px;
   height: 12px;
 }
+
+.ui-switch {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 18px;
+  padding: 2px;
+  border: 1px solid var(--input);
+  border-radius: 999px;
+  background: var(--muted);
+  cursor: pointer;
+}
+.ui-switch[data-checked] {
+  background: var(--foreground);
+  border-color: var(--foreground);
+}
+.ui-switch-thumb {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+}
+.ui-switch[data-checked] .ui-switch-thumb {
+  transform: translateX(12px);
+  background: var(--background);
+}
+.ui-switch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ui-switch:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}

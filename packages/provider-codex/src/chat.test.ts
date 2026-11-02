@@ -163,6 +163,11 @@ for await (const line of createInterface({input:process.stdin})) {
     const start = requests.find((item) => item.method === "thread/start");
     expect(start.params.cwd).toBe("/workspace");
     expect(start.params.dynamicTools[0].name).toBe("paws_send_message");
+    expect(start.params.dynamicTools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "paws_routine" }),
+      ]),
+    );
     expect(
       requests.find((item) => item.method === "thread/resume").params.threadId,
     ).toBe("thread");
