@@ -146,7 +146,10 @@ it("authenticates signed raw payloads, filters events, durably deduplicates deli
       trigger: {
         kind: "webhook",
         eventType: "issue",
-        filters: [{ path: "data.repo", operator: "equals", value: "paws" }],
+        filters: {
+          combinator: "and",
+          rules: [{ path: "data.repo", operator: "equals", value: "paws" }],
+        },
       },
     }),
   );
@@ -195,6 +198,53 @@ it("authenticates signed raw payloads, filters events, durably deduplicates deli
   expect(JSON.stringify(fixture.service.list(fixture.agent.id))).not.toContain(
     secret,
   );
+});
+
+it("persists nested filter groups and evaluates them after reopening", async () => {
+  await using fixture = await setup();
+  const routine = fixture.service.save(
+    fixture.agent.id,
+    definition({
+      trigger: {
+        kind: "webhook",
+        filters: {
+          combinator: "and",
+          rules: [
+            { path: "repo", operator: "equals", value: "paws" },
+            {
+              combinator: "or",
+              rules: [
+                { path: "branch", operator: "equals", value: "main" },
+                { path: "release", operator: "exists" },
+              ],
+            },
+          ],
+        },
+      },
+    }),
+  );
+  const { secret } = fixture.service.rotate(routine.id);
+  await fixture.reopen();
+  expect(fixture.service.list(fixture.agent.id).routines[0]?.trigger).toEqual(
+    routine.trigger,
+  );
+
+  for (const [payload, outcome] of [
+    [{ repo: "paws", branch: "feature" }, "filtered"],
+    [{ repo: "paws", release: true }, "accepted"],
+  ] as const) {
+    const body = Buffer.from(JSON.stringify(payload));
+    expect(
+      fixture.service.webhook(
+        routine.id,
+        {
+          "x-github-delivery": outcome,
+          "x-hub-signature-256": `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`,
+        },
+        body,
+      ),
+    ).toMatchObject({ outcome });
+  }
 });
 
 it("combines pending ticks, cancels queues on pause, and allows explicit manual execution while paused", async () => {
@@ -274,7 +324,9 @@ it("deleting an agent removes its routines, histories and ingress secrets", asyn
   await using fixture = await setup();
   const routine = fixture.service.save(
     fixture.agent.id,
-    definition({ trigger: { kind: "webhook", filters: [] } }),
+    definition({
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+    }),
   );
   fixture.service.rotate(routine.id);
   fixture.service.enqueue(routine.id, "manual", "{}");
@@ -357,7 +409,9 @@ it("rejects paused, stale, oversized and excessive webhook deliveries with no ex
   await using fixture = await setup();
   const routine = fixture.service.save(
     fixture.agent.id,
-    definition({ trigger: { kind: "webhook", filters: [] } }),
+    definition({
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+    }),
   );
   const { secret } = fixture.service.rotate(routine.id);
   const body = Buffer.from("{}");
@@ -430,7 +484,9 @@ it("supplies event data to execution without duplicating raw payloads into retai
   });
   const routine = fixture.service.save(
     fixture.agent.id,
-    definition({ trigger: { kind: "webhook", filters: [] } }),
+    definition({
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+    }),
   );
   const run = fixture.service.enqueue(
     routine.id,
@@ -465,14 +521,20 @@ it("preserves webhook signatures after filter edits and revokes them when leavin
   await using fixture = await setup();
   const routine = fixture.service.save(
     fixture.agent.id,
-    definition({ trigger: { kind: "webhook", filters: [] } }),
+    definition({
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+    }),
   );
   const { secret } = fixture.service.rotate(routine.id);
   const updated = fixture.service.save(
     fixture.agent.id,
     {
       ...routine,
-      trigger: { kind: "webhook", eventType: "issue", filters: [] },
+      trigger: {
+        kind: "webhook",
+        eventType: "issue",
+        filters: { combinator: "and", rules: [] },
+      },
     },
     routine.id,
     "user",
@@ -537,7 +599,9 @@ it("bounds unauthenticated webhook history across restarts", async () => {
   await using fixture = await setup();
   const routine = fixture.service.save(
     fixture.agent.id,
-    definition({ trigger: { kind: "webhook", filters: [] } }),
+    definition({
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+    }),
   );
   fixture.service.rotate(routine.id);
 
@@ -711,7 +775,9 @@ it("deduplicates native GitLab and generic deliveries across restarts without ch
   await using fixture = await setup();
   const routine = fixture.service.save(
     fixture.agent.id,
-    definition({ trigger: { kind: "webhook", filters: [] } }),
+    definition({
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+    }),
   );
   const { secret } = fixture.service.rotate(
     routine.id,
@@ -755,7 +821,7 @@ it("filters by native event headers and acknowledges GitHub pings without starti
       trigger: {
         kind: "webhook",
         eventType: "Merge Request Hook",
-        filters: [],
+        filters: { combinator: "and", rules: [] },
       },
     }),
   );
@@ -783,7 +849,10 @@ it("filters by native event headers and acknowledges GitHub pings without starti
   ).toBe("filtered");
   fixture.service.save(
     fixture.agent.id,
-    { ...routine, trigger: { kind: "webhook", filters: [] } },
+    {
+      ...routine,
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+    },
     routine.id,
     "user",
     routine.revision,
@@ -806,7 +875,9 @@ it("does not consume a delivery ID when payload validation fails and revokes imp
   await using fixture = await setup();
   const routine = fixture.service.save(
     fixture.agent.id,
-    definition({ trigger: { kind: "webhook", filters: [] } }),
+    definition({
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+    }),
   );
   fixture.service.rotate(routine.id, "imported-token");
   const headers = {

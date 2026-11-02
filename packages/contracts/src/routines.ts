@@ -8,6 +8,19 @@ export const RoutineFilter = Schema.Struct({
 });
 export type RoutineFilter = typeof RoutineFilter.Type;
 
+export type RoutineFilterGroup = {
+  readonly combinator: "and" | "or";
+  readonly rules: readonly (RoutineFilter | RoutineFilterGroup)[];
+};
+
+export const RoutineFilterGroup: Schema.Codec<RoutineFilterGroup> =
+  Schema.Struct({
+    combinator: Schema.Literals(["and", "or"]),
+    rules: Schema.Array(
+      Schema.Union([RoutineFilter, Schema.suspend(() => RoutineFilterGroup)]),
+    ),
+  });
+
 export const RoutineTrigger = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("once"), at: Schema.String }),
   Schema.Struct({ kind: Schema.Literal("interval"), minutes: Schema.Number }),
@@ -19,7 +32,7 @@ export const RoutineTrigger = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("webhook"),
     eventType: Schema.optional(Schema.String),
-    filters: Schema.Array(RoutineFilter),
+    filters: RoutineFilterGroup,
   }),
 ]);
 export type RoutineTrigger = typeof RoutineTrigger.Type;

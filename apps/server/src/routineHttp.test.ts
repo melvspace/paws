@@ -218,7 +218,11 @@ it("imports sender secrets privately and receives native webhooks through the in
       name: "Incoming",
       instruction: "Summarize",
       enabled: true,
-      trigger: { kind: "webhook", eventType: "Push Hook", filters: [] },
+      trigger: {
+        kind: "webhook",
+        eventType: "Push Hook",
+        filters: { combinator: "and", rules: [] },
+      },
       missed: "skip",
       timeoutMinutes: 60,
     });

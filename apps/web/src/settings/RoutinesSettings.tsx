@@ -21,11 +21,12 @@ import {
   type Routine,
   type SaveRoutine,
   RoutineState,
-  type RoutineFilter,
+  type RoutineFilterGroup,
 } from "@paws/contracts";
 import { Button } from "../components/ui/button.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Textarea } from "../components/ui/textarea.tsx";
+import { RoutineConditionBuilder } from "./RoutineConditionBuilder.tsx";
 import "./routines.css";
 
 type State = typeof RoutineState.Type;
@@ -525,7 +526,10 @@ function RoutineEditor({
   const inFlight = useRef<Promise<void> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const filters = draft.trigger.kind === "webhook" ? draft.trigger.filters : [];
+  const filters: RoutineFilterGroup =
+    draft.trigger.kind === "webhook"
+      ? draft.trigger.filters
+      : { combinator: "and", rules: [] };
   const pendingRoutine = useRef<Routine | undefined>(undefined);
   const [customSchedule, setCustomSchedule] = useState(
     draft.trigger.kind === "cron" && !calendarParts(draft.trigger.expression),
@@ -674,7 +678,7 @@ function RoutineEditor({
     };
   }, [draft.trigger]);
 
-  function changeFilters(next: readonly RoutineFilter[]) {
+  function changeFilters(next: RoutineFilterGroup) {
     const trigger = current.current.trigger;
 
     if (trigger.kind === "webhook")
@@ -829,7 +833,7 @@ function RoutineEditor({
                     : kind === "interval"
                       ? { kind, minutes: 60 }
                       : kind === "webhook"
-                        ? { kind, filters: [] }
+                        ? { kind, filters: { combinator: "and", rules: [] } }
                         : {
                             kind: "cron",
                             expression: "0 9 * * 1-5",
@@ -1060,96 +1064,11 @@ function RoutineEditor({
             </label>
             <div className="settings-row routine-filter-row">
               <span>Filters</span>
-              <div className="routine-filter-list">
-                {filters.map((filter, index) => (
-                  <div className="routine-filter" key={index}>
-                    <label>
-                      Field
-                      <Input
-                        value={filter.path}
-                        onChange={(event) =>
-                          changeFilters(
-                            filters.map((item, position) =>
-                              position === index
-                                ? { ...item, path: event.target.value }
-                                : item,
-                            ),
-                          )
-                        }
-                        onBlur={blur}
-                      />
-                    </label>
-                    <label>
-                      Condition
-                      <select
-                        value={filter.operator}
-                        onChange={(event) => {
-                          const operator =
-                            event.target.value === "exists"
-                              ? "exists"
-                              : event.target.value === "in"
-                                ? "in"
-                                : "equals";
-                          changeFilters(
-                            filters.map((item, position) =>
-                              position === index ? { ...item, operator } : item,
-                            ),
-                          );
-                          blur();
-                        }}
-                      >
-                        <option value="equals">Equals</option>
-                        <option value="in">Is one of</option>
-                        <option value="exists">Exists</option>
-                      </select>
-                    </label>
-                    {filter.operator !== "exists" && (
-                      <label>
-                        {filter.operator === "in"
-                          ? "Values, comma-separated"
-                          : "Value"}
-                        <Input
-                          value={filter.value ?? ""}
-                          onChange={(event) =>
-                            changeFilters(
-                              filters.map((item, position) =>
-                                position === index
-                                  ? { ...item, value: event.target.value }
-                                  : item,
-                              ),
-                            )
-                          }
-                          onBlur={blur}
-                        />
-                      </label>
-                    )}
-                    <Button
-                      variant="ghost"
-                      aria-label={`Remove filter ${index + 1}`}
-                      onClick={() => {
-                        changeFilters(
-                          filters.filter((_, position) => position !== index),
-                        );
-                        blur();
-                      }}
-                    >
-                      <Trash2Icon size={13} aria-hidden />
-                    </Button>
-                  </div>
-                ))}
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    changeFilters([
-                      ...filters,
-                      { path: "", operator: "equals", value: "" },
-                    ])
-                  }
-                >
-                  <PlusIcon size={13} aria-hidden />
-                  Add filter
-                </Button>
-              </div>
+              <RoutineConditionBuilder
+                filters={filters}
+                onChange={changeFilters}
+                onCommit={blur}
+              />
             </div>
           </>
         )}

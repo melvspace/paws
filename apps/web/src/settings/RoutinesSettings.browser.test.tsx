@@ -527,7 +527,7 @@ it.each(["success", "failure"])(
   async (result) => {
     let routine: Routine = {
       ...routineListFixture(),
-      trigger: { kind: "webhook", filters: [] },
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
     };
     let finish!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => {
@@ -645,7 +645,7 @@ it.each(["trigger", "deletion"])(
   async (control) => {
     const routine: Routine = {
       ...routineListFixture(),
-      trigger: { kind: "webhook", filters: [] },
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
     };
     let finish!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => {
@@ -1238,7 +1238,14 @@ it.each([
         revision: 1,
         routine:
           scenario === "filters"
-            ? { trigger: { filters: [{ path: "repo", value: "updated" }] } }
+            ? {
+                trigger: {
+                  filters: {
+                    combinator: "and",
+                    rules: [{ path: "repo", value: "updated" }],
+                  },
+                },
+              }
             : { instruction: "Edited during creation" },
       },
     });
@@ -1469,7 +1476,7 @@ it.each(["success", "failure"])(
   async (result) => {
     const routine: Routine = {
       ...routineListFixture(),
-      trigger: { kind: "webhook", filters: [] },
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
     };
     let finish!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => {
