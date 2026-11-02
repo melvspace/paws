@@ -1,5 +1,4 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { createHmac } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 import { expect, it } from "vite-plus/test";
@@ -78,12 +77,24 @@ async function setup(
   );
   await service.ready;
 
+  const secrets = new Map<string, string>();
+
   return {
     root,
     agents,
     agent,
     other,
     main,
+    deliver(id: string, body: Buffer) {
+      let secret = secrets.get(id);
+
+      if (!secret) {
+        secret = service.webhookEndpoint(id, true).secret!;
+        secrets.set(id, secret);
+      }
+
+      return service.webhook(id, body, secret);
+    },
     get service() {
       return service;
     },
@@ -138,67 +149,6 @@ it("persists routines, prevents stale edits and cross-agent management, and keep
   expect(fixture.service.getRun(run.id).selection).toEqual(selection);
 });
 
-it("authenticates signed raw payloads, filters events, durably deduplicates deliveries, and revokes secrets", async () => {
-  await using fixture = await setup();
-  const routine = fixture.service.save(
-    fixture.agent.id,
-    definition({
-      trigger: {
-        kind: "webhook",
-        filters: {
-          combinator: "and",
-          rules: [{ path: "data.repo", operator: "equals", value: "paws" }],
-        },
-      },
-    }),
-  );
-  const { secret } = fixture.service.rotate(routine.id);
-  const body = Buffer.from('{"type":"issue","data":{"repo":"paws"}}');
-  const headers = {
-    "x-github-event": "issue",
-    "x-hub-signature-256": `sha256=${createHmac("sha256", secret)
-      .update(body)
-      .digest("hex")}`,
-    "x-github-delivery": "delivery-1",
-  };
-  expect(() =>
-    fixture.service.webhook(
-      routine.id,
-      { ...headers, "x-hub-signature-256": "0".repeat(64) },
-      body,
-    ),
-  ).toThrow("signature");
-  expect(fixture.service.webhook(routine.id, headers, body)).toMatchObject({
-    outcome: "accepted",
-  });
-  await fixture.reopen();
-  expect(fixture.service.webhook(routine.id, headers, body)).toEqual({
-    outcome: "duplicate",
-  });
-  const skipped = Buffer.from('{"type":"other"}');
-  expect(
-    fixture.service.webhook(
-      routine.id,
-      {
-        ...headers,
-        "x-github-delivery": "delivery-2",
-        "x-github-event": "other",
-        "x-hub-signature-256": `sha256=${createHmac("sha256", secret)
-          .update(skipped)
-          .digest("hex")}`,
-      },
-      skipped,
-    ),
-  ).toEqual({ outcome: "filtered" });
-  fixture.service.rotate(routine.id);
-  expect(() => fixture.service.webhook(routine.id, headers, body)).toThrow(
-    "signature",
-  );
-  expect(JSON.stringify(fixture.service.list(fixture.agent.id))).not.toContain(
-    secret,
-  );
-});
-
 it("persists nested filter groups and evaluates them after reopening", async () => {
   await using fixture = await setup();
   const routine = fixture.service.save(
@@ -222,7 +172,6 @@ it("persists nested filter groups and evaluates them after reopening", async () 
       },
     }),
   );
-  const { secret } = fixture.service.rotate(routine.id);
   await fixture.reopen();
   expect(fixture.service.list(fixture.agent.id).routines[0]?.trigger).toEqual(
     routine.trigger,
@@ -233,16 +182,7 @@ it("persists nested filter groups and evaluates them after reopening", async () 
     [{ repo: "paws", release: true }, "accepted"],
   ] as const) {
     const body = Buffer.from(JSON.stringify(payload));
-    expect(
-      fixture.service.webhook(
-        routine.id,
-        {
-          "x-github-delivery": outcome,
-          "x-hub-signature-256": `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`,
-        },
-        body,
-      ),
-    ).toMatchObject({ outcome });
+    expect(fixture.deliver(routine.id, body)).toMatchObject({ outcome });
   }
 });
 
@@ -319,7 +259,7 @@ it("marks interrupted executions after restart and never silently reruns them", 
   expect(fixture.service.getRun(run.id).status).toBe("interrupted");
 });
 
-it("deleting an agent removes its routines, histories and ingress secrets", async () => {
+it("deleting an agent removes its routines and histories", async () => {
   await using fixture = await setup();
   const routine = fixture.service.save(
     fixture.agent.id,
@@ -327,7 +267,6 @@ it("deleting an agent removes its routines, histories and ingress secrets", asyn
       trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
     }),
   );
-  fixture.service.rotate(routine.id);
   fixture.service.enqueue(routine.id, "manual", "{}");
   await fixture.service.removeAgent(fixture.agent.id);
   expect(fixture.service.list(fixture.agent.id)).toEqual({
@@ -336,11 +275,6 @@ it("deleting an agent removes its routines, histories and ingress secrets", asyn
     nextRunCursor: null,
     events: [],
   });
-  const db = new DatabaseSync(`${fixture.root}/state.sqlite`, {
-    readOnly: true,
-  });
-  expect(db.prepare("SELECT * FROM routine_secrets").all()).toEqual([]);
-  db.close();
 });
 
 it("validates schedules and skips DST gaps while running a repeated wall time once", () => {
@@ -404,58 +338,6 @@ it("preserves interval cadence and applies offline catch-up once rather than rep
   expect(Date.parse(next!) - Date.parse(latest.nextAt!)).toBe(3 * 3600000);
 });
 
-it("rejects paused, stale, oversized and excessive webhook deliveries with no extra queued work", async () => {
-  await using fixture = await setup();
-  const routine = fixture.service.save(
-    fixture.agent.id,
-    definition({
-      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
-    }),
-  );
-  const { secret } = fixture.service.rotate(routine.id);
-  const body = Buffer.from("{}");
-  const headers = () => ({ authorization: `Bearer ${secret}` });
-  expect(() =>
-    fixture.service.webhook(
-      routine.id,
-      {
-        "webhook-id": "stale",
-        "webhook-timestamp": String(Math.floor(Date.now() / 1000) - 301),
-        "webhook-signature": "v1,invalid",
-      },
-      body,
-    ),
-  ).toThrow("timestamp");
-  expect(() =>
-    fixture.service.webhook(routine.id, headers(), Buffer.alloc(262145)),
-  ).toThrow();
-  const paused = fixture.service.save(
-    fixture.agent.id,
-    { ...routine, enabled: false },
-    routine.id,
-    "user",
-    routine.revision,
-  );
-  expect(() => fixture.service.webhook(routine.id, headers(), body)).toThrow(
-    "paused",
-  );
-  fixture.service.save(
-    fixture.agent.id,
-    { ...paused, enabled: true },
-    paused.id,
-    "user",
-    paused.revision,
-  );
-
-  for (let index = 0; index < 57; index++)
-    fixture.service.webhook(routine.id, headers(), body);
-
-  expect(() => fixture.service.webhook(routine.id, headers(), body)).toThrow(
-    "rate limit",
-  );
-  expect(fixture.service.list(fixture.agent.id).runs).toHaveLength(57);
-});
-
 it("cancels a running routine and releases the agent execution slot", async () => {
   await using fixture = await setup(async (turn) => {
     if (!turn.text.includes("Paws routine")) return;
@@ -516,57 +398,6 @@ it("delivers routine output as clean message text with separate provenance", asy
   expect(message).toMatchObject({ routine: { name: "Digest", runId: run.id } });
 });
 
-it("preserves webhook signatures after filter edits and revokes them when leaving webhook mode", async () => {
-  await using fixture = await setup();
-  const routine = fixture.service.save(
-    fixture.agent.id,
-    definition({
-      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
-    }),
-  );
-  const { secret } = fixture.service.rotate(routine.id);
-  const updated = fixture.service.save(
-    fixture.agent.id,
-    {
-      ...routine,
-      trigger: {
-        kind: "webhook",
-        filters: { combinator: "and", rules: [] },
-      },
-    },
-    routine.id,
-    "user",
-    routine.revision,
-  );
-  const body = Buffer.from('{"type":"issue"}');
-  const headers = {
-    "x-github-event": "issue",
-    "x-hub-signature-256": `sha256=${createHmac("sha256", secret)
-      .update(body)
-      .digest("hex")}`,
-  };
-  expect(fixture.service.webhook(routine.id, headers, body).outcome).toBe(
-    "accepted",
-  );
-  const interval = fixture.service.save(
-    fixture.agent.id,
-    { ...updated, trigger: { kind: "interval", minutes: 60 } },
-    routine.id,
-    "user",
-    updated.revision,
-  );
-  fixture.service.save(
-    fixture.agent.id,
-    updated,
-    routine.id,
-    "user",
-    interval.revision,
-  );
-  expect(() => fixture.service.webhook(routine.id, headers, body)).toThrow(
-    "secret",
-  );
-});
-
 it("rejects stale editor saves after a one-time schedule disables itself", async () => {
   await using fixture = await setup();
   const at = new Date(Date.now() + 60000).toISOString();
@@ -593,7 +424,7 @@ it("rejects stale editor saves after a one-time schedule disables itself", async
   expect(fixture.service.list(fixture.agent.id).runs).toHaveLength(1);
 });
 
-it("bounds unauthenticated webhook history across restarts", async () => {
+it("bounds invalid webhook history across restarts", async () => {
   await using fixture = await setup();
   const routine = fixture.service.save(
     fixture.agent.id,
@@ -601,30 +432,29 @@ it("bounds unauthenticated webhook history across restarts", async () => {
       trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
     }),
   );
-  fixture.service.rotate(routine.id);
 
   for (
     let index = 0;
     index < fixture.service.limits.requestsPerMinute;
     index++
   ) {
-    expect(() =>
-      fixture.service.webhook(routine.id, {}, Buffer.from("{}")),
-    ).toThrow("signature");
+    expect(() => fixture.deliver(routine.id, Buffer.from("invalid"))).toThrow(
+      "JSON",
+    );
   }
 
   await fixture.reopen();
 
   for (let index = 0; index < 100; index++) {
-    expect(() =>
-      fixture.service.webhook(routine.id, {}, Buffer.from("{}")),
-    ).toThrow("rate limit");
+    expect(() => fixture.deliver(routine.id, Buffer.from("invalid"))).toThrow(
+      "rate limit",
+    );
   }
 
   expect(
     fixture.service
       .list(fixture.agent.id)
-      .events.filter((event) => event.outcome === "rejected_authentication"),
+      .events.filter((event) => event.outcome === "rejected_payload"),
   ).toHaveLength(fixture.service.limits.requestsPerMinute);
   expect(fixture.service.list(fixture.agent.id).runs).toHaveLength(0);
 });
@@ -769,49 +599,7 @@ it("paginates retained runs without hiding older runs or mixing agents", async (
   }
 });
 
-it("deduplicates native GitLab and generic deliveries across restarts without changing payloads", async () => {
-  await using fixture = await setup();
-  const routine = fixture.service.save(
-    fixture.agent.id,
-    definition({
-      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
-    }),
-  );
-  const { secret } = fixture.service.rotate(
-    routine.id,
-    "sender-generated-secret",
-  );
-  const body = Buffer.from('{"object_kind":"merge_request","title":"Fix"}');
-  const deliveries = [
-    {
-      "x-gitlab-token": secret,
-      "x-gitlab-event": "Merge Request Hook",
-      "idempotency-key": "same-id",
-    },
-    { authorization: `Bearer ${secret}`, "idempotency-key": "same-id" },
-  ];
-
-  for (const headers of deliveries) {
-    expect(fixture.service.webhook(routine.id, headers, body).outcome).toBe(
-      "accepted",
-    );
-  }
-
-  await fixture.reopen();
-
-  for (const headers of deliveries) {
-    expect(fixture.service.webhook(routine.id, headers, body).outcome).toBe(
-      "duplicate",
-    );
-  }
-
-  const state = fixture.service.list(fixture.agent.id);
-  expect(state.runs).toHaveLength(2);
-  expect(state.runs.every((run) => run.payload === body.toString())).toBe(true);
-  expect(JSON.stringify(state)).not.toContain(secret);
-});
-
-it("filters by builder conditions and acknowledges GitHub pings without starting runs", async () => {
+it("accepts plain JSON, filters payload fields, and treats repeated deliveries as separate runs", async () => {
   await using fixture = await setup();
   const routine = fixture.service.save(
     fixture.agent.id,
@@ -820,60 +608,64 @@ it("filters by builder conditions and acknowledges GitHub pings without starting
         kind: "webhook",
         filters: {
           combinator: "and",
-          rules: [
-            { path: "object_kind", operator: "equals", value: "merge_request" },
-          ],
+          rules: [{ path: "repo", operator: "equals", value: "paws" }],
         },
       },
     }),
   );
-  const { secret } = fixture.service.rotate(routine.id);
-  const body = Buffer.from('{"object_kind":"merge_request"}');
+  const body = Buffer.from('{ "type": "issue", "repo": "paws" }');
+  expect(fixture.deliver(routine.id, body).outcome).toBe("accepted");
+  expect(fixture.deliver(routine.id, body).outcome).toBe("accepted");
+  expect(fixture.deliver(routine.id, Buffer.from('{"type":"push"}'))).toEqual({
+    outcome: "filtered",
+  });
   expect(
-    fixture.service.webhook(
-      routine.id,
-      {
-        "x-gitlab-token": secret,
-        "x-gitlab-event": "Push Hook",
-      },
-      body,
-    ).outcome,
-  ).toBe("accepted");
-  expect(
-    fixture.service.webhook(
-      routine.id,
-      {
-        "x-gitlab-token": secret,
-        "x-gitlab-event": "Merge Request Hook",
-      },
-      Buffer.from('{"object_kind":"push"}'),
-    ).outcome,
-  ).toBe("filtered");
+    fixture.deliver(routine.id, Buffer.from('{"type":"issue","repo":"other"}')),
+  ).toEqual({ outcome: "filtered" });
+  await fixture.reopen();
+  expect(fixture.deliver(routine.id, body).outcome).toBe("accepted");
+  const runs = fixture.service.list(fixture.agent.id).runs;
+  expect(runs).toHaveLength(3);
+  expect(runs.every((run) => run.payload === body.toString())).toBe(true);
+});
+
+it("rejects paused, malformed, oversized and excessive plain webhook requests", async () => {
+  await using fixture = await setup();
+  const routine = fixture.service.save(
+    fixture.agent.id,
+    definition({
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+      enabled: false,
+    }),
+  );
+  expect(() => fixture.deliver(routine.id, Buffer.from("{}"))).toThrow(
+    "paused",
+  );
   fixture.service.save(
     fixture.agent.id,
-    {
-      ...routine,
-      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
-    },
+    { ...routine, enabled: true },
     routine.id,
     "user",
     routine.revision,
   );
-  expect(
-    fixture.service.webhook(
-      routine.id,
-      {
-        "x-github-event": "ping",
-        "x-github-delivery": "ping-1",
-        "x-hub-signature-256": `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`,
-      },
-      body,
-    ).outcome,
-  ).toBe("filtered");
-  expect(fixture.service.list(fixture.agent.id).runs).toHaveLength(1);
+  expect(() => fixture.deliver(routine.id, Buffer.from("invalid"))).toThrow(
+    "JSON",
+  );
+  expect(() => fixture.deliver(routine.id, Buffer.alloc(262145))).toThrow(
+    "large",
+  );
+
+  for (let index = 0; index < 57; index++) {
+    fixture.deliver(routine.id, Buffer.from("{}"));
+  }
+
+  expect(() => fixture.deliver(routine.id, Buffer.from("{}"))).toThrow(
+    "rate limit",
+  );
+  expect(fixture.service.list(fixture.agent.id).runs).toHaveLength(57);
 });
 
-it("does not consume a delivery ID when payload validation fails and revokes imported tokens", async () => {
+it("removes obsolete delivery records and preserves shared webhook secrets", async () => {
   await using fixture = await setup();
   const routine = fixture.service.save(
     fixture.agent.id,
@@ -881,19 +673,67 @@ it("does not consume a delivery ID when payload validation fails and revokes imp
       trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
     }),
   );
-  fixture.service.rotate(routine.id, "imported-token");
-  const headers = {
-    authorization: "Bearer imported-token",
-    "idempotency-key": "retry",
-  };
-  expect(() =>
-    fixture.service.webhook(routine.id, headers, Buffer.from("invalid")),
-  ).toThrow("JSON");
-  expect(
-    fixture.service.webhook(routine.id, headers, Buffer.from("{}")).outcome,
-  ).toBe("accepted");
-  fixture.service.rotate(routine.id);
-  expect(() =>
-    fixture.service.webhook(routine.id, headers, Buffer.from("{}")),
-  ).toThrow("token");
+  const db = new DatabaseSync(`${fixture.root}/state.sqlite`);
+
+  try {
+    db.exec(`
+      CREATE TABLE routine_deliveries (routine_id TEXT, delivery_id TEXT);
+    `);
+    db.prepare("INSERT INTO routine_secrets VALUES (?, ?)").run(
+      routine.id,
+      "obsolete-test-secret",
+    );
+    db.prepare("INSERT INTO routine_deliveries VALUES (?, ?)").run(
+      routine.id,
+      "old-delivery",
+    );
+    await fixture.reopen();
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name = 'routine_deliveries'",
+        )
+        .all(),
+    ).toEqual([]);
+    expect(fixture.deliver(routine.id, Buffer.from("{}")).outcome).toBe(
+      "accepted",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+it("shows a shared secret only on generation, persists authentication, and revokes old secrets", async () => {
+  await using fixture = await setup();
+  const routine = fixture.service.save(
+    fixture.agent.id,
+    definition({
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+    }),
+  );
+  const original = fixture.service.webhookEndpoint(routine.id, true);
+  const secret = original.secret!;
+  const body = Buffer.from("{}");
+  expect(() => fixture.service.webhook(routine.id, body, null)).toThrow(
+    "secret",
+  );
+  expect(() => fixture.service.webhook(routine.id, body, "wrong")).toThrow(
+    "secret",
+  );
+  expect(fixture.service.webhook(routine.id, body, secret).outcome).toBe(
+    "accepted",
+  );
+  expect(JSON.stringify(fixture.service.list(fixture.agent.id))).not.toContain(
+    secret,
+  );
+  await fixture.reopen();
+  expect(fixture.service.webhookEndpoint(routine.id)).toEqual({
+    endpoint: original.endpoint,
+  });
+  const replacement = fixture.service.webhookEndpoint(routine.id, true);
+  expect(replacement).not.toEqual(original);
+  expect(() => fixture.service.webhook(routine.id, body, secret)).toThrow(
+    "secret",
+  );
+  expect(fixture.deliver(routine.id, body).outcome).toBe("accepted");
 });

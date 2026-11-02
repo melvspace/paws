@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
@@ -25,12 +25,6 @@ import {
   advanceRoutineTime,
   matchesRoutineEvent,
 } from "./routineSchedule.ts";
-import {
-  verifyWebhook,
-  webhookSecret,
-  type WebhookDelivery,
-} from "./webhooks.ts";
-
 const DAY = 86400000;
 export const routineLimits = {
   routinesPerAgent: 50,
@@ -81,7 +75,7 @@ export function makeRoutineService(
     CREATE TABLE IF NOT EXISTS routine_runs (id TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS routine_events (id TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS routine_secrets (id TEXT PRIMARY KEY, secret TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS routine_deliveries (routine_id TEXT NOT NULL, delivery_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(routine_id, delivery_id));
+    DROP TABLE IF EXISTS routine_deliveries;
     CREATE TABLE IF NOT EXISTS routine_audit (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, data TEXT NOT NULL);
   `);
   const readAll = <T>(
@@ -185,7 +179,7 @@ export function makeRoutineService(
   function event(
     routineId: string,
     outcome: string,
-    extra: { runId?: string; deliveryId?: string } = {},
+    extra: { runId?: string } = {},
   ) {
     write("routine_events", {
       id: randomUUID(),
@@ -290,17 +284,20 @@ export function makeRoutineService(
     return routine;
   }
 
-  function rotate(id: string, value?: string) {
+  function webhookEndpoint(id: string, rotate = false) {
     if (find(id).trigger.kind !== "webhook")
-      throw new ChatError(400, "This routine has no webhook.");
+      throw new ChatError(404, "Webhook not found.");
 
-    const secret = webhookSecret(value);
+    const endpoint = `/hooks/routines/${id}`;
+
+    if (!rotate) return { endpoint };
+
+    const secret = randomBytes(32).toString("hex");
     db.prepare(
-      "INSERT INTO routine_secrets VALUES (?,?) ON CONFLICT(id) DO UPDATE SET secret=excluded.secret",
+      "INSERT INTO routine_secrets VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET secret=excluded.secret",
     ).run(id, secret);
-    event(id, "secret_rotated");
 
-    return { endpoint: `/hooks/routines/${id}`, secret };
+    return { endpoint, secret };
   }
 
   function enqueue(
@@ -504,6 +501,7 @@ export function makeRoutineService(
       revision: routine.revision + 1,
       changedBy: actor,
     });
+
     db.prepare("DELETE FROM routine_secrets WHERE id = ?").run(id);
 
     // Do not await the currently executing agent tool that requested its deletion.
@@ -604,9 +602,6 @@ export function makeRoutineService(
       db.prepare(
         "DELETE FROM routine_events WHERE json_extract(data, '$.createdAt') < ?",
       ).run(new Date(now - limits.payloadDays * DAY).toISOString());
-      db.prepare("DELETE FROM routine_deliveries WHERE created_at < ?").run(
-        new Date(now - limits.runDays * DAY).toISOString(),
-      );
       const busy = new Set(
         runs()
           .filter((item) => item.status === "running")
@@ -634,14 +629,10 @@ export function makeRoutineService(
   }, 1000);
   timer.unref();
 
-  function webhook(
-    id: string,
-    headers: Record<string, string | string[] | undefined>,
-    body: Buffer,
-  ) {
+  function webhook(id: string, body: Buffer, secret: string | null) {
     const routine = find(id);
-    // Count every delivery outcome before authentication so failed requests
-    // cannot produce unbounded persistent history. The budget survives restarts.
+    // Count failed and accepted requests so history stays bounded.
+    // The request budget survives restarts.
     const recent = db
       .prepare(`
       SELECT COUNT(*) AS count FROM routine_events
@@ -663,37 +654,23 @@ export function makeRoutineService(
     const row = db
       .prepare("SELECT secret FROM routine_secrets WHERE id = ?")
       .get(id);
-    let delivery: WebhookDelivery;
+    const expected = Buffer.from(row ? String(row.secret) : "");
+    const supplied = Buffer.from(secret ?? "");
 
-    try {
-      if (!row) throw new ChatError(401, "Webhook secret is not configured.");
-
-      delivery = verifyWebhook({ headers, body, secret: String(row.secret) });
-    } catch (error) {
+    if (
+      !row ||
+      !secret ||
+      expected.length !== supplied.length ||
+      !timingSafeEqual(expected, supplied)
+    ) {
       event(id, "rejected_authentication");
 
-      throw error;
+      throw new ChatError(401, "Invalid webhook secret.");
     }
-
-    const deliveryId = delivery.deliveryId
-      ? `${delivery.source}:${delivery.deliveryId}`
-      : undefined;
 
     if (!routine.enabled) {
       event(id, "rejected_paused");
       throw new ChatError(409, "Routine is paused.");
-    }
-    if (
-      deliveryId &&
-      db
-        .prepare(
-          "SELECT 1 FROM routine_deliveries WHERE routine_id = ? AND delivery_id = ?",
-        )
-        .get(id, deliveryId)
-    ) {
-      event(id, "duplicate", { deliveryId });
-
-      return { outcome: "duplicate" };
     }
 
     if (body.length > limits.webhookBytes) {
@@ -708,27 +685,18 @@ export function makeRoutineService(
       payload = JSON.parse(body.toString("utf8"));
     } catch {
       event(id, "rejected_payload");
+
       throw new ChatError(400, "Expected a JSON payload.");
     }
+
     db.exec("BEGIN IMMEDIATE");
 
     try {
-      const run =
-        !delivery.ignore && matchesRoutineEvent(routine.trigger, payload)
-          ? enqueue(id, "webhook", body.toString("utf8"))
-          : undefined;
+      const run = matchesRoutineEvent(routine.trigger, payload)
+        ? enqueue(id, "webhook", body.toString("utf8"))
+        : undefined;
 
-      if (deliveryId)
-        db.prepare("INSERT INTO routine_deliveries VALUES (?,?,?)").run(
-          id,
-          deliveryId,
-          new Date().toISOString(),
-        );
-
-      event(id, run ? "accepted" : "filtered", {
-        ...(run ? { runId: run.id } : {}),
-        ...(deliveryId ? { deliveryId } : {}),
-      });
+      event(id, run ? "accepted" : "filtered", run ? { runId: run.id } : {});
       db.exec("COMMIT");
 
       return {
@@ -866,9 +834,9 @@ export function makeRoutineService(
     tick,
     tool,
     save,
-    rotate,
     enqueue,
     webhook,
+    webhookEndpoint,
     cancel,
     remove,
     conversations,
@@ -941,9 +909,7 @@ export function makeRoutineService(
         db.prepare(
           "DELETE FROM routine_events WHERE json_extract(data, '$.routineId') = ?",
         ).run(routine.id);
-        db.prepare("DELETE FROM routine_deliveries WHERE routine_id = ?").run(
-          routine.id,
-        );
+        db.prepare("DELETE FROM routine_secrets WHERE id = ?").run(routine.id);
         db.prepare("DELETE FROM routines WHERE id = ?").run(routine.id);
       }
 

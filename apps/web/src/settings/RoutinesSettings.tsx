@@ -1,8 +1,11 @@
 import {
   CheckIcon,
+  CopyIcon,
   Clock3Icon,
   PlusIcon,
   ChevronLeftIcon,
+  ChevronRightIcon,
+  KeyRoundIcon,
   PlayIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -35,12 +38,19 @@ import { Input } from "../components/ui/input.tsx";
 import { Textarea } from "../components/ui/textarea.tsx";
 import { RoutineConditionBuilder } from "./RoutineConditionBuilder.tsx";
 import { routineValidation, type RoutineField } from "./routineValidation.ts";
+import {
+  AlertDialog,
+  AlertDialogPopup,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+} from "../components/ui/alert-dialog.tsx";
 import "./routines.css";
 
 class RoutineValidationError extends Error {}
 
 type State = typeof RoutineState.Type;
-type WebhookSecret = { endpoint: string; secret: string };
 const empty: State = { routines: [], runs: [], events: [] };
 const defaultRoutine = (): SaveRoutine => ({
   name: "",
@@ -135,19 +145,11 @@ export function RoutinesSettings({
   const [editing, setEditing] = useState<Routine | "new" | null>(null);
   const [runCursors, setRunCursors] = useState<readonly number[]>([]);
   const runCursor = runCursors.at(-1);
-  const [secret, setSecret] = useState<WebhookSecret | null>(null);
-  const unacknowledgedSecret = useRef<WebhookSecret | null>(null);
-  const [secretBlocked, setSecretBlocked] = useState(false);
+  const [webhookSecret, setWebhookSecret] = useState<string | null>(null);
   const flush = useRef<(() => Promise<void>) | null>(null);
   const mutation = useRef(0);
   const listSaves = useRef(new Map<string, Promise<Routine>>());
   const [savingIds, setSavingIds] = useState<readonly string[]>([]);
-
-  function revealSecret(webhook: WebhookSecret) {
-    unacknowledgedSecret.current = webhook;
-    setSecret(webhook);
-    setSecretBlocked(false);
-  }
 
   function clearMutationError(id: string) {
     setMutationErrors((current) => {
@@ -260,14 +262,6 @@ export function RoutinesSettings({
     const save = async () => {
       await Promise.all(listSaves.current.values());
       await flush.current?.();
-
-      if (unacknowledgedSecret.current) {
-        setSecretBlocked(true);
-
-        throw new Error(
-          "Acknowledge the webhook secret before leaving settings.",
-        );
-      }
     };
     beforeClose.current = save;
 
@@ -317,7 +311,7 @@ export function RoutinesSettings({
           <Button
             className="routine-new"
             variant="outline"
-            disabled={!connected || !!secret}
+            disabled={!connected}
             onClick={() => void select("new")}
           >
             <PlusIcon size={14} aria-hidden />
@@ -333,37 +327,21 @@ export function RoutinesSettings({
             {message}
           </p>
         ))}
-        {secret && (
-          <div className="settings-group routine-secret">
-            <p>Copy this webhook secret now. It is shown once.</p>
-            {secretBlocked && (
-              <p role="alert">
-                Copy and dismiss this secret before leaving settings.
-              </p>
-            )}
-            <label>
-              Endpoint
-              <Input readOnly value={secret.endpoint} />
-            </label>
-            <label>
+        {webhookSecret && (
+          <div className="settings-group routine-fields">
+            <label className="settings-row">
               Webhook secret
-              <Input readOnly value={secret.secret} />
+              <Input readOnly value={webhookSecret} />
             </label>
-            <p>
-              GitHub, GitLab, and Standard Webhooks (HMAC) are recognized
-              automatically. Use this secret in the sender’s webhook settings.
-              Other senders can POST JSON with Authorization: Bearer followed by
-              this secret.
-            </p>
-            <Button
-              onClick={() => {
-                unacknowledgedSecret.current = null;
-                setSecret(null);
-                setSecretBlocked(false);
-              }}
-            >
-              Dismiss secret
-            </Button>
+            <div className="routine-secret-footer">
+              <p>
+                Shown once. Send it in the Authorization header as Bearer
+                followed by this secret.
+              </p>
+              <Button onClick={() => setWebhookSecret(null)}>
+                Dismiss secret
+              </Button>
+            </div>
           </div>
         )}
         {editing ? (
@@ -372,9 +350,11 @@ export function RoutinesSettings({
             agentId={agentId}
             routine={editing === "new" ? null : editing}
             connected={connected}
+            events={state.events.filter(
+              (event) => editing !== "new" && event.routineId === editing.id,
+            )}
             flush={flush}
-            secretPending={!!secret}
-            onSecret={revealSecret}
+            onSecret={setWebhookSecret}
             onPersisted={acceptSaved}
             onSaved={setEditing}
             onClose={() => void select(null)}
@@ -480,20 +460,6 @@ export function RoutinesSettings({
                 </Button>
               </div>
             )}
-            {!!state.events.length && (
-              <details>
-                <summary>Trigger history</summary>
-                <ul>
-                  {state.events.map((event) => (
-                    <li key={event.id}>
-                      {new Date(event.createdAt).toLocaleString()} ·{" "}
-                      {event.outcome}
-                      {event.deliveryId ? ` · ${event.deliveryId}` : ""}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
           </>
         )}
       </div>
@@ -501,28 +467,110 @@ export function RoutinesSettings({
   );
 }
 
+const activityLabels: Record<string, string> = {
+  accepted: "Webhook received",
+  filtered: "Event skipped",
+  duplicate: "Duplicate ignored",
+  deleted: "Routine deleted",
+  secret_rotated: "Secret regenerated",
+  rejected_authentication: "Invalid webhook secret",
+  rejected_paused: "Routine paused",
+  rejected_payload: "Invalid payload",
+  rejected_queue: "Queue full",
+  queue_full: "Queue full",
+  missed_schedule_skipped: "Missed schedule skipped",
+  combined_scheduled_tick: "Scheduled run combined",
+  "notification:waiting": "Waiting for your response",
+  "notification:failed": "Run failed",
+  "notification:expired": "Run expired",
+  "notification:interrupted": "Run interrupted",
+};
+
+function RoutineActivity({ events }: { events: State["events"] }) {
+  if (!events.length) return null;
+
+  const groups = new Map<string, State["events"][number][]>();
+  const dateFormat = new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+  });
+  const timeFormat = new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  for (const event of events) {
+    const day = dateFormat.format(new Date(event.createdAt));
+    const group = groups.get(day);
+
+    if (group) group.push(event);
+    else groups.set(day, [event]);
+  }
+
+  return (
+    <details className="routine-activity">
+      <summary>
+        <ChevronRightIcon size={14} aria-hidden />
+        <span>Activity</span>
+      </summary>
+      <div className="settings-group routine-activity-groups">
+        {[...groups].map(([day, entries]) => (
+          <section className="routine-activity-day" key={day}>
+            <h4>{day}</h4>
+            <ul aria-label={`Activity on ${day}`}>
+              {entries.map((event) => {
+                const label =
+                  activityLabels[event.outcome] ??
+                  event.outcome.replaceAll("_", " ").replaceAll(":", " · ");
+                const Icon =
+                  event.outcome === "secret_rotated"
+                    ? KeyRoundIcon
+                    : event.outcome === "deleted"
+                      ? Trash2Icon
+                      : Clock3Icon;
+
+                return (
+                  <li key={event.id}>
+                    <Icon size={14} aria-hidden />
+                    <span className="routine-activity-label">{label}</span>
+                    <time
+                      dateTime={event.createdAt}
+                      title={new Date(event.createdAt).toLocaleString()}
+                    >
+                      {timeFormat.format(new Date(event.createdAt))}
+                    </time>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function RoutineEditor({
+  events,
   agentId,
   routine,
   connected,
   flush,
   onSaved,
+  onSecret,
   onPersisted,
   onClose,
   onDeleted,
-  secretPending,
-  onSecret,
 }: {
+  events: State["events"];
   agentId: string;
   routine: Routine | null;
   connected: boolean;
   flush: MutableRefObject<(() => Promise<void>) | null>;
   onSaved(routine: Routine): void;
+  onSecret(secret: string): void;
   onPersisted(routine: Routine): void;
   onClose(): void;
   onDeleted(id: string): void;
-  secretPending: boolean;
-  onSecret(secret: WebhookSecret): void;
 }) {
   const [draft, setDraft] = useState<SaveRoutine>(routine ?? defaultRoutine());
   const validationId = useId();
@@ -561,8 +609,6 @@ function RoutineEditor({
 
   const current = useRef(draft);
   const saved = useRef(routine ? JSON.stringify(draft) : "");
-  const senderSecret = useRef("");
-  const [secretDraft, setSecretDraft] = useState("");
   const version = useRef(routine?.revision);
   const routineId = useRef(routine?.id);
   const failedCreation = useRef(false);
@@ -582,15 +628,93 @@ function RoutineEditor({
   const [runQueued, setRunQueued] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const keepRoutineRef = useRef<HTMLButtonElement>(null);
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
+  const keepSecretRef = useRef<HTMLButtonElement>(null);
   const [preview, setPreview] = useState<readonly string[]>([]);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  function change(next: Partial<SaveRoutine>) {
-    if (next.trigger && next.trigger.kind !== "webhook") {
-      senderSecret.current = "";
-      setSecretDraft("");
+  const webhookUrlId = useId();
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookError, setWebhookError] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const [copiedAt, setCopiedAt] = useState<number | null>(null);
+  const webhookDisplayUrl = webhookUrl
+    ? new URL(webhookUrl, window.location.origin).href
+    : "";
+  const webhookId =
+    routine?.trigger.kind === "webhook" ? routine.id : undefined;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setWebhookUrl("");
+    setWebhookError(null);
+
+    if (webhookId) {
+      void routineRequest(
+        `${routinePath(agentId, webhookId)}/webhook`,
+        "GET",
+        undefined,
+        controller.signal,
+      )
+        .then((value) => {
+          if (controller.signal.aborted) return;
+
+          setWebhookUrl(
+            Schema.decodeUnknownSync(
+              Schema.Struct({ endpoint: Schema.String }),
+            )(value).endpoint,
+          );
+        })
+        .catch((cause) => {
+          if (!controller.signal.aborted) setWebhookError(String(cause));
+        });
     }
 
+    return () => controller.abort();
+  }, [agentId, webhookId]);
+
+  useEffect(() => {
+    if (copiedAt === null) return;
+
+    const timer = setTimeout(() => setCopiedAt(null), 2000);
+
+    return () => clearTimeout(timer);
+  }, [copiedAt]);
+
+  async function copyWebhookUrl() {
+    setCopyError(null);
+    setCopiedAt(null);
+
+    try {
+      await navigator.clipboard.writeText(webhookDisplayUrl);
+      setCopiedAt(Date.now());
+    } catch {
+      setCopyError("Could not copy URL. Select the URL and copy it manually.");
+    }
+  }
+
+  function regenerateWebhookSecret() {
+    if (!webhookId || inFlight.current) return;
+
+    void runPendingOperation(async () => {
+      const value = await routineRequest(
+        `${routinePath(agentId, webhookId)}/webhook`,
+        "POST",
+      );
+      const webhook = Schema.decodeUnknownSync(
+        Schema.Struct({ endpoint: Schema.String, secret: Schema.String }),
+      )(value);
+      setWebhookUrl(webhook.endpoint);
+      onSecret(webhook.secret);
+      setWebhookError(null);
+      setConfirmRegenerate(false);
+    })
+      .then(() => saveRef.current())
+      .catch(() => {});
+  }
+
+  function change(next: Partial<SaveRoutine>) {
     current.current = { ...current.current, ...next };
     setDraft(current.current);
     setError(null);
@@ -606,8 +730,7 @@ function RoutineEditor({
         do {
           const next = current.current;
 
-          if (saved.current === JSON.stringify(next) && !senderSecret.current)
-            break;
+          if (saved.current === JSON.stringify(next)) break;
           if (!connected) throw new Error("Reconnect to save your changes.");
 
           if (Object.keys(routineValidation(next)).length) {
@@ -616,40 +739,21 @@ function RoutineEditor({
             throw new RoutineValidationError("Correct the highlighted fields.");
           }
 
-          if (saved.current !== JSON.stringify(next)) {
-            const result = await saveRoutine(
-              agentId,
-              next,
-              routineId.current,
-              version.current,
-            );
-            pendingRoutine.current = result.routine;
-            routineId.current = result.routine.id;
-            failedCreation.current = false;
-            version.current = result.routine.revision;
-            saved.current = JSON.stringify(next);
-            onPersisted(result.routine);
+          const result = await saveRoutine(
+            agentId,
+            next,
+            routineId.current,
+            version.current,
+          );
+          pendingRoutine.current = result.routine;
+          routineId.current = result.routine.id;
+          failedCreation.current = false;
+          version.current = result.routine.revision;
+          saved.current = JSON.stringify(next);
+          onPersisted(result.routine);
 
-            if (result.webhook) onSecret(result.webhook);
-          }
-
-          if (next.trigger.kind === "webhook" && senderSecret.current) {
-            const secret = senderSecret.current;
-            await routineRequest(
-              `${routinePath(agentId, routineId.current!)}/rotate`,
-              "POST",
-              { secret },
-            );
-
-            if (senderSecret.current === secret) {
-              senderSecret.current = "";
-              setSecretDraft("");
-            }
-          }
-        } while (
-          saved.current !== JSON.stringify(current.current) ||
-          !!senderSecret.current
-        );
+          if (result.webhook) onSecret(result.webhook.secret);
+        } while (saved.current !== JSON.stringify(current.current));
 
         if (pendingRoutine.current) {
           onSaved(pendingRoutine.current);
@@ -793,38 +897,13 @@ function RoutineEditor({
   }
 
   function remove() {
-    if (!routine || inFlight.current || secretPending) return;
+    if (!routine || inFlight.current) return;
 
     void runPendingOperation(async () => {
       await routineRequest(routinePath(agentId, routine.id), "DELETE");
       saved.current = JSON.stringify(current.current);
       onDeleted(routine.id);
     }).catch(() => {});
-  }
-
-  function rotateSecret() {
-    if (!routine || inFlight.current || secretPending) return;
-    if (
-      !window.confirm(
-        "Rotate the webhook secret? Existing senders must use the new secret.",
-      )
-    )
-      return;
-
-    void runPendingOperation(async () => {
-      const value = await routineRequest(
-        `${routinePath(agentId, routine.id)}/rotate`,
-        "POST",
-      );
-
-      onSecret(
-        Schema.decodeUnknownSync(
-          Schema.Struct({ endpoint: Schema.String, secret: Schema.String }),
-        )(value),
-      );
-    })
-      .then(() => saveRef.current())
-      .catch(() => {});
   }
 
   async function discard() {
@@ -883,10 +962,10 @@ function RoutineEditor({
         <label className="settings-row">
           Trigger
           <select
-            disabled={pending || secretPending}
+            disabled={pending}
             value={draft.trigger.kind}
             onChange={(event) => {
-              if (inFlight.current || secretPending) return;
+              if (inFlight.current) return;
 
               const kind = event.target.value;
               change({
@@ -1099,22 +1178,57 @@ function RoutineEditor({
           </label>
         )}
         {routine && draft.trigger.kind === "webhook" && (
-          <label className="settings-row">
-            Sender secret
-            <Input
-              type="password"
-              autoComplete="new-password"
-              aria-description="Paste a secret generated by your webhook sender to replace the current secret."
-              disabled={!connected || secretPending}
-              value={secretDraft}
-              onChange={(event) => {
-                senderSecret.current = event.target.value;
-                setSecretDraft(event.target.value);
-                setError(null);
-              }}
-              onBlur={blur}
-            />
-          </label>
+          <div className="settings-row">
+            <label htmlFor={webhookUrlId}>Webhook URL</label>
+            <div className="routine-webhook-controls">
+              <div
+                className="routine-webhook-url"
+                data-copied={copiedAt !== null}
+              >
+                <Input
+                  id={webhookUrlId}
+                  readOnly
+                  value={webhookDisplayUrl}
+                  aria-busy={!webhookUrl && !webhookError}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={
+                    copiedAt !== null
+                      ? "Copied webhook URL"
+                      : "Copy webhook URL"
+                  }
+                  title={copiedAt !== null ? "Copied" : "Copy webhook URL"}
+                  disabled={!webhookDisplayUrl}
+                  onClick={() => void copyWebhookUrl()}
+                >
+                  {copiedAt !== null ? (
+                    <CheckIcon size={14} aria-hidden />
+                  ) : (
+                    <CopyIcon size={14} aria-hidden />
+                  )}
+                </Button>
+                {copiedAt !== null && (
+                  <span className="routine-copy-feedback" role="status">
+                    Copied
+                  </span>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                disabled={!connected || pending}
+                onClick={() => {
+                  setError(null);
+                  setConfirmRegenerate(true);
+                }}
+              >
+                Regenerate secret
+              </Button>
+              {webhookError && <p role="alert">{webhookError}</p>}
+              {copyError && <p role="alert">{copyError}</p>}
+            </div>
+          </div>
         )}
         {draft.trigger.kind === "webhook" && (
           <div className="settings-row routine-filter-row">
@@ -1177,9 +1291,7 @@ function RoutineEditor({
       )}
       {!routine ? (
         <Button
-          disabled={
-            pending || !connected || (secretPending && !routineId.current)
-          }
+          disabled={pending || !connected}
           onClick={() => void save().catch(() => {})}
         >
           Create routine
@@ -1214,18 +1326,10 @@ function RoutineEditor({
                 Run queued
               </span>
             )}
-            {draft.trigger.kind === "webhook" && (
-              <Button
-                disabled={!connected || pending || secretPending}
-                onClick={rotateSecret}
-              >
-                Rotate webhook secret
-              </Button>
-            )}
             <Button
               variant="ghost"
               className="routine-delete"
-              disabled={!connected || pending || secretPending}
+              disabled={!connected || pending}
               onClick={() => setConfirmDelete(true)}
             >
               <Trash2Icon size={13} aria-hidden />
@@ -1233,23 +1337,79 @@ function RoutineEditor({
             </Button>
           </div>
           {runError && <p role="alert">{runError}</p>}
-          {confirmDelete && (
-            <div role="alertdialog" aria-label="Delete routine">
-              <p>Delete this routine and stop its queued and running work?</p>
-              <Button onClick={() => setConfirmDelete(false)}>
-                Keep routine
-              </Button>
-              <Button
-                variant="destructive"
-                disabled={!connected || pending || secretPending}
-                onClick={remove}
-              >
-                Confirm deletion
-              </Button>
-            </div>
-          )}
+          <AlertDialog
+            open={confirmRegenerate}
+            onOpenChange={(open) => {
+              if (!pending) setConfirmRegenerate(open);
+            }}
+          >
+            <AlertDialogPopup initialFocus={keepSecretRef}>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Regenerate webhook secret?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  The current secret will stop working. Update your sender with
+                  the new secret, which is shown once.
+                </AlertDialogDescription>
+                {error && <p role="alert">{error}</p>}
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <Button
+                  ref={keepSecretRef}
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() => setConfirmRegenerate(false)}
+                >
+                  Keep secret
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={!connected || pending}
+                  aria-busy={pending}
+                  onClick={regenerateWebhookSecret}
+                >
+                  {pending ? "Regenerating…" : "Regenerate secret"}
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogPopup>
+          </AlertDialog>
+          <AlertDialog
+            open={confirmDelete}
+            onOpenChange={(open) => {
+              if (!pending) setConfirmDelete(open);
+            }}
+          >
+            <AlertDialogPopup initialFocus={keepRoutineRef}>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete {draft.name}?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will stop its queued and running work. This action cannot
+                  be undone.
+                </AlertDialogDescription>
+                {error && <p role="alert">{error}</p>}
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <Button
+                  ref={keepRoutineRef}
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() => setConfirmDelete(false)}
+                >
+                  Keep routine
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={!connected || pending}
+                  aria-busy={pending}
+                  onClick={remove}
+                >
+                  {pending ? "Deleting…" : "Confirm deletion"}
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogPopup>
+          </AlertDialog>
         </>
       )}
+      <RoutineActivity events={events} />
     </div>
   );
 }

@@ -129,7 +129,7 @@ const routineTool = {
   type: "function",
   name: "paws_routine",
   description:
-    "Manage your own routines and history. list; save with routine {name,instruction,enabled,trigger,missed:skip/latest,timeoutMinutes}, id/revision for updates; delete/run with id; history with optional run id or text search; message with text to main chat. trigger is {kind:once,at:ISO date}, {kind:interval,minutes}, {kind:cron,expression:five fields,timezone:IANA}, or {kind:webhook,filters:{combinator:and/or,rules:[{path,operator:equals/in/exists,value?} or nested group]}}. Manual webhook run needs payload JSON string. User controls webhook secrets. GitHub, GitLab, Standard Webhooks HMAC, and bearer authentication are detected automatically.",
+    "Manage your own routines and history. list; save with routine {name,instruction,enabled,trigger,missed:skip/latest,timeoutMinutes}, id/revision for updates; delete/run with id; history with optional run id or text search; message with text to main chat. trigger is {kind:once,at:ISO date}, {kind:interval,minutes}, {kind:cron,expression:five fields,timezone:IANA}, or {kind:webhook,filters:{combinator:and/or,rules:[{path,operator:equals/in/exists,value?} or nested group]}}. Manual webhook run needs payload JSON string. Webhooks accept plain JSON POST requests with an Authorization: Bearer secret shown once in routine settings.",
   inputSchema: {
     type: "object",
     properties: {

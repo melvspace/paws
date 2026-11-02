@@ -64,12 +64,10 @@ export async function routineHttp(
     }
 
     const preview = !ingressOnly && request.url === "/api/routine-preview";
-    const webhook = /^\/hooks\/routines\/([a-f0-9-]{36})$/.exec(
-      request.url ?? "",
-    );
     const url = new URL(request.url ?? "/", "http://localhost");
+    const webhook = /^\/hooks\/routines\/([a-f0-9-]{36})$/.exec(url.pathname);
     const match =
-      /^\/api\/agents\/([^/]+)\/routines(?:\/([a-f0-9-]{36})(?:\/(run|rotate))?)?$/.exec(
+      /^\/api\/agents\/([^/]+)\/routines(?:\/([a-f0-9-]{36})(?:\/(run|webhook))?)?$/.exec(
         url.pathname,
       );
     const run =
@@ -108,10 +106,15 @@ export async function routineHttp(
     if (webhook) {
       if (request.method !== "POST") throw new ChatError(405, "Use POST.");
 
+      const authorization = request.headers.authorization;
+      const secret =
+        typeof authorization === "string"
+          ? (/^Bearer ([^\s]+)$/i.exec(authorization)?.[1] ?? null)
+          : null;
       result = service.webhook(
         webhook[1]!,
-        request.headers,
         await body(request, service.limits.webhookBytes),
+        secret,
       );
       response.writeHead(202).end(JSON.stringify(result));
 
@@ -130,16 +133,16 @@ export async function routineHttp(
       if (id && !state.routines.some((item) => item.id === id))
         throw new ChatError(404, "Routine not found.");
 
-      if (request.method === "GET" && !id) result = state;
+      if (
+        id &&
+        match[3] === "webhook" &&
+        ["GET", "POST"].includes(request.method ?? "")
+      )
+        result = service.webhookEndpoint(id, request.method === "POST");
+      else if (request.method === "GET" && !id) result = state;
       else if (request.method === "DELETE" && id) {
         await service.remove(id);
         result = { deleted: true };
-      } else if (request.method === "POST" && id && match[3] === "rotate") {
-        const raw = await body(request, 4096);
-        const input = Schema.decodeUnknownSync(
-          Schema.Struct({ secret: Schema.optional(Schema.String) }),
-        )(raw.length ? JSON.parse(raw.toString()) : {});
-        result = service.rotate(id, input.secret);
       } else if (request.method === "POST" && id && match[3] === "run") {
         const input = Schema.decodeUnknownSync(
           Schema.Struct({ payload: Schema.optional(Schema.String) }),
@@ -162,13 +165,12 @@ export async function routineHttp(
           "user",
           input.revision,
         );
+        const previous = state.routines.find((item) => item.id === id);
         result = {
           routine,
           ...(routine.trigger.kind === "webhook" &&
-          (!id ||
-            state.routines.find((item) => item.id === id)?.trigger.kind !==
-              "webhook")
-            ? { webhook: service.rotate(routine.id) }
+          previous?.trigger.kind !== "webhook"
+            ? { webhook: service.webhookEndpoint(routine.id, true) }
             : {}),
         };
       } else throw new ChatError(405, "Method not allowed.");

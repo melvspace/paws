@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { agentsAtom } from "@paws/client-runtime";
 import type { Routine } from "@paws/contracts";
 import { appAtomRegistry } from "../lib/atomRegistry.ts";
@@ -152,6 +152,11 @@ it("edits routines with autosave and flushes instructions before dismissing Sett
     .spyOn(window, "fetch")
     .mockImplementation(async (input, init) => {
       const path = String(input);
+
+      if (path.endsWith("/webhook"))
+        return Response.json({
+          endpoint: "/hooks/routines/test",
+        });
 
       if (path === "/api/routine-preview")
         return Response.json(["2026-11-03T09:00:00.000Z"]);
@@ -487,9 +492,23 @@ it.each(["toggle", "delete"])(
         await page.getByRole("button", { name: "Confirm deletion" }).click();
       }
 
-      await page
-        .getByRole("button", { name: "Close settings", exact: true })
-        .click();
+      if (action === "toggle") {
+        await page
+          .getByRole("button", { name: "Close settings", exact: true })
+          .click();
+      } else {
+        await expect
+          .element(page.getByRole("alertdialog", { name: "Delete Digest?" }))
+          .toBeVisible();
+        await expect
+          .element(
+            page.getByRole("button", { name: "Keep routine", exact: true }),
+          )
+          .toBeDisabled();
+        await expect
+          .element(page.getByRole("button", { name: "Deleting…", exact: true }))
+          .toBeDisabled();
+      }
       expect(dismiss).not.toHaveBeenCalled();
       finish(
         Response.json({ error: "Please retry this change." }, { status: 500 }),
@@ -505,197 +524,21 @@ it.each(["toggle", "delete"])(
           .toBeEnabled();
       } else {
         await expect
+          .element(page.getByRole("button", { name: "Confirm deletion" }))
+          .toBeEnabled();
+        await page
+          .getByRole("button", { name: "Keep routine", exact: true })
+          .click();
+        await expect
           .element(
             page.getByRole("textbox", { name: "Instruction", exact: true }),
           )
           .toHaveValue(routine.instruction);
-        await expect
-          .element(page.getByRole("button", { name: "Confirm deletion" }))
-          .toBeEnabled();
       }
     } finally {
       finish(
         Response.json({ error: "Please retry this change." }, { status: 500 }),
       );
-      requests.mockRestore();
-    }
-  },
-);
-
-it.each(["success", "failure"])(
-  "awaits webhook rotation and retains its %s result before dismissal",
-  async (result) => {
-    let routine: Routine = {
-      ...routineListFixture(),
-      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
-    };
-    let finish!: (response: Response) => void;
-    const pending = new Promise<Response>((resolve) => {
-      finish = resolve;
-    });
-    const writes: number[] = [];
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const requests = vi
-      .spyOn(window, "fetch")
-      .mockImplementation(async (input, init) => {
-        const path = String(input);
-
-        if (path === "/api/routine-preview") return Response.json([]);
-        if (path.endsWith("/rotate")) return pending;
-
-        if (init?.method === "PATCH") {
-          const body = JSON.parse(String(init.body));
-          writes.push(body.revision);
-          routine = {
-            ...routine,
-            ...body.routine,
-            revision: routine.revision + 1,
-          };
-
-          return Response.json({ routine });
-        }
-
-        return Response.json({ routines: [routine], runs: [], events: [] });
-      });
-    const dismiss = vi.fn();
-
-    try {
-      await using _screen = await render(<RoutinesPanel onDismiss={dismiss} />);
-      await page.getByRole("button", { name: "Digest", exact: true }).click();
-      await page.getByRole("button", { name: "Rotate webhook secret" }).click();
-      const instruction = page.getByRole("textbox", {
-        name: "Instruction",
-        exact: true,
-      });
-      await instruction.fill("Edited during rotation");
-      await page
-        .getByRole("button", { name: "Close settings", exact: true })
-        .click();
-      expect(dismiss).not.toHaveBeenCalled();
-      finish(
-        result === "success"
-          ? Response.json({
-              endpoint: "/hooks/digest",
-              secret: "rotated-secret",
-            })
-          : Response.json({ error: "Rotation failed." }, { status: 500 }),
-      );
-
-      if (result === "success") {
-        await expect
-          .element(
-            page.getByRole("textbox", { name: "Webhook secret", exact: true }),
-          )
-          .toHaveValue("rotated-secret");
-        await expect
-          .element(page.getByRole("alert"))
-          .toHaveTextContent(
-            "Copy and dismiss this secret before leaving settings.",
-          );
-        expect(dismiss).not.toHaveBeenCalled();
-        expect(writes).toEqual([1]);
-        await expect.element(instruction).toHaveValue("Edited during rotation");
-        await expect
-          .element(page.getByRole("button", { name: "Rotate webhook secret" }))
-          .toBeDisabled();
-        await page.getByRole("button", { name: "Back to routines" }).click();
-        await expect
-          .element(page.getByText("Edited during rotation", { exact: true }))
-          .toBeVisible();
-        await page
-          .getByRole("button", { name: "Agent settings", exact: true })
-          .click();
-        await expect
-          .element(
-            page.getByRole("textbox", { name: "Webhook secret", exact: true }),
-          )
-          .toBeVisible();
-        await page.getByRole("button", { name: "Dismiss secret" }).click();
-        await page
-          .getByRole("button", { name: "Close settings", exact: true })
-          .click();
-        await expect.poll(() => dismiss.mock.calls.length).toBe(1);
-      } else {
-        await expect
-          .element(page.getByRole("alert"))
-          .toHaveTextContent("Error: Rotation failed.");
-        expect(dismiss).not.toHaveBeenCalled();
-        await expect.element(instruction).toHaveValue("Edited during rotation");
-        await expect
-          .element(page.getByRole("button", { name: "Rotate webhook secret" }))
-          .toBeEnabled();
-        await expect
-          .element(
-            page.getByRole("textbox", { name: "Webhook secret", exact: true }),
-          )
-          .not.toBeInTheDocument();
-      }
-    } finally {
-      finish(
-        Response.json({ endpoint: "/hooks/digest", secret: "rotated-secret" }),
-      );
-      confirm.mockRestore();
-      requests.mockRestore();
-    }
-  },
-);
-
-it.each(["trigger", "deletion"])(
-  "guards %s while rotation is pending and its secret is unacknowledged",
-  async (control) => {
-    const routine: Routine = {
-      ...routineListFixture(),
-      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
-    };
-    let finish!: (response: Response) => void;
-    const pending = new Promise<Response>((resolve) => {
-      finish = resolve;
-    });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const requests = vi
-      .spyOn(window, "fetch")
-      .mockImplementation(async (input, _init) => {
-        if (String(input) === "/api/routine-preview") return Response.json([]);
-        if (String(input).endsWith("/rotate")) return pending;
-
-        return Response.json({ routines: [routine], runs: [], events: [] });
-      });
-
-    try {
-      await using _screen = await render(
-        <RoutinesPanel onDismiss={() => {}} />,
-      );
-      await page.getByRole("button", { name: "Digest", exact: true }).click();
-      await page
-        .getByRole("button", { name: "Delete routine", exact: true })
-        .click();
-      await page.getByRole("button", { name: "Rotate webhook secret" }).click();
-      const guarded =
-        control === "trigger"
-          ? page.getByRole("combobox", { name: "Trigger", exact: true })
-          : page.getByRole("button", { name: "Confirm deletion" });
-      await expect.element(guarded).toBeDisabled();
-      finish(
-        Response.json({ endpoint: "/hooks/digest", secret: "rotated-secret" }),
-      );
-      await expect
-        .element(
-          page.getByRole("textbox", { name: "Webhook secret", exact: true }),
-        )
-        .toHaveValue("rotated-secret");
-      await expect.element(guarded).toBeDisabled();
-      expect(
-        requests.mock.calls.some(
-          ([, init]) => init?.method === "PATCH" || init?.method === "DELETE",
-        ),
-      ).toBe(false);
-      await page.getByRole("button", { name: "Dismiss secret" }).click();
-      await expect.element(guarded).toBeEnabled();
-    } finally {
-      finish(
-        Response.json({ endpoint: "/hooks/digest", secret: "rotated-secret" }),
-      );
-      confirm.mockRestore();
       requests.mockRestore();
     }
   },
@@ -1073,6 +916,11 @@ it.each([
     .mockImplementation(async (input, init) => {
       const path = String(input);
 
+      if (path.endsWith("/webhook"))
+        return Response.json({
+          endpoint: "/hooks/routines/test",
+        });
+
       if (path === "/api/routine-preview") return Response.json([]);
       if (init?.method === "POST" || init?.method === "PATCH") {
         const body = JSON.parse(String(init.body));
@@ -1093,7 +941,7 @@ it.each([
             ? {
                 webhook: {
                   endpoint: `/hooks/routines/${id}`,
-                  secret: "original-secret",
+                  secret: "created-secret",
                 },
               }
             : {}),
@@ -1190,18 +1038,8 @@ it.each([
       if (scenario === "discard") {
         await page.getByRole("button", { name: "Discard edits" }).click();
         await expect
-          .element(
-            page.getByRole("textbox", { name: "Webhook secret", exact: true }),
-          )
-          .toHaveValue("original-secret");
-        await expect
           .element(page.getByText("Original instruction", { exact: true }))
           .toBeVisible();
-        await page
-          .getByRole("button", { name: "Close settings", exact: true })
-          .click();
-        expect(dismiss).not.toHaveBeenCalled();
-        await page.getByRole("button", { name: "Dismiss secret" }).click();
         await page
           .getByRole("button", { name: "Close settings", exact: true })
           .click();
@@ -1220,11 +1058,6 @@ it.each([
           .click();
         await expect.poll(() => writes.length).toBe(3);
       }
-      await expect
-        .element(
-          page.getByRole("textbox", { name: "Webhook secret", exact: true }),
-        )
-        .toHaveValue("original-secret");
     }
 
     expect(writes.map((write) => write.method)).toEqual(
@@ -1249,22 +1082,18 @@ it.each([
             : { instruction: "Edited during creation" },
       },
     });
+    if (scenario === "instruction") {
+      await expect
+        .element(page.getByLabelText("Webhook secret", { exact: true }))
+        .toHaveValue("created-secret");
+    }
+
     if (scenario === "navigation") {
       await expect
         .element(page.getByRole("heading", { name: "Routines", exact: true }))
         .toBeVisible();
       await expect.element(instruction).not.toBeInTheDocument();
     } else if (scenario === "dismissal") {
-      expect(dismiss).not.toHaveBeenCalled();
-      await expect
-        .element(
-          page.getByRole("textbox", { name: "Webhook secret", exact: true }),
-        )
-        .toHaveValue("original-secret");
-      await page.getByRole("button", { name: "Dismiss secret" }).click();
-      await page
-        .getByRole("button", { name: "Close settings", exact: true })
-        .click();
       await expect.poll(() => dismiss.mock.calls.length).toBe(1);
     } else if (scenario === "filters") {
       await expect
@@ -1323,6 +1152,11 @@ it("keeps paginated run history read-only", async () => {
     .spyOn(window, "fetch")
     .mockImplementation(async (input) => {
       const path = String(input);
+
+      if (path.endsWith("/webhook"))
+        return Response.json({
+          endpoint: "/hooks/routines/test",
+        });
       paths.push(path);
 
       if (path.includes("?before=2"))
@@ -1471,72 +1305,431 @@ it.each(["accepted", "failed"])(
   },
 );
 
+it("shows the webhook URL without an event-type field or a retrievable secret", async () => {
+  const routine: Routine = {
+    ...routineListFixture(),
+    trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+  };
+  const requests = vi
+    .spyOn(window, "fetch")
+    .mockImplementation(async (input) =>
+      String(input) === "/api/routine-preview"
+        ? Response.json([])
+        : String(input).endsWith("/webhook")
+          ? Response.json({
+              endpoint: `/hooks/routines/${routine.id}`,
+            })
+          : Response.json({ routines: [routine], runs: [], events: [] }),
+    );
+  const dismiss = vi.fn();
+
+  try {
+    await using _screen = await render(<RoutinesPanel onDismiss={dismiss} />);
+    await page.getByRole("button", { name: "Digest", exact: true }).click();
+    await expect
+      .element(page.getByRole("textbox", { name: "Webhook URL", exact: true }))
+      .toHaveValue(
+        new URL(`/hooks/routines/${routine.id}`, window.location.origin).href,
+      );
+    await expect
+      .element(page.getByLabelText("Event type"))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Rotate webhook secret" }))
+      .not.toBeInTheDocument();
+    await page
+      .getByRole("button", { name: "Close settings", exact: true })
+      .click();
+    await expect.poll(() => dismiss.mock.calls.length).toBe(1);
+  } finally {
+    requests.mockRestore();
+  }
+});
+
 it.each(["success", "failure"])(
-  "flushes an imported sender secret before dismissal and retains %s feedback",
+  "reveals a regenerated webhook secret once on %s",
   async (result) => {
     const routine: Routine = {
       ...routineListFixture(),
       trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
     };
-    let finish!: (response: Response) => void;
-    const pending = new Promise<Response>((resolve) => {
-      finish = resolve;
-    });
-    const imported: unknown[] = [];
+    const endpoint = `/hooks/routines/${routine.id}`;
     const requests = vi
       .spyOn(window, "fetch")
       .mockImplementation(async (input, init) => {
         if (String(input) === "/api/routine-preview") return Response.json([]);
-        if (String(input).endsWith("/rotate")) {
-          imported.push(JSON.parse(String(init?.body)));
+        if (String(input).endsWith("/webhook")) {
+          if (init?.method === "POST") {
+            return result === "success"
+              ? Response.json({ endpoint, secret: "new-secret" })
+              : Response.json(
+                  { error: "Regeneration failed. Try again." },
+                  { status: 500 },
+                );
+          }
 
-          return pending;
+          return Response.json({ endpoint });
         }
-
-        expect(init?.method).not.toBe("PATCH");
 
         return Response.json({ routines: [routine], runs: [], events: [] });
       });
-    const dismiss = vi.fn();
 
     try {
-      await using _screen = await render(<RoutinesPanel onDismiss={dismiss} />);
-      await page.getByRole("button", { name: "Digest", exact: true }).click();
-      const input = page.getByLabelText("Sender secret", { exact: true });
-      await input.fill("sender-generated-secret");
-      await page
-        .getByRole("button", { name: "Close settings", exact: true })
-        .click();
-      await expect
-        .poll(() => imported)
-        .toEqual([{ secret: "sender-generated-secret" }]);
-      expect(dismiss).not.toHaveBeenCalled();
-      finish(
-        result === "success"
-          ? Response.json({
-              endpoint: "/hooks/digest",
-              secret: "sender-generated-secret",
-            })
-          : Response.json({ error: "Secret update failed." }, { status: 500 }),
+      await using _screen = await render(
+        <RoutinesPanel onDismiss={() => {}} />,
       );
+      await page.getByRole("button", { name: "Digest", exact: true }).click();
+      await expect
+        .element(page.getByLabelText("Webhook secret", { exact: true }))
+        .not.toBeInTheDocument();
+      await page
+        .getByRole("button", { name: "Regenerate secret", exact: true })
+        .click();
+      const keep = page.getByRole("button", {
+        name: "Keep secret",
+        exact: true,
+      });
+      await expect.element(keep).toHaveFocus();
+      expect(
+        requests.mock.calls.some(([, init]) => init?.method === "POST"),
+      ).toBe(false);
+      await keep.click();
+      await expect
+        .element(page.getByRole("alertdialog"))
+        .not.toBeInTheDocument();
+      await page
+        .getByRole("button", { name: "Regenerate secret", exact: true })
+        .click();
+
+      await expect
+        .element(
+          page.getByRole("alertdialog", { name: "Regenerate webhook secret?" }),
+        )
+        .toBeVisible();
+      await page
+        .getByRole("button", { name: "Regenerate secret", exact: true })
+        .click();
 
       if (result === "success") {
-        await expect.poll(() => dismiss.mock.calls.length).toBe(1);
-        await expect.element(input).toHaveValue("");
+        await expect
+          .element(page.getByLabelText("Webhook secret", { exact: true }))
+          .toHaveValue("new-secret");
+        await page
+          .getByRole("button", { name: "Dismiss secret", exact: true })
+          .click();
+        await page
+          .getByRole("button", { name: "Back to routines", exact: true })
+          .click();
+        await page.getByRole("button", { name: "Digest", exact: true }).click();
+        await expect
+          .element(page.getByLabelText("Webhook secret", { exact: true }))
+          .not.toBeInTheDocument();
       } else {
         await expect
           .element(page.getByRole("alert"))
-          .toHaveTextContent("Secret update failed.");
-        await expect.element(input).toHaveValue("sender-generated-secret");
-        expect(dismiss).not.toHaveBeenCalled();
+          .toHaveTextContent("Error: Regeneration failed. Try again.");
+        await expect
+          .element(page.getByLabelText("Webhook secret", { exact: true }))
+          .not.toBeInTheDocument();
+        await page
+          .getByRole("button", { name: "Keep secret", exact: true })
+          .click();
+      }
+
+      await expect
+        .element(page.getByLabelText("Webhook URL", { exact: true }))
+        .toHaveValue(new URL(endpoint, window.location.origin).href);
+    } finally {
+      requests.mockRestore();
+    }
+  },
+);
+
+it.each([440, 960])(
+  "keeps webhook fields aligned and readable at %s px",
+  async (width) => {
+    await page.viewport(width, 1000);
+    const routine: Routine = {
+      ...routineListFixture(),
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+    };
+    const endpoint = `/hooks/routines/${routine.id}`;
+    const requests = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async (input, init) => {
+        if (String(input) === "/api/routine-preview") return Response.json([]);
+        if (String(input).endsWith("/webhook"))
+          return Response.json({
+            endpoint,
+            ...(init?.method === "POST" ? { secret: "test-secret" } : {}),
+          });
+
+        return Response.json({ routines: [routine], runs: [], events: [] });
+      });
+
+    try {
+      await using _screen = await render(
+        <RoutinesPanel onDismiss={() => {}} />,
+      );
+      await page.getByRole("button", { name: "Digest", exact: true }).click();
+      const url = page.getByLabelText("Webhook URL", { exact: true });
+      await expect
+        .element(url)
+        .toHaveValue(new URL(endpoint, window.location.origin).href);
+      const input = url.element().getBoundingClientRect();
+      const instruction = page
+        .getByRole("textbox", { name: "Instruction", exact: true })
+        .element()
+        .getBoundingClientRect();
+      const regenerate = page.getByRole("button", {
+        name: "Regenerate secret",
+        exact: true,
+      });
+      const button = regenerate.element().getBoundingClientRect();
+      expect(Math.abs(input.width - instruction.width)).toBeLessThan(2);
+      expect(button.width).toBeLessThan(200);
+      expect(button.top).toBeGreaterThanOrEqual(input.bottom + 4);
+      const nameLabel = page
+        .getByRole("textbox", { name: "Name", exact: true })
+        .element()
+        .closest("label")!;
+      const expectedStyle = getComputedStyle(nameLabel);
+      const urlLabel = document.querySelector(
+        `label[for="${url.element().id}"]`,
+      )!;
+
+      for (const label of [
+        urlLabel,
+        document.querySelector(".routine-filter-row > span")!,
+        document.querySelector(".routine-advanced label")!,
+      ]) {
+        const style = getComputedStyle(label);
+        expect(style.fontSize).toBe(expectedStyle.fontSize);
+        expect(style.fontWeight).toBe(expectedStyle.fontWeight);
+      }
+
+      await regenerate.click();
+      await page
+        .getByRole("button", { name: "Regenerate secret", exact: true })
+        .click();
+      const secret = page.getByLabelText("Webhook secret", { exact: true });
+      await expect.element(secret).toHaveValue("test-secret");
+      expect(
+        Math.abs(secret.element().getBoundingClientRect().width - input.width),
+      ).toBeLessThan(2);
+      const dismiss = page
+        .getByRole("button", { name: "Dismiss secret", exact: true })
+        .element();
+      const notice = dismiss
+        .closest(".settings-group")!
+        .getBoundingClientRect();
+      const action = dismiss.getBoundingClientRect();
+      expect(action.left - notice.left).toBeGreaterThanOrEqual(16);
+      expect(notice.bottom - action.bottom).toBeGreaterThanOrEqual(12);
+      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+    } finally {
+      requests.mockRestore();
+      await page.viewport(800, 600);
+    }
+  },
+);
+
+it("opens the shared deletion dialog with safe focus and cancels without deleting", async () => {
+  const routine = routineListFixture();
+  const requests = vi
+    .spyOn(window, "fetch")
+    .mockImplementation(async (input) =>
+      String(input) === "/api/routine-preview"
+        ? Response.json([])
+        : Response.json({ routines: [routine], runs: [], events: [] }),
+    );
+
+  try {
+    await using _screen = await render(<RoutinesPanel onDismiss={() => {}} />);
+    await page.getByRole("button", { name: "Digest", exact: true }).click();
+    const remove = page.getByRole("button", {
+      name: "Delete routine",
+      exact: true,
+    });
+    await remove.click();
+    const dialog = page.getByRole("alertdialog", {
+      name: "Delete Digest?",
+      exact: true,
+    });
+    await expect.element(dialog).toBeVisible();
+    expect(dialog.element().classList.contains("ui-alert-dialog")).toBe(true);
+    const keep = page.getByRole("button", {
+      name: "Keep routine",
+      exact: true,
+    });
+    await expect.element(keep).toHaveFocus();
+    expect(
+      requests.mock.calls.some(([, init]) => init?.method === "DELETE"),
+    ).toBe(false);
+    await keep.click();
+    await expect.element(dialog).not.toBeInTheDocument();
+    await expect.element(remove).toHaveFocus();
+    await remove.click();
+    await expect.element(dialog).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(dialog).not.toBeInTheDocument();
+    expect(
+      requests.mock.calls.some(([, init]) => init?.method === "DELETE"),
+    ).toBe(false);
+  } finally {
+    requests.mockRestore();
+  }
+});
+
+it.each([440, 960])(
+  "keeps readable activity inside its own routine at %s px",
+  async (width) => {
+    await page.viewport(width, 1000);
+    const routine = routineListFixture();
+    const events = [
+      {
+        id: "accepted",
+        routineId: routine.id,
+        outcome: "accepted",
+        createdAt: "2026-11-02T12:30:00Z",
+      },
+      {
+        id: "foreign",
+        routineId: "another-routine",
+        outcome: "rejected_authentication",
+        createdAt: "2026-11-02T11:30:00Z",
+      },
+      {
+        id: "deleted",
+        routineId: "deleted-routine",
+        outcome: "deleted",
+        createdAt: "2026-11-02T10:30:00Z",
+      },
+      {
+        id: "secret",
+        routineId: routine.id,
+        outcome: "secret_rotated",
+        createdAt: "2026-11-01T09:30:00Z",
+      },
+    ];
+    const requests = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async (input) =>
+        String(input) === "/api/routine-preview"
+          ? Response.json([])
+          : Response.json({ routines: [routine], runs: [], events }),
+      );
+
+    try {
+      await using _screen = await render(
+        <RoutinesPanel onDismiss={() => {}} />,
+      );
+      await expect
+        .element(page.getByRole("button", { name: "Digest", exact: true }))
+        .toBeVisible();
+      await expect
+        .element(page.getByText("Trigger history", { exact: true }))
+        .not.toBeInTheDocument();
+      await expect
+        .element(page.getByText("Activity", { exact: true }))
+        .not.toBeInTheDocument();
+      await page.getByRole("button", { name: "Digest", exact: true }).click();
+      await page.getByText("Activity", { exact: true }).click();
+      await expect
+        .element(page.getByText("Webhook received", { exact: true }))
+        .toBeVisible();
+      await expect
+        .element(page.getByText("Secret regenerated", { exact: true }))
+        .toBeVisible();
+      await expect
+        .element(page.getByText("Invalid webhook secret", { exact: true }))
+        .not.toBeInTheDocument();
+      await expect
+        .element(page.getByText("Routine deleted", { exact: true }))
+        .not.toBeInTheDocument();
+      const activity = document.querySelector(".routine-activity")!;
+      expect(activity.textContent).not.toContain("secret_rotated");
+      expect(activity.querySelectorAll("li")).toHaveLength(2);
+      expect(activity.querySelectorAll("h4")).toHaveLength(2);
+      expect(
+        [...activity.querySelectorAll("time")].map((time) => time.dateTime),
+      ).toEqual([events[0]!.createdAt, events[3]!.createdAt]);
+      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+      await page
+        .getByRole("button", { name: "Back to routines", exact: true })
+        .click();
+      await expect
+        .element(page.getByText("Activity", { exact: true }))
+        .not.toBeInTheDocument();
+    } finally {
+      requests.mockRestore();
+      await page.viewport(800, 600);
+    }
+  },
+);
+
+it.each(["success", "failure"])(
+  "reports clipboard %s for the webhook URL",
+  async (result) => {
+    const routine: Routine = {
+      ...routineListFixture(),
+      trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+    };
+    const endpoint = `/hooks/routines/${routine.id}`;
+    const clipboard = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockImplementation(async () => {
+        if (result === "failure") throw new Error("Clipboard denied");
+      });
+    const requests = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async (input) => {
+        if (String(input) === "/api/routine-preview") return Response.json([]);
+        if (String(input).endsWith("/webhook"))
+          return Response.json({ endpoint });
+
+        return Response.json({ routines: [routine], runs: [], events: [] });
+      });
+
+    try {
+      await using _screen = await render(
+        <RoutinesPanel onDismiss={() => {}} />,
+      );
+      await page.getByRole("button", { name: "Digest", exact: true }).click();
+      const copy = page.getByRole("button", {
+        name: "Copy webhook URL",
+        exact: true,
+      });
+      await expect.element(copy).toBeEnabled();
+      await copy.click();
+      expect(clipboard).toHaveBeenCalledWith(
+        new URL(endpoint, window.location.origin).href,
+      );
+
+      if (result === "success") {
+        await expect
+          .element(page.getByRole("status"))
+          .toHaveTextContent("Copied");
+        await expect
+          .element(
+            page.getByRole("button", {
+              name: "Copied webhook URL",
+              exact: true,
+            }),
+          )
+          .toBeVisible();
+        await expect.element(page.getByRole("status")).not.toBeInTheDocument();
+        await expect.element(copy).toBeVisible();
+      } else {
+        await expect
+          .element(page.getByRole("alert"))
+          .toHaveTextContent(
+            "Could not copy URL. Select the URL and copy it manually.",
+          );
+        await expect.element(page.getByRole("status")).not.toBeInTheDocument();
       }
     } finally {
-      finish(
-        Response.json({
-          endpoint: "/hooks/digest",
-          secret: "sender-generated-secret",
-        }),
-      );
+      clipboard.mockRestore();
       requests.mockRestore();
     }
   },

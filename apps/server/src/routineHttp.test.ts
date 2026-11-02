@@ -187,7 +187,7 @@ it("rejects malformed raw request targets and keeps both listeners alive", async
   }
 });
 
-it("imports sender secrets privately and receives native webhooks through the ingress listener", async () => {
+it("accepts plain JSON with a bearer secret and ignores provider-specific headers", async () => {
   await mkdir("/tmp/codex", { recursive: true });
   const root = await mkdtemp("/tmp/codex/paws-routine-http-");
   const agents = makeAgentService(root);
@@ -197,73 +197,113 @@ it("imports sender secrets privately and receives native webhooks through the in
   await app.routines.ready;
 
   try {
-    app.server.listen(0, "127.0.0.1");
     app.webhookServer.listen(0, "127.0.0.1");
-    await Promise.all([
-      once(app.server, "listening"),
-      once(app.webhookServer, "listening"),
-    ]);
+    await once(app.webhookServer, "listening");
+    const address = app.webhookServer.address();
+
+    if (!address || typeof address === "string")
+      throw new Error("Expected listener.");
+
+    app.server.listen(0, "127.0.0.1");
+    await once(app.server, "listening");
     const management = app.server.address();
-    const ingress = app.webhookServer.address();
 
-    if (
-      !management ||
-      typeof management === "string" ||
-      !ingress ||
-      typeof ingress === "string"
-    )
-      throw new Error("Expected listeners.");
+    if (!management || typeof management === "string")
+      throw new Error("Expected listener.");
 
-    const routine = app.routines.save(agent.id, {
-      name: "Incoming",
-      instruction: "Summarize",
-      enabled: true,
-      trigger: {
-        kind: "webhook",
-        filters: { combinator: "and", rules: [] },
+    const created = await fetch(
+      `http://127.0.0.1:${management.port}/api/agents/${agent.id}/routines`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          routine: {
+            name: "Incoming",
+            instruction: "Summarize",
+            enabled: true,
+            trigger: {
+              kind: "webhook",
+              filters: { combinator: "and", rules: [] },
+              eventType: "obsolete-filter",
+            },
+            missed: "skip",
+            timeoutMinutes: 60,
+          },
+        }),
       },
-      missed: "skip",
-      timeoutMinutes: 60,
+    );
+    expect(created.status).toBe(200);
+    const creation = await created.json();
+    const routine = creation.routine;
+    expect(routine.trigger).toEqual({
+      kind: "webhook",
+      filters: { combinator: "and", rules: [] },
     });
-    const endpoint = `http://127.0.0.1:${ingress.port}/hooks/routines/${routine.id}`;
-    const managementPath = `http://127.0.0.1:${management.port}/api/agents/${agent.id}/routines/${routine.id}/rotate`;
-    const imported = await fetch(managementPath, {
-      method: "POST",
-      body: JSON.stringify({ secret: "external-secret" }),
-    });
-    expect(imported.status).toBe(200);
+    const managementPath = `/api/agents/${agent.id}/routines/${routine.id}/webhook`;
+    const managementUrl = `http://127.0.0.1:${management.port}${managementPath}`;
+    const configured = await fetch(managementUrl);
+    expect(configured.status).toBe(200);
+    const metadata = await configured.json();
+    expect(metadata).toEqual({ endpoint: `/hooks/routines/${routine.id}` });
+    const webhook = creation.webhook;
+    expect(typeof webhook.secret).toBe("string");
+    expect(await (await fetch(managementUrl)).json()).toEqual(metadata);
+    expect(
+      (await fetch(`http://127.0.0.1:${address.port}${managementPath}`)).status,
+    ).toBe(404);
+    const endpoint = `http://127.0.0.1:${address.port}${webhook.endpoint}`;
     const options = {
       method: "POST",
-      headers: {
-        "x-gitlab-token": "external-secret",
-        "x-gitlab-event": "Push Hook",
-        "idempotency-key": "push-1",
-      },
       body: '{"object_kind":"push"}',
+      headers: { authorization: `Bearer ${webhook.secret}` },
     };
-    const accepted = await fetch(endpoint, options);
-    expect(accepted.status).toBe(202);
-    expect(await accepted.json()).toMatchObject({ outcome: "accepted" });
-    expect(await (await fetch(endpoint, options)).json()).toEqual({
-      outcome: "duplicate",
-    });
-    expect(
-      (await fetch(managementPath, { method: "POST", body: '{"secret":""}' }))
-        .status,
-    ).toBe(400);
+    expect((await fetch(endpoint, { ...options, headers: {} })).status).toBe(
+      401,
+    );
     expect(
       (
-        await fetch(endpoint, {
+        await fetch(`${endpoint}?secret=${webhook.secret}`, {
           ...options,
-          headers: { "x-gitlab-token": "wrong" },
+          headers: {},
         })
       ).status,
     ).toBe(401);
-    expect(JSON.stringify(app.routines.list(agent.id))).not.toContain(
-      "external-secret",
-    );
-    expect((await fetch(managementPath, { method: "POST" })).status).toBe(200);
+    const accepted = await fetch(endpoint, options);
+    expect(accepted.status).toBe(202);
+    expect(await accepted.json()).toMatchObject({ outcome: "accepted" });
+    const repeated = await fetch(endpoint, {
+      ...options,
+      headers: {
+        ...options.headers,
+        "x-gitlab-event": "Push Hook",
+        "x-gitlab-token": "unused",
+        "webhook-signature": "unused",
+        "idempotency-key": "unused",
+      },
+    });
+    expect(repeated.status).toBe(202);
+    expect(await repeated.json()).toMatchObject({ outcome: "accepted" });
+    expect(app.routines.list(agent.id).runs).toHaveLength(2);
+    expect((await fetch(endpoint)).status).toBe(405);
+    expect(
+      (await fetch(endpoint, { ...options, body: "invalid" })).status,
+    ).toBe(400);
+    expect(
+      (await fetch(endpoint, { ...options, body: "x".repeat(262145) })).status,
+    ).toBe(413);
+    const rotated = await fetch(managementUrl, { method: "POST" });
+    expect(rotated.status).toBe(200);
+    const replacement = await rotated.json();
+    expect(replacement.endpoint).toBe(webhook.endpoint);
+    expect(replacement.secret).not.toBe(webhook.secret);
     expect((await fetch(endpoint, options)).status).toBe(401);
+    expect(
+      (
+        await fetch(`http://127.0.0.1:${address.port}${replacement.endpoint}`, {
+          ...options,
+          headers: { authorization: `Bearer ${replacement.secret}` },
+        })
+      ).status,
+    ).toBe(202);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
