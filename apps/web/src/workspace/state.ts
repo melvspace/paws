@@ -17,7 +17,7 @@ const defaults: WorkspaceState = {
   attachments: [],
   model: "",
   options: {},
-  sidebarOpen: true,
+  sidebarOpen: false,
   bottomOpen: false,
 };
 

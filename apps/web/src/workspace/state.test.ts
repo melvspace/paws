@@ -76,7 +76,7 @@ describe("workspace persistence", () => {
       },
     };
     const state = readWorkspace(blocked, ada.id);
-    expect(state.sidebarOpen).toBe(true);
+    expect(state.sidebarOpen).toBe(false);
     expect(() => writeWorkspace(blocked, ada.id, state)).not.toThrow();
   });
 });

@@ -9,7 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Dialog, DialogPopup } from "../components/ui/dialog.tsx";
-import { FolderIcon, PlusIcon, SettingsIcon, XIcon } from "lucide-react";
+import { PlusIcon, SettingsIcon, XIcon } from "lucide-react";
 import { Menu } from "@base-ui/react/menu";
 import { MenuPopup } from "../components/ui/menu.tsx";
 import "./workspace.css";
@@ -30,7 +30,8 @@ interface ChatRightPanelProps {
   controls: ReactNode;
   onClose: () => void;
   children?: ReactNode;
-  onTabChange?: (tab: "files" | "settings") => void;
+  onTabChange?: (tab: "settings") => void;
+  onTabClose?: (tab: "settings") => Promise<boolean>;
 }
 
 export function ChatRightPanel(props: ChatRightPanelProps) {
@@ -48,19 +49,21 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     },
     [contentHost],
   );
-  const activeTab: "files" | "settings" = props.children ? "settings" : "files";
-  const [openedTabs, setOpenedTabs] = useState<
-    readonly ("files" | "settings")[]
-  >([activeTab]);
-  const tabs = [...new Set([...openedTabs, activeTab])];
+  const activeTab = props.children ? "settings" : null;
+  const tabs: readonly "settings"[] = activeTab ? [activeTab] : [];
+  const availableTabs = (["settings"] as const).filter(
+    (tab) => !tabs.includes(tab),
+  );
   const panels = {
-    files: { label: "Files", Icon: FolderIcon },
     settings: { label: "Agent settings", Icon: SettingsIcon },
   };
 
-  function selectTab(tab: "files" | "settings") {
-    setOpenedTabs([...new Set([...tabs, tab])]);
+  function selectTab(tab: "settings") {
     props.onTabChange?.(tab);
+  }
+
+  async function closeTab(tab: "settings") {
+    await props.onTabClose?.(tab);
   }
 
   const max = panelMaxWidth(props.viewportWidth, props.rowWidth);
@@ -80,7 +83,13 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
           role="tablist"
           aria-label="Sidebar tabs"
           onKeyDown={(event) => {
-            const index = tabs.indexOf(activeTab);
+            if (
+              !(event.target instanceof HTMLElement) ||
+              event.target.getAttribute("role") !== "tab"
+            )
+              return;
+
+            const index = activeTab ? tabs.indexOf(activeTab) : -1;
             const next =
               event.key === "ArrowRight"
                 ? (index + 1) % tabs.length
@@ -107,21 +116,35 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
             const { label, Icon } = panels[tab];
 
             return (
-              <Button
+              <div
                 key={tab}
-                id={`${tabId}-${tab}`}
-                type="button"
-                variant="ghost"
-                className="right-panel-tab"
-                role="tab"
-                aria-selected={activeTab === tab}
-                aria-controls={`${tabId}-content`}
-                tabIndex={activeTab === tab ? 0 : -1}
-                onClick={() => selectTab(tab)}
+                className="right-panel-tab-item"
+                data-active={activeTab === tab || undefined}
               >
-                <Icon size={14} aria-hidden />
-                <span>{label}</span>
-              </Button>
+                <Button
+                  id={`${tabId}-${tab}`}
+                  type="button"
+                  variant="ghost"
+                  className="right-panel-tab"
+                  role="tab"
+                  aria-selected={activeTab === tab}
+                  aria-controls={`${tabId}-content`}
+                  tabIndex={activeTab === tab ? 0 : -1}
+                  onClick={() => selectTab(tab)}
+                >
+                  <Icon size={14} aria-hidden />
+                  <span>{label}</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="right-panel-tab-close"
+                  aria-label={`Close ${label} tab`}
+                  onClick={() => void closeTab(tab)}
+                >
+                  <XIcon size={12} aria-hidden />
+                </Button>
+              </div>
             );
           })}
         </div>
@@ -131,11 +154,12 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
               render={<Button className="sidebar-icon-button" />}
               aria-label="Add sidebar tab"
               title="Add tab"
+              disabled={availableTabs.length === 0}
             >
               <PlusIcon size={16} aria-hidden />
             </Menu.Trigger>
             <MenuPopup aria-label="Add sidebar tab">
-              {(["settings", "files"] as const).map((tab) => {
+              {availableTabs.map((tab) => {
                 const { label, Icon } = panels[tab];
 
                 return (
@@ -167,13 +191,22 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
       <div
         className="right-panel-content"
         id={`${tabId}-content`}
-        role="tabpanel"
-        aria-labelledby={`${tabId}-${activeTab}`}
+        role={activeTab ? "tabpanel" : undefined}
+        aria-labelledby={activeTab ? `${tabId}-${activeTab}` : undefined}
       >
         {props.children || (
-          <div className="panel-placeholder">
-            <FolderIcon size={24} aria-hidden />
-            <p>File browser not connected</p>
+          <div className="surface-picker" aria-label="Open a surface">
+            <h2>Open a surface</h2>
+            {props.onTabChange && (
+              <Button
+                variant="ghost"
+                className="surface-picker-option"
+                onClick={() => selectTab("settings")}
+              >
+                <SettingsIcon size={20} aria-hidden />
+                <span>Agent settings</span>
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -196,7 +229,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
           sheet
           id="workspace-sidebar"
           className="right-panel-sheet"
-          aria-label={props.children ? "Agent settings" : "Workspace files"}
+          aria-label={props.children ? "Agent settings" : "Workspace surfaces"}
         >
           <div className="right-panel-body" ref={attachContent} />
         </DialogPopup>
@@ -204,7 +237,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
         <aside
           id="workspace-sidebar"
           className="workspace-sidebar"
-          aria-label={props.children ? "Agent settings" : "Workspace files"}
+          aria-label={props.children ? "Agent settings" : "Workspace surfaces"}
           hidden={!props.open}
           data-maximized={props.maximized}
           style={{ "--panel-size": `${size}px` } as CSSProperties}

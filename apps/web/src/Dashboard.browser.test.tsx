@@ -81,7 +81,7 @@ function mockRequests(
   });
 }
 
-it("opens another agent's settings in the sidebar and adds selectable tabs without duplicates", async () => {
+it("opens another agent's settings and only offers implemented surfaces", async () => {
   const requests = mockRequests();
   await using _screen = await render(<Dashboard />);
   // Focus makes the compact management control visible.
@@ -111,29 +111,26 @@ it("opens another agent's settings in the sidebar and adds selectable tabs witho
   await expect
     .element(page.getByRole("tablist", { name: "Agents", exact: true }))
     .not.toBeInTheDocument();
-  await page.getByRole("button", { name: "Add sidebar tab" }).click();
-  await page.getByRole("menuitem", { name: "Files", exact: true }).click();
   await expect
-    .element(page.getByRole("tab", { name: "Files", exact: true }))
-    .toHaveAttribute("aria-selected", "true");
+    .element(page.getByRole("button", { name: "Add sidebar tab" }))
+    .toBeDisabled();
   await expect
-    .element(page.getByText("File browser not connected"))
+    .element(page.getByRole("button", { name: "Toggle terminal drawer" }))
+    .not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Close Agent settings tab" }).click();
+  await expect
+    .element(page.getByRole("heading", { name: "Open a surface" }))
     .toBeVisible();
+  const surfaces = document.querySelector(".surface-picker")!;
+  expect(surfaces.querySelectorAll("button")).toHaveLength(1);
+  expect(surfaces.textContent).toBe("Open a surfaceAgent settings");
   await page.getByRole("button", { name: "Add sidebar tab" }).click();
+  await expect
+    .element(page.getByRole("menuitem", { name: "Files", exact: true }))
+    .not.toBeInTheDocument();
   await page
     .getByRole("menuitem", { name: "Agent settings", exact: true })
     .click();
-  await expect
-    .element(page.getByRole("tab", { name: "Agent settings", exact: true }))
-    .toHaveAttribute("aria-selected", "true");
-  expect(
-    document.querySelectorAll('.right-panel-tabs [role="tab"]'),
-  ).toHaveLength(2);
-  await page.getByRole("tab", { name: "Files", exact: true }).click();
-  await userEvent.keyboard("{ArrowLeft}");
-  await expect
-    .element(page.getByRole("tab", { name: "Agent settings", exact: true }))
-    .toHaveAttribute("aria-selected", "true");
   await page
     .getByRole("button", { name: "Toggle right panel", exact: true })
     .click();
@@ -214,6 +211,11 @@ it("keeps failed edits visible when closing the sidebar or navigating away", asy
       "Could not save agent settings. Check your connection and name.",
     );
   await expect.element(name).toHaveValue("Edited Grace");
+  await page.getByRole("button", { name: "Close Agent settings tab" }).click();
+  await expect.element(name).toBeVisible();
+  await expect
+    .element(page.getByRole("tab", { name: "Agent settings", exact: true }))
+    .toBeVisible();
   await page.getByRole("link", { name: "Ada", exact: true }).click();
   await expect
     .poll(

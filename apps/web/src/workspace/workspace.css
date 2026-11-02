@@ -310,7 +310,7 @@
   color: var(--muted-foreground);
 }
 .right-panel-tabs .right-panel-tab[aria-selected="true"] {
-  background: var(--accent);
+  background: transparent;
   color: var(--foreground);
 }
 .right-panel-tab svg {
@@ -328,4 +328,53 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+.surface-picker {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  max-width: 360px;
+  margin: auto;
+  padding: 24px;
+  overflow-y: auto;
+}
+.surface-picker h2 {
+  margin: 0 0 16px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 500;
+}
+.surface-picker-option.ui-button {
+  justify-content: flex-start;
+  flex-shrink: 0;
+  gap: 14px;
+  min-height: 44px;
+  padding: 10px 12px;
+  font-size: 15px;
+}
+.surface-picker-option svg {
+  flex-shrink: 0;
+}
+
+.right-panel-tab-item {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-width: 0;
+  border-radius: 8px;
+}
+.right-panel-tab-item[data-active] {
+  background: var(--accent);
+}
+.right-panel-tab-close.ui-button {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  padding: 4px;
+  color: var(--muted-foreground);
 }

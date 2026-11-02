@@ -1,18 +1,11 @@
 import { Button } from "../components/ui/button.tsx";
 // Adapted from T3 Code chat/PanelLayoutControls.tsx (MIT).
-import {
-  Maximize2Icon,
-  Minimize2Icon,
-  PanelBottomIcon,
-  PanelRightIcon,
-} from "lucide-react";
+import { Maximize2Icon, Minimize2Icon, PanelRightIcon } from "lucide-react";
 
 interface PanelLayoutControlsProps {
-  terminalOpen: boolean;
   rightPanelOpen: boolean;
   maximized: boolean;
   showMaximize: boolean;
-  onToggleTerminal: () => void;
   onToggleRightPanel: () => void;
   onToggleMaximized: () => void;
 }
@@ -36,17 +29,6 @@ export function PanelLayoutControls(props: PanelLayoutControlsProps) {
           )}
         </Button>
       )}
-      <Button
-        type="button"
-        className="sidebar-icon-button"
-        title="Toggle terminal drawer"
-        aria-label="Toggle terminal drawer"
-        aria-pressed={props.terminalOpen}
-        aria-controls="workspace-bottom"
-        onClick={props.onToggleTerminal}
-      >
-        <PanelBottomIcon aria-hidden />
-      </Button>
       <Button
         type="button"
         className="sidebar-icon-button"

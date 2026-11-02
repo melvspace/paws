@@ -22,7 +22,6 @@ import type { Agent, FollowUpMode } from "@paws/contracts";
 import { readWorkspace, writeWorkspace } from "./state.ts";
 import { PanelLayoutControls } from "./PanelLayoutControls.tsx";
 import { ChatRightPanel } from "./ChatRightPanel.tsx";
-import { ChatTerminalDrawer } from "./ChatTerminalDrawer.tsx";
 import { ContextWindowMeter } from "./ContextWindowMeter.tsx";
 import { ReasoningPicker } from "./ReasoningPicker.tsx";
 import { ModelPicker } from "./ModelPicker.tsx";
@@ -207,23 +206,14 @@ export function AgentWorkspace({
     );
   }, [agent.id, state]);
 
-  function toggle(panel: "sidebarOpen" | "bottomOpen") {
-    setState((current) => ({ ...current, [panel]: !current[panel] }));
-  }
-
   const controls = (
     <PanelLayoutControls
-      terminalOpen={state.bottomOpen}
       rightPanelOpen={rightPanelOpen}
       maximized={rightPanelMaximized}
       showMaximize={!sheet}
-      onToggleTerminal={() => {
-        setMaximized(false);
-        toggle("bottomOpen");
-      }}
       onToggleRightPanel={() => {
         if (rightPanelOpen) void closeRightPanel();
-        else toggle("sidebarOpen");
+        else setState((current) => ({ ...current, sidebarOpen: true }));
       }}
       onToggleMaximized={() => setMaximized(!maximized)}
     />
@@ -478,13 +468,6 @@ export function AgentWorkspace({
             </div>
           </div>
         </section>
-        <ChatTerminalDrawer
-          agentId={agent.id}
-          open={state.bottomOpen}
-          columnHeight={bounds.height}
-          viewportHeight={bounds.viewportHeight}
-          onClose={() => toggle("bottomOpen")}
-        />
       </div>
       <ChatRightPanel
         agentId={agent.id}
@@ -495,20 +478,24 @@ export function AgentWorkspace({
         viewportWidth={bounds.viewportWidth}
         controls={controls}
         onClose={() => void closeRightPanel()}
-        onTabChange={(tab) => {
-          if (tab === "settings") {
-            onSettings();
+        onTabClose={async () => {
+          if (!settingsOpen) return true;
 
-            return;
+          try {
+            if (document.activeElement instanceof HTMLElement) {
+              document.activeElement.blur();
+            }
+
+            await flush.current?.();
+            onSettingsClosed?.();
+            setState((current) => ({ ...current, sidebarOpen: true }));
+
+            return true;
+          } catch {
+            return false;
           }
-
-          void Promise.resolve(flush.current?.())
-            .then(() => {
-              onSettingsClosed?.();
-              setState((current) => ({ ...current, sidebarOpen: true }));
-            })
-            .catch(() => {});
         }}
+        onTabChange={() => onSettings()}
       >
         {settingsOpen && (
           <AgentSettingsPanel
