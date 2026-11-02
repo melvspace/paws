@@ -1,6 +1,13 @@
 import { Button } from "../components/ui/button.tsx";
 // Adapted from T3 Code ChatRightPanel, RightPanelSheet, and RightPanelTabs (MIT).
-import { useId, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useCallback,
+  useId,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
 import { Dialog, DialogPopup } from "../components/ui/dialog.tsx";
 import { FolderIcon, PlusIcon, SettingsIcon, XIcon } from "lucide-react";
 import { Menu } from "@base-ui/react/menu";
@@ -28,6 +35,19 @@ interface ChatRightPanelProps {
 
 export function ChatRightPanel(props: ChatRightPanelProps) {
   const tabId = useId();
+  // Reparent one portal host so responsive containers never remount its editors.
+  const [contentHost] = useState(() => {
+    const host = document.createElement("div");
+    host.className = "right-panel-body";
+
+    return host;
+  });
+  const attachContent = useCallback(
+    (host: HTMLDivElement | null) => {
+      host?.append(contentHost);
+    },
+    [contentHost],
+  );
   const activeTab: "files" | "settings" = props.children ? "settings" : "files";
   const [openedTabs, setOpenedTabs] = useState<
     readonly ("files" | "settings")[]
@@ -160,52 +180,51 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     </>
   );
 
-  if (props.sheet) {
-    return (
-      <Dialog
-        open={props.open}
-        onOpenChange={(open, details) => {
-          if (!open) {
-            details.cancel();
-            props.onClose();
-          }
-        }}
-      >
+  return (
+    <Dialog
+      open={props.sheet && props.open}
+      onOpenChange={(open, details) => {
+        if (!open && props.sheet) {
+          details.cancel();
+          props.onClose();
+        }
+      }}
+    >
+      {createPortal(content, contentHost)}
+      {props.sheet ? (
         <DialogPopup
           sheet
           id="workspace-sidebar"
           className="right-panel-sheet"
           aria-label={props.children ? "Agent settings" : "Workspace files"}
         >
-          {content}
+          <div className="right-panel-body" ref={attachContent} />
         </DialogPopup>
-      </Dialog>
-    );
-  }
-
-  return (
-    <aside
-      id="workspace-sidebar"
-      className="workspace-sidebar"
-      aria-label={props.children ? "Agent settings" : "Workspace files"}
-      hidden={!props.open}
-      data-maximized={props.maximized}
-      style={{ "--panel-size": `${size}px` } as CSSProperties}
-    >
-      {!props.maximized && (
-        <div
-          className="panel-resize-handle panel-resize-width"
-          role="separator"
-          tabIndex={0}
-          aria-label="Resize right panel"
-          aria-orientation="vertical"
-          aria-valuemin={PANEL_MIN_WIDTH}
-          aria-valuemax={max}
-          aria-valuenow={size}
-          {...handle}
-        />
+      ) : (
+        <aside
+          id="workspace-sidebar"
+          className="workspace-sidebar"
+          aria-label={props.children ? "Agent settings" : "Workspace files"}
+          hidden={!props.open}
+          data-maximized={props.maximized}
+          style={{ "--panel-size": `${size}px` } as CSSProperties}
+        >
+          {!props.maximized && (
+            <div
+              className="panel-resize-handle panel-resize-width"
+              role="separator"
+              tabIndex={0}
+              aria-label="Resize right panel"
+              aria-orientation="vertical"
+              aria-valuemin={PANEL_MIN_WIDTH}
+              aria-valuemax={max}
+              aria-valuenow={size}
+              {...handle}
+            />
+          )}
+          <div className="right-panel-body" ref={attachContent} />
+        </aside>
       )}
-      {content}
-    </aside>
+    </Dialog>
   );
 }

@@ -131,6 +131,19 @@ export function RoutinesSettings({
   } | null>(null);
   const initialRun = useRef(initialRunId);
   const flush = useRef<(() => Promise<void>) | null>(null);
+  const mutation = useRef(0);
+
+  function acceptSaved(routine: Routine) {
+    mutation.current++;
+    setState((current) => ({
+      ...current,
+      routines: current.routines.some((item) => item.id === routine.id)
+        ? current.routines.map((item) =>
+            item.id === routine.id ? routine : item,
+          )
+        : [...current.routines, routine],
+    }));
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -138,6 +151,8 @@ export function RoutinesSettings({
     let timer: ReturnType<typeof setTimeout>;
 
     async function refresh() {
+      const startedAtMutation = mutation.current;
+
       try {
         const next = await loadRoutines(agentId, controller.signal, runCursor);
         const requestedId = initialRun.current ?? selectedRun?.id;
@@ -150,7 +165,25 @@ export function RoutinesSettings({
           throw new Error("This run belongs to another agent.");
 
         if (active) {
-          setState(next);
+          setState((current) => {
+            const existing = new Map(
+              current.routines.map((item) => [item.id, item]),
+            );
+
+            return {
+              ...next,
+              routines:
+                startedAtMutation !== mutation.current
+                  ? current.routines
+                  : next.routines.map((item) => {
+                      const saved = existing.get(item.id);
+
+                      return saved && saved.revision > item.revision
+                        ? saved
+                        : item;
+                    }),
+            };
+          });
           setError(null);
 
           if (linked) {
@@ -277,7 +310,9 @@ export function RoutinesSettings({
             connected={connected}
             flush={flush}
             onSaved={(routine, webhook) => {
+              acceptSaved(routine);
               setEditing(routine);
+
               if (webhook) setSecret(webhook);
             }}
             onClose={() => void select(null)}
@@ -336,10 +371,7 @@ export function RoutinesSettings({
                           routine.id,
                           routine.revision,
                         )
-                          .then(() =>
-                            loadRoutines(agentId, undefined, runCursor),
-                          )
-                          .then(setState)
+                          .then(({ routine }) => acceptSaved(routine))
                           .catch((cause) => setError(String(cause)));
                       }}
                     />

@@ -211,6 +211,121 @@ it("edits routines with autosave and flushes instructions before dismissing Sett
   }
 });
 
+it.each(["immediate", "stale refresh"])(
+  "reopens saved routines with current values and revision after %s responses",
+  async (responseOrder) => {
+    appAtomRegistry.set(agentsAtom, {
+      connected: true,
+      error: null,
+      snapshot: {
+        agents: [
+          {
+            id: "ada",
+            name: "Ada",
+            provider: "codex",
+            status: "configured",
+            createdAt: "2026-11-01",
+          },
+        ],
+      },
+    });
+    let routine: Routine = {
+      id: "00000000-0000-4000-8000-000000000001",
+      agentId: "ada",
+      name: "Digest",
+      instruction: "Summarize tickets",
+      enabled: true,
+      missed: "skip",
+      timeoutMinutes: 60,
+      trigger: { kind: "interval", minutes: 5 },
+      nextAt: null,
+      revision: 1,
+      createdAt: "2026-11-01",
+      updatedAt: "2026-11-01",
+      changedBy: "user",
+      deleted: false,
+    };
+    const oldRoutine = routine;
+    let release: ((response: Response) => void) | undefined;
+    let reads = 0;
+    const revisions: number[] = [];
+    const requests = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async (input, init) => {
+        if (String(input) === "/api/routine-preview") return Response.json([]);
+
+        if (init?.method === "PATCH") {
+          const body = JSON.parse(String(init.body));
+          revisions.push(body.revision);
+
+          if (body.revision !== routine.revision)
+            return new Response(null, { status: 409 });
+
+          routine = {
+            ...routine,
+            ...body.routine,
+            revision: routine.revision + 1,
+          };
+
+          return Response.json({ routine });
+        }
+
+        reads++;
+
+        if (reads >= 2) {
+          return new Promise<Response>((resolve) => {
+            release = resolve;
+          });
+        }
+
+        return Response.json({ routines: [routine], runs: [], events: [] });
+      });
+
+    try {
+      await using _screen = await render(
+        <RoutinesPanel onDismiss={() => {}} />,
+      );
+      await page.getByRole("button", { name: "Digest", exact: true }).click();
+
+      if (responseOrder === "stale refresh")
+        await expect.poll(() => release, { timeout: 4000 }).toBeDefined();
+
+      const instruction = page.getByRole("textbox", {
+        name: "Instruction",
+        exact: true,
+      });
+      await instruction.fill("Include owners");
+      await page.getByRole("button", { name: "Back to routines" }).click();
+
+      if (responseOrder === "stale refresh") {
+        release?.(
+          Response.json({ routines: [oldRoutine], runs: [], events: [] }),
+        );
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      }
+
+      await expect
+        .element(page.getByText("Include owners", { exact: true }))
+        .toBeVisible();
+      await page.getByRole("button", { name: "Digest", exact: true }).click();
+      await expect.element(instruction).toHaveValue("Include owners");
+      await instruction.fill("Include owners and deadlines");
+      await page.getByRole("button", { name: "Back to routines" }).click();
+      await expect
+        .element(
+          page.getByText("Include owners and deadlines", { exact: true }),
+        )
+        .toBeVisible();
+      expect(revisions).toEqual([1, 2]);
+    } finally {
+      release?.(Response.json({ routines: [routine], runs: [], events: [] }));
+      requests.mockRestore();
+    }
+  },
+);
+
 it("keeps a failed routine edit visible when dismissal cannot save it", async () => {
   appAtomRegistry.set(agentsAtom, {
     connected: true,

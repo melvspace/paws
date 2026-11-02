@@ -270,3 +270,99 @@ it("uses the sidebar sheet on a narrow screen and flushes edits on Escape", asyn
     ),
   ).toBe(true);
 });
+
+it.each(["hashchange", "popstate"])(
+  "retains failed edits during %s navigation and restores the accepted URL",
+  async (event) => {
+    const requests = mockRequests(
+      async () => new Response(null, { status: 500 }),
+    );
+    await using _screen = await render(<Dashboard />);
+    await page
+      .getByRole("button", { name: "Settings for Ada", exact: true })
+      .last()
+      .click();
+    const name = page.getByRole("textbox", { name: "Name", exact: true });
+    await name.fill("Unsaved Ada");
+
+    if (event === "hashchange") location.hash = "agent-grace";
+    else {
+      history.pushState(null, "", "#agent-grace");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }
+
+    await expect
+      .poll(() =>
+        requests.mock.calls.some(([, init]) => init?.method === "PATCH"),
+      )
+      .toBe(true);
+    await expect.element(page.getByRole("alert")).toBeVisible();
+    await expect.element(name).toHaveValue("Unsaved Ada");
+    expect(location.hash).toBe("#agent-ada");
+    await expect
+      .element(page.getByRole("textbox", { name: "Message Ada" }))
+      .toBeVisible();
+  },
+);
+
+it("preserves failed settings drafts while changing between sidebar and sheet", async () => {
+  mockRequests(async () => new Response(null, { status: 500 }));
+  await using _screen = await render(<Dashboard />);
+  await page
+    .getByRole("button", { name: "Settings for Ada", exact: true })
+    .last()
+    .click();
+  const name = page.getByRole("textbox", { name: "Name", exact: true });
+  await name.fill("Unsaved Ada");
+  await page.getByRole("button", { name: "Routines", exact: true }).click();
+  await expect.element(page.getByRole("alert")).toBeVisible();
+  const editor = name.element();
+  await page.viewport(390, 844);
+  await expect
+    .element(page.getByRole("dialog", { name: "Agent settings" }))
+    .toBeVisible();
+  await expect.element(name).toHaveValue("Unsaved Ada");
+  await expect.element(page.getByRole("alert")).toBeVisible();
+  expect(name.element()).toBe(editor);
+  await page.viewport(1440, 900);
+  await expect
+    .element(page.getByRole("complementary", { name: "Agent settings" }))
+    .toBeVisible();
+  await expect.element(name).toHaveValue("Unsaved Ada");
+  await expect.element(page.getByRole("alert")).toBeVisible();
+  expect(name.element()).toBe(editor);
+});
+
+it("awaits pending edits before accepting browser hash navigation", async () => {
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  const requests = mockRequests(() => pending);
+
+  try {
+    await using _screen = await render(<Dashboard />);
+    await page
+      .getByRole("button", { name: "Settings for Ada", exact: true })
+      .last()
+      .click();
+    const name = page.getByRole("textbox", { name: "Name", exact: true });
+    await name.fill("Saved Ada");
+    location.hash = "agent-grace";
+    await expect
+      .poll(() =>
+        requests.mock.calls.some(([, init]) => init?.method === "PATCH"),
+      )
+      .toBe(true);
+    expect(location.hash).toBe("#agent-ada");
+    await expect.element(name).toHaveValue("Saved Ada");
+    finish(new Response(null, { status: 204 }));
+    await expect
+      .element(page.getByRole("textbox", { name: "Message Grace" }))
+      .toBeVisible();
+    expect(location.hash).toBe("#agent-grace");
+    await expect.element(name).not.toBeInTheDocument();
+  } finally {
+    finish(new Response(null, { status: 204 }));
+  }
+});
