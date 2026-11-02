@@ -1541,3 +1541,91 @@ it.each(["success", "failure"])(
     }
   },
 );
+
+it("shows accessible field errors and submits only after required values and filter paths are corrected", async () => {
+  const definition = routineListFixture();
+  let writes = 0;
+  const requests = vi
+    .spyOn(window, "fetch")
+    .mockImplementation(async (input, init) => {
+      if (String(input) === "/api/routine-preview") return Response.json([]);
+
+      if (init?.method === "POST") {
+        writes += 1;
+        const body = JSON.parse(String(init.body));
+
+        return Response.json({ routine: { ...definition, ...body.routine } });
+      }
+
+      return Response.json({ routines: [], runs: [], events: [] });
+    });
+
+  try {
+    await using _screen = await render(<RoutinesPanel onDismiss={() => {}} />);
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    const name = page.getByRole("textbox", { name: "Name", exact: true });
+    const instruction = page.getByRole("textbox", {
+      name: "Instruction",
+      exact: true,
+    });
+    await expect.element(name).toHaveAttribute("aria-invalid", "false");
+    await page
+      .getByRole("button", { name: "Create routine", exact: true })
+      .click();
+    await expect.element(name).toHaveAttribute("aria-invalid", "true");
+    await expect.element(name).toHaveAccessibleDescription("Enter a name.");
+    await expect.element(instruction).toHaveAttribute("aria-invalid", "true");
+    await expect
+      .element(instruction)
+      .toHaveAccessibleDescription("Enter an instruction.");
+    expect(writes).toBe(0);
+    expect(
+      page.getByRole("button", { name: "Discard edits" }).elements(),
+    ).toHaveLength(0);
+    await name.fill("Digest");
+    await instruction.fill("Summarize changes");
+    await expect.element(name).toHaveAttribute("aria-invalid", "false");
+    await expect.element(instruction).toHaveAttribute("aria-invalid", "false");
+    await page
+      .getByRole("combobox", { name: "Trigger", exact: true })
+      .selectOptions("interval");
+    const minutes = page.getByRole("spinbutton", {
+      name: "Minutes",
+      exact: true,
+    });
+    await minutes.fill("0");
+    await page
+      .getByRole("button", { name: "Create routine", exact: true })
+      .click();
+    await expect
+      .element(minutes)
+      .toHaveAccessibleDescription("Use a whole number from 1 to 525,600.");
+    expect(writes).toBe(0);
+    await page
+      .getByRole("combobox", { name: "Trigger", exact: true })
+      .selectOptions("webhook");
+    await page.getByRole("button", { name: "Add filter", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Create routine", exact: true })
+      .click();
+    const field = page.getByRole("textbox", { name: "Field", exact: true });
+    await expect.element(field).toHaveAttribute("aria-invalid", "true");
+    await expect
+      .element(field)
+      .toHaveAccessibleDescription("Enter a JSON field path.");
+    expect(writes).toBe(0);
+    await field.fill("repo name");
+    await expect.element(field).toHaveAttribute("aria-invalid", "true");
+    await field.fill("repository.name");
+    await page
+      .getByRole("textbox", { name: "Value", exact: true })
+      .fill("paws");
+    await expect.element(field).toHaveAttribute("aria-invalid", "false");
+    await page
+      .getByRole("button", { name: "Create routine", exact: true })
+      .click();
+    await expect.poll(() => writes).toBe(1);
+  } finally {
+    requests.mockRestore();
+  }
+});

@@ -7,7 +7,14 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { Switch } from "../components/ui/switch.tsx";
-import { useEffect, useRef, useState, type MutableRefObject } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useId,
+  type FocusEvent,
+  type MutableRefObject,
+} from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   agentsAtom,
@@ -27,7 +34,10 @@ import { Button } from "../components/ui/button.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Textarea } from "../components/ui/textarea.tsx";
 import { RoutineConditionBuilder } from "./RoutineConditionBuilder.tsx";
+import { routineValidation, type RoutineField } from "./routineValidation.ts";
 import "./routines.css";
+
+class RoutineValidationError extends Error {}
 
 type State = typeof RoutineState.Type;
 type WebhookSecret = { endpoint: string; secret: string };
@@ -515,6 +525,40 @@ function RoutineEditor({
   onSecret(secret: WebhookSecret): void;
 }) {
   const [draft, setDraft] = useState<SaveRoutine>(routine ?? defaultRoutine());
+  const validationId = useId();
+  const [showValidation, setShowValidation] = useState(false);
+  const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set());
+  const validation = routineValidation(draft);
+
+  function fieldError(field: RoutineField) {
+    return showValidation || touched.has(field) ? validation[field] : undefined;
+  }
+
+  function fieldProps(field: RoutineField, label: string) {
+    return {
+      "aria-label": label,
+      "aria-invalid": !!fieldError(field),
+      "aria-describedby": fieldError(field)
+        ? `${validationId}-${field}`
+        : undefined,
+      "data-routine-field": field,
+    };
+  }
+
+  function feedback(field: RoutineField) {
+    const message = fieldError(field);
+
+    return message ? (
+      <span
+        className="routine-field-error"
+        id={`${validationId}-${field}`}
+        role="alert"
+      >
+        {message}
+      </span>
+    ) : null;
+  }
+
   const current = useRef(draft);
   const saved = useRef(routine ? JSON.stringify(draft) : "");
   const senderSecret = useRef("");
@@ -566,6 +610,12 @@ function RoutineEditor({
             break;
           if (!connected) throw new Error("Reconnect to save your changes.");
 
+          if (Object.keys(routineValidation(next)).length) {
+            setShowValidation(true);
+
+            throw new RoutineValidationError("Correct the highlighted fields.");
+          }
+
           if (saved.current !== JSON.stringify(next)) {
             const result = await saveRoutine(
               agentId,
@@ -606,12 +656,16 @@ function RoutineEditor({
           pendingRoutine.current = undefined;
         }
       } catch (cause) {
-        failedCreation.current = !routineId.current;
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Could not save routine. Check filters and schedule.",
-        );
+        if (cause instanceof RoutineValidationError) {
+          setError(null);
+        } else {
+          failedCreation.current = !routineId.current;
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Could not save routine. Check filters and schedule.",
+          );
+        }
 
         throw cause;
       } finally {
@@ -684,7 +738,11 @@ function RoutineEditor({
       change({ trigger: { ...trigger, filters: next } });
   }
 
-  function blur() {
+  function blur(event?: FocusEvent<HTMLElement>) {
+    const field = event?.currentTarget.dataset.routineField;
+
+    if (field) setTouched((current) => new Set([...current, field]));
+
     if (routineId.current) void save().catch(() => {});
   }
 
@@ -779,9 +837,12 @@ function RoutineEditor({
 
   return (
     <div className="routine-editor">
-      {error && (
+      {(error ||
+        (routineId.current &&
+          showValidation &&
+          Object.keys(validation).length > 0)) && (
         <>
-          <p role="alert">{error}</p>
+          {error && <p role="alert">{error}</p>}
           <Button onClick={() => void discard()}>Discard edits</Button>
         </>
       )}
@@ -789,20 +850,24 @@ function RoutineEditor({
         <label className="settings-row">
           Name
           <Input
+            {...fieldProps("name", "Name")}
             value={draft.name}
             maxLength={80}
             onChange={(event) => change({ name: event.target.value })}
             onBlur={blur}
           />
+          {feedback("name")}
         </label>
         <label className="settings-row">
           Instruction
           <Textarea
+            {...fieldProps("instruction", "Instruction")}
             value={draft.instruction}
             maxLength={32000}
             onChange={(event) => change({ instruction: event.target.value })}
             onBlur={blur}
           />
+          {feedback("instruction")}
         </label>
         <label className="settings-row routine-enabled-row">
           Enabled
@@ -887,6 +952,7 @@ function RoutineEditor({
               <label className="settings-row">
                 Cron
                 <Input
+                  {...fieldProps("expression", "Cron")}
                   value={draft.trigger.expression}
                   onChange={(event) => {
                     if (draft.trigger.kind === "cron")
@@ -899,6 +965,7 @@ function RoutineEditor({
                   }}
                   onBlur={blur}
                 />
+                {feedback("expression")}
               </label>
             ) : (
               <>
@@ -965,6 +1032,7 @@ function RoutineEditor({
             <label className="settings-row">
               Timezone
               <Input
+                {...fieldProps("timezone", "Timezone")}
                 value={draft.trigger.timezone}
                 list="routine-timezones"
                 onChange={(event) => {
@@ -978,6 +1046,7 @@ function RoutineEditor({
                 }}
                 onBlur={blur}
               />
+              {feedback("timezone")}
               <datalist id="routine-timezones">
                 {Intl.supportedValuesOf("timeZone").map((timezone) => (
                   <option key={timezone} value={timezone} />
@@ -992,6 +1061,7 @@ function RoutineEditor({
             <Input
               type="number"
               min={1}
+              {...fieldProps("minutes", "Minutes")}
               value={draft.trigger.minutes}
               onChange={(event) =>
                 change({
@@ -1003,6 +1073,7 @@ function RoutineEditor({
               }
               onBlur={blur}
             />
+            {feedback("minutes")}
           </label>
         )}
         {draft.trigger.kind === "once" && (
@@ -1010,6 +1081,7 @@ function RoutineEditor({
             Date and time
             <Input
               type="datetime-local"
+              {...fieldProps("at", "Date and time")}
               value={localDateTime(draft.trigger.at)}
               onChange={(event) =>
                 change({
@@ -1023,6 +1095,7 @@ function RoutineEditor({
               }
               onBlur={blur}
             />
+            {feedback("at")}
           </label>
         )}
         {routine && draft.trigger.kind === "webhook" && (
@@ -1050,7 +1123,9 @@ function RoutineEditor({
               filters={filters}
               onChange={changeFilters}
               onCommit={blur}
+              showErrors={showValidation}
             />
+            {feedback("filters")}
           </div>
         )}
       </div>
@@ -1078,12 +1153,14 @@ function RoutineEditor({
               type="number"
               min={1}
               max={1440}
+              {...fieldProps("timeoutMinutes", "Timeout (minutes)")}
               value={draft.timeoutMinutes}
               onChange={(event) =>
                 change({ timeoutMinutes: Number(event.target.value) })
               }
               onBlur={blur}
             />
+            {feedback("timeoutMinutes")}
           </label>
         </div>
       </details>

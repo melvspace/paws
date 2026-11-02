@@ -1,3 +1,5 @@
+import { useId, useState } from "react";
+import { validRoutineFilterPath } from "./routineValidation.ts";
 import { Select } from "@base-ui/react/select";
 import type { RoutineFilterGroup } from "@paws/contracts";
 import {
@@ -28,16 +30,38 @@ const operators = [
   { name: "exists", value: "exists", label: "exists", arity: "unary" as const },
 ];
 
-function FieldEditor({ value, handleOnChange, disabled }: FieldSelectorProps) {
+function FieldEditor({
+  value,
+  handleOnChange,
+  disabled,
+  context,
+}: FieldSelectorProps) {
+  const id = useId();
+  const [touched, setTouched] = useState(false);
+  const invalid =
+    (touched || context?.showErrors === true) &&
+    !validRoutineFilterPath(value ?? "");
+
   return (
     <label className="routine-condition-path">
       <span>Field</span>
       <Input
         className="routine-condition-field"
+        aria-label="Field"
+        aria-invalid={invalid}
+        aria-describedby={invalid ? id : undefined}
+        onBlur={() => setTouched(true)}
         value={value}
         disabled={disabled}
         onChange={(event) => handleOnChange(event.target.value)}
       />
+      {invalid && (
+        <span className="routine-field-error" id={id} role="alert">
+          {value
+            ? "Use 1–200 letters, numbers, dots, underscores, or hyphens."
+            : "Enter a JSON field path."}
+        </span>
+      )}
     </label>
   );
 }
@@ -257,10 +281,12 @@ export function RoutineConditionBuilder({
   filters,
   onChange,
   onCommit,
+  showErrors = false,
 }: {
   filters: RoutineFilterGroup;
   onChange: (filters: RoutineFilterGroup) => void;
   onCommit: () => void;
+  showErrors?: boolean;
 }) {
   return (
     <div className="routine-condition-builder" onBlur={onCommit}>
@@ -269,6 +295,7 @@ export function RoutineConditionBuilder({
         fields={fields}
         operators={operators}
         controlElements={controls}
+        context={{ showErrors }}
         onAddRule={(rule) => ({ ...rule, field: "" })}
         getDefaultOperator="equals"
         getDefaultValue={() => ""}
