@@ -902,8 +902,6 @@ export function makeChatService(
             );
           };
 
-          if (!options.table) startTimeout();
-
           let silent = false;
           let toolCount = 0;
           const upsert = (

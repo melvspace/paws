@@ -394,6 +394,7 @@ function RoutineEditor({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const filters = draft.trigger.kind === "webhook" ? draft.trigger.filters : [];
+  const pendingRoutine = useRef<Routine | undefined>(undefined);
   const pendingWebhook =
     useRef<Awaited<ReturnType<typeof saveRoutine>>["webhook"]>(undefined);
   const [customSchedule, setCustomSchedule] = useState(
@@ -417,20 +418,19 @@ function RoutineEditor({
       setPending(true);
 
       try {
-        let result: Awaited<ReturnType<typeof saveRoutine>> | undefined;
-
         do {
           const next = current.current;
 
-          if (saved.current === JSON.stringify(next)) return;
+          if (saved.current === JSON.stringify(next)) break;
           if (!connected) throw new Error("Reconnect to save your changes.");
 
-          result = await saveRoutine(
+          const result = await saveRoutine(
             agentId,
             next,
             routineId.current,
             version.current,
           );
+          pendingRoutine.current = result.routine;
           routineId.current = result.routine.id;
           version.current = result.routine.revision;
           pendingWebhook.current =
@@ -440,8 +440,9 @@ function RoutineEditor({
           saved.current = JSON.stringify(next);
         } while (saved.current !== JSON.stringify(current.current));
 
-        if (result) {
-          onSaved(result.routine, pendingWebhook.current);
+        if (pendingRoutine.current) {
+          onSaved(pendingRoutine.current, pendingWebhook.current);
+          pendingRoutine.current = undefined;
           pendingWebhook.current = undefined;
         }
       } catch (cause) {

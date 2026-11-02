@@ -285,6 +285,7 @@ it.each([
   "instruction",
   "filters",
   "retry",
+  "revert retry",
   "dismissal",
   "navigation",
   "failed dismissal",
@@ -333,7 +334,9 @@ it.each([
 
         if (init.method === "POST") await pending;
         if (
-          (scenario === "retry" || scenario === "failed dismissal") &&
+          (scenario === "retry" ||
+            scenario === "revert retry" ||
+            scenario === "failed dismissal") &&
           writes.length === 2
         )
           return Response.json({ error: "Follow-up failed" }, { status: 500 });
@@ -424,15 +427,24 @@ it.each([
 
     release();
     await expect.poll(() => writes.length).toBe(2);
-    if (scenario === "retry" || scenario === "failed dismissal") {
+    if (
+      scenario === "retry" ||
+      scenario === "revert retry" ||
+      scenario === "failed dismissal"
+    ) {
       await expect
         .element(page.getByRole("alert"))
         .toHaveTextContent("Follow-up failed");
       expect(dismiss).not.toHaveBeenCalled();
-      await page
-        .getByRole("button", { name: "Create routine", exact: true })
-        .click();
-      await expect.poll(() => writes.length).toBe(3);
+      if (scenario === "revert retry") {
+        await instruction.fill("Original instruction");
+        await page.getByRole("textbox", { name: "Name", exact: true }).click();
+      } else {
+        await page
+          .getByRole("button", { name: "Create routine", exact: true })
+          .click();
+        await expect.poll(() => writes.length).toBe(3);
+      }
       await expect
         .element(
           page.getByRole("textbox", { name: "Signing secret", exact: true }),
@@ -467,7 +479,13 @@ it.each([
         .element(page.getByRole("textbox", { name: "Value", exact: true }))
         .toHaveValue("updated");
     } else {
-      await expect.element(instruction).toHaveValue("Edited during creation");
+      await expect
+        .element(instruction)
+        .toHaveValue(
+          scenario === "revert retry"
+            ? "Original instruction"
+            : "Edited during creation",
+        );
     }
   } finally {
     release();

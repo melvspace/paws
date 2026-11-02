@@ -50,6 +50,7 @@ async function setup(
   run: RunChatTurn = async (turn) => {
     turn.onText("reply", "Done", true);
   },
+  mainTimeoutMs = 15 * 60000,
 ) {
   await mkdir("/tmp/codex", { recursive: true });
   const root = await mkdtemp("/tmp/codex/paws-routines-");
@@ -57,7 +58,13 @@ async function setup(
   const agent = await Effect.runPromise(agents.create({ name: "Ada" }));
   const other = await Effect.runPromise(agents.create({ name: "Grace" }));
   const runner = serializeAgentExecution(run);
-  const main = makeChatService(root, () => [provider], runner);
+  const main = makeChatService(
+    root,
+    () => [provider],
+    runner,
+    () => {},
+    { timeoutMs: mainTimeoutMs },
+  );
   await Effect.runPromise(
     main.send(agent.id, { requestId: "setup", text: "Hello", selection }),
   );
@@ -621,4 +628,54 @@ it("clears a previous failure after successful continuation", async () => {
     .poll(() => fixture.service.getRun(run.id).status)
     .toBe("succeeded");
   expect(fixture.service.getRun(run.id).error).toBeUndefined();
+});
+
+it("starts main-chat timeouts after acquiring the routine execution slot", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const calls: string[] = [];
+  await using fixture = await setup(async (turn) => {
+    calls.push(turn.text);
+
+    if (turn.text.includes("Paws routine")) await held;
+    else if (turn.text === "Queued main") {
+      await new Promise<void>((resolve) =>
+        turn.signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      turn.signal.throwIfAborted();
+    }
+  }, 30);
+
+  try {
+    const routine = fixture.service.save(fixture.agent.id, definition());
+    const run = fixture.service.enqueue(routine.id, "manual");
+    await fixture.service.tick();
+    await expect
+      .poll(() => calls.some((text) => text.includes("Paws routine")))
+      .toBe(true);
+    await Effect.runPromise(
+      fixture.main.send(fixture.agent.id, {
+        requestId: "queued-main",
+        text: "Queued main",
+        selection,
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(calls).not.toContain("Queued main");
+    expect(fixture.main.get(fixture.agent.id).status).toBe("running");
+    expect(fixture.main.get(fixture.agent.id).error).toBeNull();
+    release();
+    await expect.poll(() => calls.includes("Queued main")).toBe(true);
+    await expect
+      .poll(() => fixture.main.get(fixture.agent.id).status)
+      .toBe("error");
+    expect(fixture.main.get(fixture.agent.id).error).toContain("timed out");
+    await expect
+      .poll(() => fixture.service.getRun(run.id).status)
+      .toBe("succeeded");
+  } finally {
+    release();
+  }
 });
