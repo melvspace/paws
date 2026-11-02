@@ -708,6 +708,143 @@ it.each(["trigger", "deletion"])(
   },
 );
 
+it.each(["retry", "discard"])(
+  "retains failed initial creation until explicit %s",
+  async (action) => {
+    const definition = routineListFixture();
+    let writes = 0;
+    const requests = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async (input, init) => {
+        if (String(input) === "/api/routine-preview") return Response.json([]);
+
+        if (init?.method === "POST") {
+          writes++;
+
+          if (writes === 1)
+            return Response.json(
+              { error: "Creation failed." },
+              { status: 500 },
+            );
+
+          const body = JSON.parse(String(init.body));
+
+          return Response.json({ routine: { ...definition, ...body.routine } });
+        }
+
+        return Response.json({ routines: [], runs: [], events: [] });
+      });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const dismiss = vi.fn();
+
+    try {
+      await using _screen = await render(<RoutinesPanel onDismiss={dismiss} />);
+      await page.getByRole("button", { name: "New", exact: true }).click();
+      await page
+        .getByRole("textbox", { name: "Name", exact: true })
+        .fill("Digest");
+      const instruction = page.getByRole("textbox", {
+        name: "Instruction",
+        exact: true,
+      });
+      await instruction.fill("Keep this draft");
+      await page
+        .getByRole("button", { name: "Create routine", exact: true })
+        .click();
+      await expect
+        .element(page.getByRole("alert"))
+        .toHaveTextContent("Creation failed.");
+      await page
+        .getByRole("button", { name: "Close settings", exact: true })
+        .click();
+      expect(dismiss).not.toHaveBeenCalled();
+      await instruction.fill("Keep the corrected draft");
+      await page.getByRole("button", { name: "Back to routines" }).click();
+      await expect.element(instruction).toHaveValue("Keep the corrected draft");
+      await expect
+        .element(page.getByRole("alert"))
+        .toHaveTextContent(
+          "Create the routine or discard edits before leaving.",
+        );
+      expect(writes).toBe(1);
+
+      if (action === "retry") {
+        await page
+          .getByRole("button", { name: "Create routine", exact: true })
+          .click();
+        await expect.poll(() => writes).toBe(2);
+        await expect
+          .element(instruction)
+          .toHaveValue("Keep the corrected draft");
+      } else {
+        await page.getByRole("button", { name: "Discard edits" }).click();
+        await expect.element(instruction).not.toBeInTheDocument();
+        expect(writes).toBe(1);
+      }
+
+      await page
+        .getByRole("button", { name: "Close settings", exact: true })
+        .click();
+      await expect.poll(() => dismiss.mock.calls.length).toBe(1);
+    } finally {
+      confirm.mockRestore();
+      requests.mockRestore();
+    }
+  },
+);
+
+it("retains a failed toggle error across successful polling until retry succeeds", async () => {
+  let routine = routineListFixture();
+  let reads = 0;
+  let writes = 0;
+  const requests = vi
+    .spyOn(window, "fetch")
+    .mockImplementation(async (_input, init) => {
+      if (init?.method === "PATCH") {
+        writes++;
+
+        if (writes === 1)
+          return Response.json({ error: "Pause failed." }, { status: 500 });
+
+        const body = JSON.parse(String(init.body));
+        routine = {
+          ...routine,
+          ...body.routine,
+          revision: routine.revision + 1,
+        };
+
+        return Response.json({ routine });
+      }
+
+      reads++;
+
+      return Response.json({ routines: [routine], runs: [], events: [] });
+    });
+
+  try {
+    await using _screen = await render(<RoutinesPanel onDismiss={() => {}} />);
+    const toggle = page.getByRole("switch", { name: "Enable Digest" });
+    await toggle.click();
+    await expect
+      .element(page.getByRole("alert"))
+      .toHaveTextContent("Error: Pause failed.");
+    await expect.poll(() => reads, { timeout: 4000 }).toBeGreaterThanOrEqual(2);
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+    await expect
+      .element(page.getByRole("alert"))
+      .toHaveTextContent("Error: Pause failed.");
+    await expect.element(toggle).toBeChecked();
+    await toggle.click();
+    await expect.poll(() => writes).toBe(2);
+    await expect.element(toggle).not.toBeChecked();
+    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    requests.mockRestore();
+  }
+});
+
 it("keeps a failed routine edit visible when dismissal cannot save it", async () => {
   appAtomRegistry.set(agentsAtom, {
     connected: true,

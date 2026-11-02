@@ -120,7 +120,10 @@ export function RoutinesSettings({
 }) {
   const { snapshot, connected } = useAtomValue(agentsAtom);
   const [state, setState] = useState<State>(empty);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [mutationErrors, setMutationErrors] = useState<
+    ReadonlyMap<string, string>
+  >(() => new Map());
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Routine | "new" | null>(null);
   const [selectedRun, setSelectedRun] = useState<RoutineRun | null>(null);
@@ -139,6 +142,15 @@ export function RoutinesSettings({
     unacknowledgedSecret.current = webhook;
     setSecret(webhook);
     setSecretBlocked(false);
+  }
+
+  function clearMutationError(id: string) {
+    setMutationErrors((current) => {
+      const next = new Map(current);
+      next.delete(id);
+
+      return next;
+    });
   }
 
   function acceptSaved(routine: Routine) {
@@ -165,6 +177,7 @@ export function RoutinesSettings({
     )
       .then(({ routine: saved }) => {
         acceptSaved(saved);
+        clearMutationError(saved.id);
 
         return saved;
       })
@@ -173,7 +186,11 @@ export function RoutinesSettings({
         setSavingIds((current) => current.filter((id) => id !== routine.id));
       });
     listSaves.current.set(routine.id, task);
-    void task.catch((cause) => setError(String(cause)));
+    void task.catch((cause) =>
+      setMutationErrors((current) =>
+        new Map(current).set(routine.id, String(cause)),
+      ),
+    );
   }
 
   useEffect(() => {
@@ -215,7 +232,7 @@ export function RoutinesSettings({
                     }),
             };
           });
-          setError(null);
+          setLoadError(null);
 
           if (linked) {
             setSelectedRun(linked);
@@ -224,7 +241,7 @@ export function RoutinesSettings({
         }
       } catch (cause) {
         if (active)
-          setError(
+          setLoadError(
             cause instanceof Error ? cause.message : "Could not load routines.",
           );
       } finally {
@@ -325,7 +342,12 @@ export function RoutinesSettings({
       </nav>
       <div className="routine-agent-panel">
         {!connected && <p role="status">Reconnecting…</p>}
-        {error && <p role="alert">{error}</p>}
+        {loadError && <p role="alert">{loadError}</p>}
+        {[...mutationErrors].map(([id, message]) => (
+          <p key={id} role="alert">
+            {message}
+          </p>
+        ))}
         {secret && (
           <div className="settings-group routine-secret">
             <p>Copy this signing secret now. It is shown once.</p>
@@ -373,6 +395,7 @@ export function RoutinesSettings({
             onClose={() => void select(null)}
             onDeleted={(id) => {
               mutation.current++;
+              clearMutationError(id);
               setState((current) => ({
                 ...current,
                 routines: current.routines.filter(
@@ -532,6 +555,7 @@ function RoutineEditor({
   const saved = useRef(routine ? JSON.stringify(draft) : "");
   const version = useRef(routine?.revision);
   const routineId = useRef(routine?.id);
+  const failedCreation = useRef(false);
   const inFlight = useRef<Promise<void> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -572,6 +596,7 @@ function RoutineEditor({
           );
           pendingRoutine.current = result.routine;
           routineId.current = result.routine.id;
+          failedCreation.current = false;
           version.current = result.routine.revision;
           saved.current = JSON.stringify(next);
           onPersisted(result.routine);
@@ -584,6 +609,7 @@ function RoutineEditor({
           pendingRoutine.current = undefined;
         }
       } catch (cause) {
+        failedCreation.current = !routineId.current;
         setError(
           cause instanceof Error
             ? cause.message
@@ -608,7 +634,15 @@ function RoutineEditor({
   useEffect(() => {
     const persist = async () => {
       if (inFlight.current) await inFlight.current;
-      if (routineId.current) await saveRef.current();
+
+      if (routineId.current) {
+        await saveRef.current();
+      } else if (failedCreation.current) {
+        const message = "Create the routine or discard edits before leaving.";
+        setError((current) => current ?? message);
+
+        throw new Error(message);
+      }
     };
     flush.current = persist;
 
