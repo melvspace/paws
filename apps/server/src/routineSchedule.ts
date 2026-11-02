@@ -1,5 +1,9 @@
 import { CronExpressionParser } from "cron-parser";
-import type { RoutineTrigger } from "@paws/contracts";
+import type {
+  RoutineFilter,
+  RoutineFilterGroup,
+  RoutineTrigger,
+} from "@paws/contracts";
 
 export function validateTrigger(trigger: RoutineTrigger) {
   if (trigger.kind === "once" && !Number.isFinite(Date.parse(trigger.at)))
@@ -27,16 +31,34 @@ export function validateTrigger(trigger: RoutineTrigger) {
     }).next();
   }
 
-  if (
-    trigger.kind === "webhook" &&
-    (trigger.filters.length > 20 ||
-      trigger.filters.some(
-        (filter) => !/^[a-zA-Z0-9_.-]{1,200}$/.test(filter.path),
-      ))
-  )
-    throw new Error(
-      "Use up to 20 JSON field filters with dot-separated paths.",
-    );
+  if (trigger.kind === "webhook") {
+    let filters = 0;
+    let groups = 0;
+
+    function validateGroup(group: RoutineFilterGroup, depth: number) {
+      groups += 1;
+
+      if (depth > 4 || groups > 20)
+        throw new Error(
+          "Use up to 20 filter groups nested at most five levels deep.",
+        );
+
+      for (const rule of group.rules) {
+        if ("rules" in rule) {
+          validateGroup(rule, depth + 1);
+        } else {
+          filters += 1;
+
+          if (filters > 20 || !/^[a-zA-Z0-9_.-]{1,200}$/.test(rule.path))
+            throw new Error(
+              "Use up to 20 JSON field filters with dot-separated paths.",
+            );
+        }
+      }
+    }
+
+    validateGroup(trigger.filters, 0);
+  }
 }
 
 export function nextRoutineTime(
@@ -80,7 +102,6 @@ export function nextRoutineTime(
 export function matchesRoutineEvent(
   trigger: Extract<RoutineTrigger, { kind: "webhook" }>,
   payload: unknown,
-  eventType?: string,
 ) {
   const field = (path: string) =>
     path
@@ -93,10 +114,12 @@ export function matchesRoutineEvent(
         payload,
       );
 
-  if (trigger.eventType && (eventType ?? field("type")) !== trigger.eventType)
-    return false;
+  function matches(filter: RoutineFilter | RoutineFilterGroup): boolean {
+    if ("rules" in filter)
+      return filter.combinator === "and"
+        ? filter.rules.every(matches)
+        : filter.rules.some(matches);
 
-  return trigger.filters.every((filter) => {
     const value = field(filter.path);
 
     if (filter.operator === "exists") return value !== undefined;
@@ -107,7 +130,9 @@ export function matchesRoutineEvent(
         .includes(String(value));
 
     return String(value) === filter.value;
-  });
+  }
+
+  return matches(trigger.filters);
 }
 
 export function advanceRoutineTime(

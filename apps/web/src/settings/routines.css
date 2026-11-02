@@ -280,36 +280,159 @@
   }
 }
 
-.routine-filter-list {
-  display: grid;
-  gap: 12px;
+.routine-condition-builder {
   min-width: 0;
-}
-.routine-filter-list > .ui-button {
-  justify-self: start;
-}
-.routine-filter {
-  display: grid;
-  grid-template-columns: 1fr 1fr auto;
-  gap: 8px;
-  align-items: end;
+  container-type: inline-size;
   line-height: 20px;
 }
-.routine-filter label {
-  display: grid;
-  gap: 4px;
+.routine-condition-builder .ruleGroup-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+.routine-condition-match {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-foreground);
   font-size: 11px;
+  font-weight: 500;
+  margin-right: auto;
+}
+.routine-condition-match .ui-button {
+  min-height: 26px;
+  padding: 3px 6px;
+  font-size: 10px;
+}
+.routine-condition-match .ui-button[aria-pressed="true"] {
+  color: var(--foreground);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.routine-condition-builder .routine-condition-remove-group {
+  padding: 4px;
   color: var(--muted-foreground);
 }
-.routine-filter label:first-child {
-  grid-column: 1 / -1;
-}
-.routine-filter input {
-  height: 34px;
-  padding: 6px 10px;
-  font-size: 13px;
-}
-.routine-filter + .routine-filter {
+.routine-condition-builder .ruleGroup-body > .ruleGroup {
+  padding-top: 8px;
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+}
+.routine-condition-builder .ruleGroup-body:not(:empty) {
+  display: grid;
+  gap: 8px;
+  margin-left: 6px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+.routine-condition-builder .rule {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) 28px;
+  align-items: start;
+  gap: 6px;
+  min-width: 0;
+}
+.routine-condition-builder .rule > .routine-condition-operator,
+.routine-condition-builder .rule > .routine-condition-remove {
+  margin-top: 19px;
+}
+.routine-condition-builder label {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 16px;
+}
+.routine-condition-builder input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.routine-condition-field {
+  font-family: var(--font-mono, monospace);
+}
+.routine-condition-operator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--muted);
+  color: var(--foreground);
+  font-size: 11px;
+  cursor: pointer;
+}
+.routine-condition-operator:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.routine-condition-builder .routine-condition-remove {
+  grid-column: 4;
+  padding: 4px;
+  color: var(--muted-foreground);
+}
+.routine-condition-remove:hover {
+  color: light-dark(#b91c1c, #f87171);
+}
+.routine-condition-menu {
+  min-width: 140px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--popover);
+  color: var(--foreground);
+  box-shadow: 0 8px 24px #0003;
+}
+.routine-condition-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  outline: none;
+  font-size: 12px;
+  cursor: pointer;
+}
+.routine-condition-option[data-highlighted] {
+  background: var(--accent);
+}
+@container (max-width: 380px) {
+  .routine-condition-builder .rule {
+    grid-template-columns: auto minmax(0, 1fr) 28px;
+  }
+  .routine-condition-path {
+    grid-column: 1 / -1;
+  }
+  .routine-condition-builder .routine-condition-remove {
+    grid-column: 3;
+  }
+}
+
+.routines-settings .routine-field-error {
+  color: light-dark(#b91c1c, #f87171);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 18px;
+}
+.routine-fields .settings-row > .routine-field-error {
+  grid-column: 2;
+  margin-top: -10px;
+}
+.routines-settings [aria-invalid="true"] {
+  border-color: light-dark(#b91c1c, #f87171);
+}
+@media (max-width: 640px) {
+  .routine-fields .settings-row > .routine-field-error {
+    grid-column: 1;
+    margin-top: 0;
+  }
 }

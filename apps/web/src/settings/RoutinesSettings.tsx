@@ -7,7 +7,14 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { Switch } from "../components/ui/switch.tsx";
-import { useEffect, useRef, useState, type MutableRefObject } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useId,
+  type FocusEvent,
+  type MutableRefObject,
+} from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   agentsAtom,
@@ -21,12 +28,16 @@ import {
   type Routine,
   type SaveRoutine,
   RoutineState,
-  type RoutineFilter,
+  type RoutineFilterGroup,
 } from "@paws/contracts";
 import { Button } from "../components/ui/button.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Textarea } from "../components/ui/textarea.tsx";
+import { RoutineConditionBuilder } from "./RoutineConditionBuilder.tsx";
+import { routineValidation, type RoutineField } from "./routineValidation.ts";
 import "./routines.css";
+
+class RoutineValidationError extends Error {}
 
 type State = typeof RoutineState.Type;
 type WebhookSecret = { endpoint: string; secret: string };
@@ -82,8 +93,7 @@ function scheduleLabel(trigger: SaveRoutine["trigger"]) {
   if (trigger.kind === "interval")
     return `Every ${trigger.minutes} ${trigger.minutes === 1 ? "minute" : "minutes"}`;
   if (trigger.kind === "once") return formatRoutineTime(trigger.at);
-  if (trigger.kind === "webhook")
-    return trigger.eventType ? `Webhook · ${trigger.eventType}` : "Webhook";
+  if (trigger.kind === "webhook") return "Webhook";
 
   const presets: Record<string, string> = {
     "0 9 * * *": "Daily at 09:00",
@@ -515,6 +525,40 @@ function RoutineEditor({
   onSecret(secret: WebhookSecret): void;
 }) {
   const [draft, setDraft] = useState<SaveRoutine>(routine ?? defaultRoutine());
+  const validationId = useId();
+  const [showValidation, setShowValidation] = useState(false);
+  const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set());
+  const validation = routineValidation(draft);
+
+  function fieldError(field: RoutineField) {
+    return showValidation || touched.has(field) ? validation[field] : undefined;
+  }
+
+  function fieldProps(field: RoutineField, label: string) {
+    return {
+      "aria-label": label,
+      "aria-invalid": !!fieldError(field),
+      "aria-describedby": fieldError(field)
+        ? `${validationId}-${field}`
+        : undefined,
+      "data-routine-field": field,
+    };
+  }
+
+  function feedback(field: RoutineField) {
+    const message = fieldError(field);
+
+    return message ? (
+      <span
+        className="routine-field-error"
+        id={`${validationId}-${field}`}
+        role="alert"
+      >
+        {message}
+      </span>
+    ) : null;
+  }
+
   const current = useRef(draft);
   const saved = useRef(routine ? JSON.stringify(draft) : "");
   const senderSecret = useRef("");
@@ -525,7 +569,10 @@ function RoutineEditor({
   const inFlight = useRef<Promise<void> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const filters = draft.trigger.kind === "webhook" ? draft.trigger.filters : [];
+  const filters: RoutineFilterGroup =
+    draft.trigger.kind === "webhook"
+      ? draft.trigger.filters
+      : { combinator: "and", rules: [] };
   const pendingRoutine = useRef<Routine | undefined>(undefined);
   const [customSchedule, setCustomSchedule] = useState(
     draft.trigger.kind === "cron" && !calendarParts(draft.trigger.expression),
@@ -562,6 +609,12 @@ function RoutineEditor({
           if (saved.current === JSON.stringify(next) && !senderSecret.current)
             break;
           if (!connected) throw new Error("Reconnect to save your changes.");
+
+          if (Object.keys(routineValidation(next)).length) {
+            setShowValidation(true);
+
+            throw new RoutineValidationError("Correct the highlighted fields.");
+          }
 
           if (saved.current !== JSON.stringify(next)) {
             const result = await saveRoutine(
@@ -603,12 +656,16 @@ function RoutineEditor({
           pendingRoutine.current = undefined;
         }
       } catch (cause) {
-        failedCreation.current = !routineId.current;
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Could not save routine. Check filters and schedule.",
-        );
+        if (cause instanceof RoutineValidationError) {
+          setError(null);
+        } else {
+          failedCreation.current = !routineId.current;
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Could not save routine. Check filters and schedule.",
+          );
+        }
 
         throw cause;
       } finally {
@@ -674,14 +731,18 @@ function RoutineEditor({
     };
   }, [draft.trigger]);
 
-  function changeFilters(next: readonly RoutineFilter[]) {
+  function changeFilters(next: RoutineFilterGroup) {
     const trigger = current.current.trigger;
 
     if (trigger.kind === "webhook")
       change({ trigger: { ...trigger, filters: next } });
   }
 
-  function blur() {
+  function blur(event?: FocusEvent<HTMLElement>) {
+    const field = event?.currentTarget.dataset.routineField;
+
+    if (field) setTouched((current) => new Set([...current, field]));
+
     if (routineId.current) void save().catch(() => {});
   }
 
@@ -776,9 +837,12 @@ function RoutineEditor({
 
   return (
     <div className="routine-editor">
-      {error && (
+      {(error ||
+        (routineId.current &&
+          showValidation &&
+          Object.keys(validation).length > 0)) && (
         <>
-          <p role="alert">{error}</p>
+          {error && <p role="alert">{error}</p>}
           <Button onClick={() => void discard()}>Discard edits</Button>
         </>
       )}
@@ -786,20 +850,24 @@ function RoutineEditor({
         <label className="settings-row">
           Name
           <Input
+            {...fieldProps("name", "Name")}
             value={draft.name}
             maxLength={80}
             onChange={(event) => change({ name: event.target.value })}
             onBlur={blur}
           />
+          {feedback("name")}
         </label>
         <label className="settings-row">
           Instruction
           <Textarea
+            {...fieldProps("instruction", "Instruction")}
             value={draft.instruction}
             maxLength={32000}
             onChange={(event) => change({ instruction: event.target.value })}
             onBlur={blur}
           />
+          {feedback("instruction")}
         </label>
         <label className="settings-row routine-enabled-row">
           Enabled
@@ -829,7 +897,7 @@ function RoutineEditor({
                     : kind === "interval"
                       ? { kind, minutes: 60 }
                       : kind === "webhook"
-                        ? { kind, filters: [] }
+                        ? { kind, filters: { combinator: "and", rules: [] } }
                         : {
                             kind: "cron",
                             expression: "0 9 * * 1-5",
@@ -884,6 +952,7 @@ function RoutineEditor({
               <label className="settings-row">
                 Cron
                 <Input
+                  {...fieldProps("expression", "Cron")}
                   value={draft.trigger.expression}
                   onChange={(event) => {
                     if (draft.trigger.kind === "cron")
@@ -896,6 +965,7 @@ function RoutineEditor({
                   }}
                   onBlur={blur}
                 />
+                {feedback("expression")}
               </label>
             ) : (
               <>
@@ -962,6 +1032,7 @@ function RoutineEditor({
             <label className="settings-row">
               Timezone
               <Input
+                {...fieldProps("timezone", "Timezone")}
                 value={draft.trigger.timezone}
                 list="routine-timezones"
                 onChange={(event) => {
@@ -975,6 +1046,7 @@ function RoutineEditor({
                 }}
                 onBlur={blur}
               />
+              {feedback("timezone")}
               <datalist id="routine-timezones">
                 {Intl.supportedValuesOf("timeZone").map((timezone) => (
                   <option key={timezone} value={timezone} />
@@ -989,6 +1061,7 @@ function RoutineEditor({
             <Input
               type="number"
               min={1}
+              {...fieldProps("minutes", "Minutes")}
               value={draft.trigger.minutes}
               onChange={(event) =>
                 change({
@@ -1000,6 +1073,7 @@ function RoutineEditor({
               }
               onBlur={blur}
             />
+            {feedback("minutes")}
           </label>
         )}
         {draft.trigger.kind === "once" && (
@@ -1007,6 +1081,7 @@ function RoutineEditor({
             Date and time
             <Input
               type="datetime-local"
+              {...fieldProps("at", "Date and time")}
               value={localDateTime(draft.trigger.at)}
               onChange={(event) =>
                 change({
@@ -1020,6 +1095,7 @@ function RoutineEditor({
               }
               onBlur={blur}
             />
+            {feedback("at")}
           </label>
         )}
         {routine && draft.trigger.kind === "webhook" && (
@@ -1041,117 +1117,16 @@ function RoutineEditor({
           </label>
         )}
         {draft.trigger.kind === "webhook" && (
-          <>
-            <label className="settings-row">
-              Event type
-              <Input
-                value={draft.trigger.eventType ?? ""}
-                onChange={(event) => {
-                  if (draft.trigger.kind === "webhook")
-                    change({
-                      trigger: {
-                        ...draft.trigger,
-                        eventType: event.target.value || undefined,
-                      },
-                    });
-                }}
-                onBlur={blur}
-              />
-            </label>
-            <div className="settings-row routine-filter-row">
-              <span>Filters</span>
-              <div className="routine-filter-list">
-                {filters.map((filter, index) => (
-                  <div className="routine-filter" key={index}>
-                    <label>
-                      Field
-                      <Input
-                        value={filter.path}
-                        onChange={(event) =>
-                          changeFilters(
-                            filters.map((item, position) =>
-                              position === index
-                                ? { ...item, path: event.target.value }
-                                : item,
-                            ),
-                          )
-                        }
-                        onBlur={blur}
-                      />
-                    </label>
-                    <label>
-                      Condition
-                      <select
-                        value={filter.operator}
-                        onChange={(event) => {
-                          const operator =
-                            event.target.value === "exists"
-                              ? "exists"
-                              : event.target.value === "in"
-                                ? "in"
-                                : "equals";
-                          changeFilters(
-                            filters.map((item, position) =>
-                              position === index ? { ...item, operator } : item,
-                            ),
-                          );
-                          blur();
-                        }}
-                      >
-                        <option value="equals">Equals</option>
-                        <option value="in">Is one of</option>
-                        <option value="exists">Exists</option>
-                      </select>
-                    </label>
-                    {filter.operator !== "exists" && (
-                      <label>
-                        {filter.operator === "in"
-                          ? "Values, comma-separated"
-                          : "Value"}
-                        <Input
-                          value={filter.value ?? ""}
-                          onChange={(event) =>
-                            changeFilters(
-                              filters.map((item, position) =>
-                                position === index
-                                  ? { ...item, value: event.target.value }
-                                  : item,
-                              ),
-                            )
-                          }
-                          onBlur={blur}
-                        />
-                      </label>
-                    )}
-                    <Button
-                      variant="ghost"
-                      aria-label={`Remove filter ${index + 1}`}
-                      onClick={() => {
-                        changeFilters(
-                          filters.filter((_, position) => position !== index),
-                        );
-                        blur();
-                      }}
-                    >
-                      <Trash2Icon size={13} aria-hidden />
-                    </Button>
-                  </div>
-                ))}
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    changeFilters([
-                      ...filters,
-                      { path: "", operator: "equals", value: "" },
-                    ])
-                  }
-                >
-                  <PlusIcon size={13} aria-hidden />
-                  Add filter
-                </Button>
-              </div>
-            </div>
-          </>
+          <div className="settings-row routine-filter-row">
+            <span>Filters</span>
+            <RoutineConditionBuilder
+              filters={filters}
+              onChange={changeFilters}
+              onCommit={blur}
+              showErrors={showValidation}
+            />
+            {feedback("filters")}
+          </div>
         )}
       </div>
       <details className="routine-advanced">
@@ -1178,12 +1153,14 @@ function RoutineEditor({
               type="number"
               min={1}
               max={1440}
+              {...fieldProps("timeoutMinutes", "Timeout (minutes)")}
               value={draft.timeoutMinutes}
               onChange={(event) =>
                 change({ timeoutMinutes: Number(event.target.value) })
               }
               onBlur={blur}
             />
+            {feedback("timeoutMinutes")}
           </label>
         </div>
       </details>
