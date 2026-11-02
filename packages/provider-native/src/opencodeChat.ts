@@ -177,7 +177,11 @@ export async function runOpenCodeTurn(
             { signal },
           );
           await client.session.instructions.entry.put(
-            { sessionID, key: "paws", value: chatInstructions(turn.agentName) },
+            {
+              sessionID,
+              key: "paws",
+              value: chatInstructions(turn.agentName, turn.workspace),
+            },
             { signal },
           );
           const texts = new Map<string, string>();
@@ -366,7 +370,7 @@ export async function runOpenCodeTurn(
                     ...(turn.selection.options.variant
                       ? { variant: turn.selection.options.variant }
                       : {}),
-                    system: chatInstructions(turn.agentName),
+                    system: chatInstructions(turn.agentName, turn.workspace),
                     parts: [{ type: "text", text }],
                   },
                   { signal, throwOnError: true },

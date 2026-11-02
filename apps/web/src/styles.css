@@ -613,3 +613,41 @@ select {
     width: 100%;
   }
 }
+
+.agent-create-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.agent-create-fields > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.agent-create-fields > .agent-sandbox-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.agent-sandbox-switch.ui-switch {
+  width: 44px;
+  height: 26px;
+}
+.agent-sandbox-switch .ui-switch-thumb {
+  width: 20px;
+  height: 20px;
+}
+.agent-sandbox-switch[data-checked] .ui-switch-thumb {
+  transform: translateX(18px);
+}
+.sidebar-team-header {
+  display: flex;
+  align-items: center;
+}
+.sidebar-team-header > .sidebar-team-heading {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar-team-header > .sidebar-icon-button {
+  flex-shrink: 0;
+}

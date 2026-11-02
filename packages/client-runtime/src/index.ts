@@ -102,7 +102,9 @@ export async function updateAgent(id: string, input: UpdateAgent) {
 
   if (!response.ok) {
     throw new Error(
-      "Could not save agent settings. Check your connection and name.",
+      response.status === 409
+        ? "Only idle agents can change environments."
+        : "Could not save agent settings. Check your connection and fields.",
     );
   }
 }
@@ -150,7 +152,11 @@ export async function deleteTeam(id: string) {
   });
 
   if (!response.ok && response.status !== 404)
-    throw new Error("Could not delete team.");
+    throw new Error(
+      response.status === 409
+        ? "Move the team's agents before deleting it."
+        : "Could not delete team.",
+    );
 }
 
 export async function moveAgentTeam(

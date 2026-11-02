@@ -7,19 +7,26 @@ import { AgentAvatar } from "./avatars.ts";
 export const CreateAgent = Schema.Struct({
   name: Schema.String,
   avatar: Schema.optional(AgentAvatar),
-  teamIds: Schema.optional(Schema.Array(Schema.String)),
+  teamId: Schema.optional(Schema.NullOr(Schema.String)),
+  sandbox: Schema.optional(Schema.Boolean),
   memory: Schema.optional(Schema.String),
 });
 export type CreateAgent = typeof CreateAgent.Type;
 
-export const UpdateAgent = CreateAgent;
+export const UpdateAgent = Schema.Struct({
+  name: Schema.String,
+  avatar: Schema.optional(AgentAvatar),
+  memory: Schema.optional(Schema.String),
+  sandbox: Schema.optional(Schema.Boolean),
+});
 export type UpdateAgent = typeof UpdateAgent.Type;
 
 export const Agent = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   avatar: Schema.optional(AgentAvatar),
-  teamIds: Schema.optional(Schema.Array(Schema.String)),
+  teamId: Schema.optional(Schema.NullOr(Schema.String)),
+  sandbox: Schema.optional(Schema.Boolean),
   memory: Schema.optional(Schema.String),
   provider: Schema.Literal("codex"),
   status: Schema.Literal("configured"),

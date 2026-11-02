@@ -73,7 +73,7 @@ it.each([401, 403, 429, 503])(
       if (!team) throw new Error("No team");
 
       const agent = await Effect.runPromise(
-        agents.create({ name: "Ada", teamIds: [team.id] }),
+        agents.create({ name: "Ada", teamId: team.id }),
       );
       const result = teamTool(
         root,
@@ -293,10 +293,10 @@ it("completes browser OAuth, rejects forged callbacks, and shares refreshed cred
     if (!team) throw new Error("No team");
 
     const first = await Effect.runPromise(
-      agents.create({ name: "Ada", teamIds: [team.id] }),
+      agents.create({ name: "Ada", teamId: team.id }),
     );
     const second = await Effect.runPromise(
-      agents.create({ name: "Grace", teamIds: [team.id] }),
+      agents.create({ name: "Grace", teamId: team.id }),
     );
     const outsider = await Effect.runPromise(
       agents.create({ name: "Outsider" }),
@@ -471,7 +471,7 @@ it("never forwards a saved bearer token to a replacement MCP endpoint", async ()
       }),
     );
     const agent = await Effect.runPromise(
-      agents.create({ name: "Ada", teamIds: [team!.id] }),
+      agents.create({ name: "Ada", teamId: team!.id }),
     );
     saveIntegrationSecrets(root, team!.id, "remote", {
       BEARER_TOKEN: "private-fixture-token",

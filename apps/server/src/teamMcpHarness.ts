@@ -61,6 +61,7 @@ export function teamMcpHarness(
           privateRoot,
           teamId,
           config.binaryPath,
+          { sandbox: true, ephemeral: true },
         );
 
         try {
@@ -74,12 +75,7 @@ export function teamMcpHarness(
           );
           const result = await use({
             command: lease.command,
-            args: [
-              ...lease.args.slice(0, lease.args.lastIndexOf("codex")),
-              "codex",
-              ...options,
-              ...args,
-            ],
+            args: [...lease.args.slice(0, -3), ...options, ...args],
             cwd: root,
             signal,
             env: { PATH: process.env.PATH },
@@ -118,7 +114,7 @@ async function redactNativeResult<T>(
 ): Promise<T> {
   if (result === undefined) return result;
 
-  const values = [...Object.values(secrets)];
+  const values = Object.values(secrets);
   const collect = (value: unknown, key = "") => {
     if (typeof value === "string" && /token|secret|verifier/i.test(key))
       values.push(value);

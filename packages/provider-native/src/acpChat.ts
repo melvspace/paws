@@ -22,16 +22,21 @@ import {
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
-export function containerPath(path: string, control: string) {
+export function containerPath(
+  path: string,
+  control: string,
+  workspace = "/workspace",
+  home = "/home/agent",
+) {
   const mapped =
     path === control
-      ? "/workspace"
+      ? workspace
       : path.startsWith(`${control}/`)
-        ? `/workspace/${path.slice(control.length + 1)}`
+        ? `${workspace}/${path.slice(control.length + 1)}`
         : path;
 
   if (
-    !["/workspace", "/home/agent"].some(
+    ![workspace, home].some(
       (root) => mapped === root || mapped.startsWith(`${root}/`),
     ) ||
     mapped.split("/").includes("..") ||
@@ -241,7 +246,7 @@ export async function runAcpTurn(
               prompt: [
                 {
                   type: "text",
-                  text: `${chatInstructions(turn.agentName)}\n\nUse only the Paws MCP tools or client-provided file and terminal operations.\n\n${nativePrompt(turn, await interactionText(turn, runtime))}`,
+                  text: `${chatInstructions(turn.agentName, turn.workspace)}\n\nUse only the Paws MCP tools or client-provided file and terminal operations.\n\n${nativePrompt(turn, await interactionText(turn, runtime))}`,
                 },
               ],
             }),
@@ -263,7 +268,7 @@ export async function runAcpTurn(
 
           return {
             content: await runtime.execute(
-              `cat -- ${quote(containerPath(input.path, launch.cwd))}`,
+              `cat -- ${quote(containerPath(input.path, launch.cwd, turn.workspace, turn.home))}`,
               turn.signal,
             ),
           };
@@ -274,7 +279,7 @@ export async function runAcpTurn(
             .object({ path: z.string(), content: z.string().max(200000) })
             .parse(raw);
           await runtime.execute(
-            `printf %s ${quote(Buffer.from(input.content).toString("base64"))} | base64 -d > ${quote(containerPath(input.path, launch.cwd))}`,
+            `printf %s ${quote(Buffer.from(input.content).toString("base64"))} | base64 -d > ${quote(containerPath(input.path, launch.cwd, turn.workspace, turn.home))}`,
             turn.signal,
           );
 
@@ -299,7 +304,7 @@ export async function runAcpTurn(
           } = { abort, done: Promise.resolve(), output: "" };
           terminal.done = runtime
             .execute(
-              `cd ${quote(containerPath(input.cwd ?? launch.cwd, launch.cwd))} && ${[input.command, ...(input.args ?? [])].map(quote).join(" ")}`,
+              `cd ${quote(containerPath(input.cwd ?? launch.cwd, launch.cwd, turn.workspace, turn.home))} && ${[input.command, ...(input.args ?? [])].map(quote).join(" ")}`,
               AbortSignal.any([turn.signal, abort.signal]),
             )
             .then(

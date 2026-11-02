@@ -27,7 +27,10 @@ export function Dashboard() {
   const mobile = useMobileLayout();
   const [navigationOpen, setNavigationOpen] = useState(false);
   const { snapshot, connected, error } = useAtomValue(agentsAtom);
-  const [dialog, setDialog] = useState<{ agent: Agent | null } | null>(null);
+  const [dialog, setDialog] = useState<{
+    agent: Agent | null;
+    teamId: string | null;
+  } | null>(null);
   const [settingsAgentId, setSettingsAgentId] = useState<string | null>(null);
   const beforeLeave = useRef<(() => Promise<void>) | null>(null);
   const navigating = useRef(false);
@@ -108,8 +111,8 @@ export function Dashboard() {
       teams={snapshot.teams ?? []}
       selectedId={agent?.id ?? null}
       connected={connected}
-      onCreate={() => {
-        void navigate(() => setDialog({ agent: null }));
+      onCreate={(teamId) => {
+        void navigate(() => setDialog({ agent: null, teamId: teamId ?? null }));
       }}
       onSettings={openAgentSettings}
       onAppSettings={() => {
@@ -175,7 +178,7 @@ export function Dashboard() {
                 <h1>{connected ? "No agents yet" : "Connecting…"}</h1>
                 <Button
                   disabled={!connected}
-                  onClick={() => setDialog({ agent: null })}
+                  onClick={() => setDialog({ agent: null, teamId: null })}
                 >
                   <Plus size={18} aria-hidden /> New agent
                 </Button>
@@ -194,6 +197,7 @@ export function Dashboard() {
         {dialog && (
           <AgentDialog
             agent={dialog.agent}
+            initialTeamId={dialog.teamId}
             connected={connected}
             onDismiss={() => setDialog(null)}
           />

@@ -20,7 +20,7 @@ const agents: Agent[] = [
   {
     id: "ada",
     name: "Ada",
-    teamIds: ["project-a"],
+    teamId: "project-a",
     provider: "codex",
     status: "configured",
     createdAt: "2026-11-01",
@@ -104,10 +104,12 @@ it("manages team membership and shared memories from the existing Settings dialo
   await page.getByRole("button", { name: "Project A", exact: true }).click();
   await page.getByRole("tab", { name: "Members", exact: true }).click();
   await page.getByRole("checkbox", { name: "Grace" }).click();
+  expect(requests).toHaveLength(0);
+  await page.getByRole("button", { name: "Move agent", exact: true }).click();
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0]).toEqual({
-    url: "/api/agents/grace",
-    body: { name: "Grace", teamIds: ["project-a"] },
+    url: "/api/agents/grace/move",
+    body: { fromTeamId: null, toTeamId: "project-a" },
   });
   await page.getByRole("tab", { name: "Memories", exact: true }).click();
   await expect
@@ -173,6 +175,7 @@ it("moves an idle agent into a collapsed team and reports failed drops", async (
   }
 
   await drag();
+  await page.getByRole("button", { name: "Move agent", exact: true }).click();
   await expect.poll(() => fetchMock.mock.calls.length).toBe(1);
   expect(fetchMock).toHaveBeenLastCalledWith(
     "/api/agents/ada/move",
@@ -187,6 +190,7 @@ it("moves an idle agent into a collapsed team and reports failed drops", async (
     .toHaveAttribute("aria-expanded", "true");
   fetchMock.mockResolvedValue(new Response(null, { status: 409 }));
   await drag();
+  await page.getByRole("button", { name: "Move agent", exact: true }).click();
   await expect
     .element(page.getByRole("alert"))
     .toHaveTextContent("Only idle agents can move between teams.");
@@ -300,7 +304,7 @@ it("opens integration forms on demand and adds configuration and authentication 
       integrations: [
         {
           id: "pachca",
-          kind: "cli",
+          kind: "mcp-stdio",
           command: "node",
           args: ["/workspace/pachca.js"],
         },
@@ -353,7 +357,7 @@ it("retains failed credentials when switching team tabs or returning to the team
       teams: [
         {
           ...teams[0]!,
-          integrations: [{ id: "tool", kind: "cli", command: "node" }],
+          integrations: [{ id: "tool", kind: "mcp-stdio", command: "node" }],
         },
       ],
     },
@@ -369,7 +373,9 @@ it("retains failed credentials when switching team tabs or returning to the team
   );
   await page.getByRole("button", { name: "Project A", exact: true }).click();
   await page.getByRole("tab", { name: "Integrations", exact: true }).click();
-  await page.getByRole("button", { name: "tool CLI", exact: true }).click();
+  await page
+    .getByRole("button", { name: "tool Local MCP", exact: true })
+    .click();
   await page.getByLabelText("Credential variable").fill("TOKEN");
   await page.getByLabelText("Credential", { exact: true }).fill("keep-secret");
   await page.getByRole("tab", { name: "General", exact: true }).click();
@@ -552,7 +558,7 @@ it("rejects duplicate integration names during creation", async () => {
       teams: [
         {
           ...teams[0]!,
-          integrations: [{ id: "tool", kind: "cli", command: "node" }],
+          integrations: [{ id: "tool", kind: "mcp-stdio", command: "node" }],
         },
       ],
     },
@@ -645,7 +651,7 @@ it("retries failed integration creation without treating its draft as a duplicat
     .getByRole("button", { name: "Add integration", exact: true })
     .click();
   await expect
-    .element(page.getByRole("button", { name: "tool CLI", exact: true }))
+    .element(page.getByRole("button", { name: "tool Local MCP", exact: true }))
     .toBeVisible();
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });

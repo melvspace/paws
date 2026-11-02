@@ -25,7 +25,7 @@ it("manages shared files and skill packages through HTTP without traversing link
       body: JSON.stringify({
         name: "Project",
         memory: "Shared facts",
-        integrations: [{ id: "pachca", kind: "cli", command: "node" }],
+        integrations: [{ id: "pachca", kind: "mcp-stdio", command: "node" }],
       }),
     });
     expect(response.status).toBe(201);
@@ -83,7 +83,11 @@ it("manages shared files and skill packages through HTTP without traversing link
         body: JSON.stringify({
           name: "PACHCA_TOKEN",
           value: "private-fixture",
-          expectedIntegration: { id: "pachca", kind: "cli", command: "node" },
+          expectedIntegration: {
+            id: "pachca",
+            kind: "mcp-stdio",
+            command: "node",
+          },
         }),
       },
     );
@@ -112,7 +116,7 @@ it("manages shared files and skill packages through HTTP without traversing link
   }
 });
 
-it("moves idle agents atomically, preserves other teams, and rejects busy or stale moves", async () => {
+it("moves idle agents to one team and rejects busy or stale moves", async () => {
   const { Effect } = await import("effect");
   await Fs.mkdir("/tmp/codex", { recursive: true });
   const root = await Fs.mkdtemp("/tmp/codex/paws-move-http-");
@@ -153,7 +157,7 @@ it("moves idle agents atomically, preserves other teams, and rejects busy or sta
     const agent = await (
       await post("/api/agents", {
         name: "Ada",
-        teamIds: [teams[0].id, teams[2].id],
+        teamId: teams[0].id,
       })
     ).json();
     const move = await post(`/api/agents/${agent.id}/move`, {
@@ -161,7 +165,7 @@ it("moves idle agents atomically, preserves other teams, and rejects busy or sta
       toTeamId: teams[1].id,
     });
     expect(move.status).toBe(200);
-    expect((await move.json()).teamIds).toEqual([teams[2].id, teams[1].id]);
+    expect((await move.json()).teamId).toEqual(teams[1].id);
     expect(
       (
         await post(`/api/agents/${agent.id}/move`, {
@@ -193,8 +197,8 @@ it("moves idle agents atomically, preserves other teams, and rejects busy or sta
       ).status,
     ).toBe(409);
     expect(
-      (await (await fetch(`${base}/api/agents`)).json()).agents[0].teamIds,
-    ).toEqual([teams[2].id, teams[1].id]);
+      (await (await fetch(`${base}/api/agents`)).json()).agents[0].teamId,
+    ).toEqual(teams[1].id);
   } finally {
     await app.close();
     await Fs.rm(root, { recursive: true, force: true });
@@ -261,7 +265,7 @@ it("patches only supplied team fields and rejects stale edits to the same field"
       service.saveTeam(
         {
           memory: "new",
-          integrations: [{ id: "tool", kind: "cli", command: "node" }],
+          integrations: [{ id: "tool", kind: "mcp-stdio", command: "node" }],
         },
         team!.id,
       ),

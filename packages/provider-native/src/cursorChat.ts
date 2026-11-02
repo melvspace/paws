@@ -45,7 +45,7 @@ export async function runCursorTurn(
       })),
     },
     tools: ["mcp"],
-    systemPrompt: chatInstructions(turn.agentName),
+    systemPrompt: chatInstructions(turn.agentName, turn.workspace),
     mcpServers: {},
     agents: {},
     local: {

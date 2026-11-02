@@ -59,9 +59,9 @@ it("discovers agent-owned skills, honors precedence and metadata, and excludes u
     expect(skills[1]).toEqual({
       name: "writer",
       description: "Write clear prose.",
-      path: "/workspace/.agents/skills/writer/SKILL.md",
+      path: `${layout.workspace}/.agents/skills/writer/SKILL.md`,
     });
-    expect(JSON.stringify(skills)).not.toContain(root);
+    expect(JSON.stringify(skills)).not.toContain(`${root}/outside`);
     expect(
       listAgentSkills(root, "22222222-2222-4222-8222-222222222222"),
     ).toEqual([]);

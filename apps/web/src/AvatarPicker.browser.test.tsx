@@ -43,6 +43,8 @@ it("creates an agent with the selected animal and color", async () => {
         body: JSON.stringify({
           name: "Ada",
           avatar: { animal: "mouse", color: "red" },
+          teamId: null,
+          sandbox: false,
         }),
       }),
     );

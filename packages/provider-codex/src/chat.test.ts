@@ -361,7 +361,7 @@ for await (const line of createInterface({input:process.stdin})) {
  } else if(m.method==='initialized') continue;
  else if(m.method==='turn/start') {
   send({id:m.id,result:{turn:{id:'turn'}}});
-  send({id:'tool',method:'item/tool/call',params:{threadId:'thread',turnId:'turn',callId:'call',tool:'paws_team_tool',arguments:{action:'start'}}});
+  send({id:'tool',method:'item/tool/call',params:{threadId:'thread',turnId:'turn',callId:'call',tool:'paws_mcp',arguments:{action:'tools'}}});
  } else if(m.id) send({id:m.id,result:m.method?.startsWith('thread/')?{thread:{id:'thread'}}:{}});
 }
 `,

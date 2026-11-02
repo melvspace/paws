@@ -1,31 +1,15 @@
 import type { TeamMcpHarness } from "./teamMcpHarness.ts";
 import { ChatToolError } from "@paws/provider-core";
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import * as Fs from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Schema } from "effect";
 import { Team, TeamToolRequest, type TeamIntegration } from "@paws/contracts";
 import { assertAgentId } from "@paws/shared";
-import { containerArgs, runtimeIdentity } from "@paws/runtime";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { localTeamMcp } from "./localTeamMcp.ts";
 import { remoteTeamMcp } from "./teamMcp.ts";
 import { agentContext } from "./teamContext.ts";
-import {
-  installTeamEnvironment,
-  teamEnvironmentImage,
-} from "./teamEnvironment.ts";
-import {
-  commandIntegration,
-  listTeamCommands,
-  readTeamCommand,
-  startTeamCommand,
-} from "./teamCommandSessions.ts";
-
-const exec = promisify(execFile);
 const integrationIdPattern = /^[a-z][a-z0-9-]{0,63}$/;
 
 export function validateIntegrations(integrations: readonly TeamIntegration[]) {
@@ -147,8 +131,8 @@ export function saveIntegrationSecrets(
   }
 }
 
-// Authentication homes are only mounted in the separate integration process,
-// never in an agent's general-purpose shell or workspace.
+// Remote authentication stays under server control. Local MCP commands execute
+// alongside ordinary shell commands in the team environment.
 export async function teamTool(
   root: string,
   agentId: string,
@@ -165,14 +149,6 @@ export async function teamTool(
 
   if (!team) throw new Error("Join this team before using its integrations.");
   if (input.action === "list") return team.integrations ?? [];
-  if (input.action === "sessions") return listTeamCommands(root, team.id);
-
-  if (input.action === "install") {
-    if (!input.script) throw new Error("An installation script is required.");
-
-    return installTeamEnvironment(root, team.id, input.script, signal);
-  }
-
   if (input.action === "configure") {
     if (!input.integration)
       throw new Error("Integration configuration is required.");
@@ -234,25 +210,8 @@ export async function teamTool(
     return { configured: input.integration.id };
   }
 
-  let integrationId = input.integrationId;
-
-  if (input.action === "read" || input.action === "cancel") {
-    if (!input.sessionId) throw new Error("A command session ID is required.");
-
-    const sessionIntegration = commandIntegration(
-      root,
-      team.id,
-      input.sessionId,
-    );
-
-    if (integrationId && integrationId !== sessionIntegration)
-      throw new Error("Command session belongs to another integration.");
-
-    integrationId = sessionIntegration;
-  }
-
   const integration = team.integrations?.find(
-    (item) => item.id === integrationId,
+    (item) => item.id === input.integrationId,
   );
 
   if (!integration)
@@ -279,17 +238,6 @@ export async function teamTool(
         return text;
       }),
     );
-  const redactOutput = (text: string) => String(redact(text));
-
-  if (input.action === "read" || input.action === "cancel") {
-    return readTeamCommand(
-      root,
-      team.id,
-      input.sessionId!,
-      redactOutput,
-      input.action === "cancel",
-    );
-  }
 
   if (integration.kind === "mcp-http") {
     if (input.action !== "tools" && (input.action !== "call" || !input.tool))
@@ -308,151 +256,15 @@ export async function teamTool(
     );
   }
 
-  const name = `paws-integration-${randomUUID()}`;
-  const image = teamEnvironmentImage(root, team.id);
-  const args = containerArgs({
-    name,
-    image,
-    identity: runtimeIdentity(root),
-    workspace: join(root, "teams", team.id, "files"),
-    home: join(directory, "home"),
-    uid: process.getuid?.() ?? 1000,
-    gid: process.getgid?.() ?? 1000,
-    entrypoint: [integration.command ?? "true", ...(integration.args ?? [])],
-  });
-  const imageIndex = args.indexOf(image);
-  args.splice(
-    imageIndex,
-    0,
-    ...Object.keys(secrets).flatMap((name) => ["--env", name]),
-  );
-
-  if (input.action === "start" || input.action === "exec") {
-    if (integration.kind !== "cli")
-      throw new Error("Use MCP tools/call for MCP integrations.");
-    if (
-      (input.args ?? []).length > 100 ||
-      (input.args ?? []).some((arg) => arg.length > 4096)
-    )
-      throw new Error("Invalid CLI arguments.");
-  }
-
-  if (input.action === "start") {
-    return startTeamCommand({
+  return redact(
+    await localTeamMcp(
       root,
-      teamId: team.id,
-      integrationId: integration.id,
-      commandArgs: [...args, ...(input.args ?? [])],
-      args: input.args ?? [],
-      image,
+      agentId,
+      team,
+      integration,
+      input,
       secrets,
       signal,
-      redact: redactOutput,
-    });
-  }
-
-  const timeout = AbortSignal.any([signal, AbortSignal.timeout(180000)]);
-
-  try {
-    if (input.action === "exec") {
-      try {
-        const commandImageIndex = args.indexOf(image);
-        const commandArgs = [
-          ...args.slice(0, commandImageIndex + 1),
-          "/usr/bin/timeout",
-          "--signal=TERM",
-          "--kill-after=5",
-          "60",
-          ...args.slice(commandImageIndex + 1),
-          ...(input.args ?? []),
-        ];
-        const result = await exec("docker", commandArgs, {
-          env: { PATH: process.env.PATH, ...secrets },
-          signal: timeout,
-          maxBuffer: 256 * 1024,
-        });
-
-        return redact({
-          exitCode: 0,
-          stdout: result.stdout,
-          stderr: result.stderr,
-        });
-      } catch (error) {
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          typeof error.code === "number"
-        ) {
-          return redact({
-            isError: true,
-            exitCode: error.code,
-            stdout:
-              "stdout" in error && typeof error.stdout === "string"
-                ? error.stdout
-                : "",
-            stderr:
-              "stderr" in error && typeof error.stderr === "string"
-                ? error.stderr
-                : "",
-          });
-        }
-
-        throw error;
-      }
-    }
-
-    if (integration.kind === "cli")
-      throw new Error("Use exec for CLI integrations.");
-
-    const transport = new StdioClientTransport({
-      command: "docker",
-      args,
-      env: { PATH: process.env.PATH ?? "", ...secrets },
-      stderr: "ignore",
-    });
-    const client = new Client({ name: "paws", version: "0.1.0" });
-    const abort = () => {
-      void client.close();
-    };
-    timeout.addEventListener("abort", abort, { once: true });
-
-    try {
-      timeout.throwIfAborted();
-      await client.connect(transport);
-
-      if (input.action === "tools")
-        return redact(await client.listTools({}, { signal: timeout }));
-      if (input.action !== "call" || !input.tool)
-        throw new Error("Choose a tool returned by tools.");
-
-      return redact(
-        await client.callTool(
-          { name: input.tool, arguments: input.arguments ?? {} },
-          undefined,
-          { signal: timeout },
-        ),
-      );
-    } finally {
-      timeout.removeEventListener("abort", abort);
-      await client.close();
-    }
-  } catch (error) {
-    const detail =
-      typeof error === "object" &&
-      error !== null &&
-      "stderr" in error &&
-      typeof error.stderr === "string"
-        ? String(redact(error.stderr)).slice(-4000).trim()
-        : "";
-
-    throw new ChatToolError(
-      detail ||
-        "Team command could not complete. Check Docker availability; container setup is allowed up to two minutes before the execution deadline.",
-    );
-  } finally {
-    await exec("docker", ["rm", "--force", name], { timeout: 10000 }).catch(
-      () => {},
-    );
-  }
+    ),
+  );
 }

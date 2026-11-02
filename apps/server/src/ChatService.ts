@@ -647,9 +647,7 @@ export function makeChatService(
                   listAgentSkills(
                     root,
                     owner.id,
-                    agentContext(root, ownerId(id)).teams.map(
-                      (team) => team.id,
-                    ),
+                    agentContext(root, ownerId(id)).teamId ?? null,
                   ),
                 ),
                 options.context?.(id),
@@ -1333,6 +1331,15 @@ export function makeChatService(
   return {
     get,
     busy: (id: string) => active.has(id),
+    invalidateEnvironment(id: string) {
+      const state = states.get(id);
+
+      if (!state) return;
+
+      if (active.has(id)) throw new ChatError(409, "Agent is working.");
+
+      persist({ ...state, nativeThreadId: null, providerSessions: {} });
+    },
     wait: async (id: string) => {
       await active.get(id)?.task;
     },
@@ -1367,7 +1374,7 @@ export function makeChatService(
         return listAgentSkills(
           root,
           id,
-          agentContext(root, ownerId(id)).teams.map((team) => team.id),
+          agentContext(root, ownerId(id)).teamId ?? null,
         );
       }),
     ),
