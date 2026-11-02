@@ -1,3 +1,4 @@
+import { TeamDialog } from "./TeamDialog.tsx";
 import { ReassignAgentDialog } from "./ReassignAgentDialog.tsx";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -49,28 +50,6 @@ export function TeamsSettings({
   const { snapshot, connected } = useAtomValue(agentsAtom);
   const [selected, setSelected] = useState<Team | null>(null);
   const [creating, setCreating] = useState(false);
-  const [name, setName] = useState("");
-  const [template, setTemplate] = useState("paws-team-runtime:1");
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
-
-  async function create() {
-    setPending(true);
-    setError("");
-
-    try {
-      const team = await saveTeam({ name, memory: "", template });
-      setSelected(team);
-      setCreating(false);
-      setName("");
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Could not create team.",
-      );
-    } finally {
-      setPending(false);
-    }
-  }
 
   if (selected)
     return (
@@ -87,7 +66,7 @@ export function TeamsSettings({
       <div className="team-page-toolbar">
         <Button
           variant="outline"
-          disabled={!connected || pending}
+          disabled={!connected}
           onClick={() => setCreating(true)}
         >
           <PlusIcon size={14} />
@@ -95,44 +74,11 @@ export function TeamsSettings({
         </Button>
       </div>
       {creating && (
-        <form
-          className="team-create"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void create();
-          }}
-        >
-          <Input
-            aria-label="Team name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            autoFocus
-            required
-            maxLength={80}
-            disabled={pending}
-          />
-          <Input
-            aria-label="Container template"
-            value={template}
-            onChange={(event) => setTemplate(event.target.value)}
-            required
-            disabled={pending}
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={pending}
-            onClick={() => setCreating(false)}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            disabled={pending || !connected || !name.trim()}
-          >
-            Create team
-          </Button>
-        </form>
+        <TeamDialog
+          connected={connected}
+          onDismiss={() => setCreating(false)}
+          onCreated={setSelected}
+        />
       )}
       {!!snapshot.teams?.length && (
         <div className="settings-group team-collection">
@@ -159,7 +105,6 @@ export function TeamsSettings({
       {!snapshot.teams?.length && !creating && (
         <p className="team-empty">No teams</p>
       )}
-      {error && <p role="alert">{error}</p>}
     </section>
   );
 }

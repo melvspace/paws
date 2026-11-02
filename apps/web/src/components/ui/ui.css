@@ -126,6 +126,7 @@
   font-size: 12px;
   font-weight: 500;
 }
+.ui-menu-item,
 .ui-menu-radio-item {
   display: flex;
   align-items: center;
@@ -136,6 +137,7 @@
   cursor: pointer;
   outline: none;
 }
+.ui-menu-item[data-highlighted],
 .ui-menu-radio-item[data-checked],
 .ui-menu-radio-item[data-highlighted] {
   background: var(--accent);

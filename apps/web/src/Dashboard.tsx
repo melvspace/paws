@@ -8,6 +8,7 @@ import { useMobileLayout } from "./lib/useMobileLayout.ts";
 import { connectAgents, agentsAtom } from "@paws/client-runtime";
 import { AppSettingsDialog } from "./settings/AppSettingsDialog.tsx";
 import { AgentSidebar } from "./AgentSidebar.tsx";
+import { TeamDialog } from "./TeamDialog.tsx";
 import { AgentDialog } from "./AgentDialog.tsx";
 import { AgentWorkspace } from "./workspace/AgentWorkspace.tsx";
 import { selectedAgent } from "./workspace/state.ts";
@@ -31,6 +32,7 @@ export function Dashboard() {
     agent: Agent | null;
     teamId: string | null;
   } | null>(null);
+  const [creatingTeam, setCreatingTeam] = useState(false);
   const [settingsAgentId, setSettingsAgentId] = useState<string | null>(null);
   const beforeLeave = useRef<(() => Promise<void>) | null>(null);
   const navigating = useRef(false);
@@ -114,6 +116,9 @@ export function Dashboard() {
       onCreate={(teamId) => {
         void navigate(() => setDialog({ agent: null, teamId: teamId ?? null }));
       }}
+      onCreateTeam={() => {
+        void navigate(() => setCreatingTeam(true));
+      }}
       onSettings={openAgentSettings}
       onAppSettings={() => {
         setNavigationOpen(false);
@@ -192,6 +197,12 @@ export function Dashboard() {
             onDismiss={() => {
               setSettingsOpen(null);
             }}
+          />
+        )}
+        {creatingTeam && (
+          <TeamDialog
+            connected={connected}
+            onDismiss={() => setCreatingTeam(false)}
           />
         )}
         {dialog && (

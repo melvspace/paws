@@ -46,6 +46,7 @@ afterEach(() => {
 it("shows every team, including empty teams, and collapses its agents independently", async () => {
   await using _screen = await render(
     <AgentSidebar
+      onCreateTeam={() => {}}
       agents={agents}
       teams={teams}
       selectedId="ada"
@@ -139,6 +140,7 @@ it("moves an idle agent into a collapsed team and reports failed drops", async (
   vi.stubGlobal("fetch", fetchMock);
   await using _screen = await render(
     <AgentSidebar
+      onCreateTeam={() => {}}
       agents={agents}
       teams={teams}
       selectedId="ada"
@@ -212,6 +214,7 @@ it("prevents dragging an agent that is working", async () => {
   try {
     await using _screen = await render(
       <AgentSidebar
+        onCreateTeam={() => {}}
         agents={agents}
         teams={teams}
         selectedId="ada"
@@ -241,6 +244,7 @@ it("prevents dragging an agent that is working", async () => {
 it("hides empty Unassigned and keeps real empty teams without repeated empty copy", async () => {
   await using _screen = await render(
     <AgentSidebar
+      onCreateTeam={() => {}}
       agents={[agents[0]!]}
       teams={teams}
       selectedId="ada"

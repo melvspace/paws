@@ -343,6 +343,67 @@ select {
   margin-top: 24px;
 }
 
+.creation-dialog {
+  width: min(400px, calc(100vw - 32px));
+  padding: 20px;
+  border-radius: 12px;
+}
+.creation-dialog .dialog-heading h2 {
+  font-size: 18px;
+  line-height: 28px;
+  letter-spacing: -0.02em;
+}
+.creation-dialog .dialog-heading .sidebar-icon-button {
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+}
+.creation-dialog .creation-dialog-fields {
+  padding: 0 0 20px;
+}
+.creation-dialog-fields label {
+  margin: 0 0 8px;
+  font-weight: 500;
+}
+.creation-dialog-fields input {
+  height: 40px;
+  padding: 8px 12px;
+  font-size: 14px;
+  background: var(--background);
+}
+.creation-dialog-fields input:focus-visible {
+  border-color: var(--ring);
+  outline: 2px solid color-mix(in srgb, var(--ring) 20%, transparent);
+  outline-offset: 1px;
+}
+.creation-dialog .actions {
+  gap: 8px;
+  margin: 0 -20px -20px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--muted);
+  border-radius: 0 0 12px 12px;
+}
+.creation-dialog .actions .ui-button {
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.creation-dialog .actions .ui-button-ghost:hover:not(:disabled) {
+  background: var(--accent);
+}
+.creation-dialog .actions button[type="submit"]:disabled {
+  background: var(--accent);
+  color: var(--muted-foreground);
+  opacity: 1;
+}
+.creation-dialog > p {
+  margin: 16px 0 0;
+  font-size: 13px;
+}
+
 .sidebar-agent-row {
   display: flex;
   align-items: center;
@@ -650,4 +711,17 @@ select {
 }
 .sidebar-team-header > .sidebar-icon-button {
   flex-shrink: 0;
+}
+
+.agent-create-dialog .avatar-picker {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 20px;
+}
+.agent-create-dialog .agent-create-fields {
+  gap: 16px;
+  padding-bottom: 20px;
+}
+.agent-create-dialog .agent-create-fields label {
+  margin: 0;
 }

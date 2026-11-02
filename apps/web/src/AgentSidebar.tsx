@@ -1,5 +1,11 @@
 import { ReassignAgentDialog } from "./ReassignAgentDialog.tsx";
 import { Input } from "./components/ui/input.tsx";
+import {
+  Menu,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "./components/ui/menu.tsx";
 import { Button } from "./components/ui/button.tsx";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useState } from "react";
@@ -22,6 +28,7 @@ interface AgentSidebarProps {
   selectedId: string | null;
   connected: boolean;
   onCreate: (teamId?: string) => void;
+  onCreateTeam: () => void;
   onSettings: (agent: Agent) => void;
   onAppSettings: () => void;
   onNavigate?: (agent: Agent) => void;
@@ -34,6 +41,7 @@ export function AgentSidebar({
   selectedId,
   connected,
   onCreate,
+  onCreateTeam,
   onSettings,
   onAppSettings,
   onNavigate,
@@ -146,16 +154,28 @@ export function AgentSidebar({
               onChange={(event) => setQuery(event.target.value)}
             />
           </label>
-          <Button
-            type="button"
-            className="sidebar-icon-button"
-            aria-label="New agent"
-            title="New agent"
-            disabled={!connected}
-            onClick={() => onCreate()}
-          >
-            <PlusIcon aria-hidden />
-          </Button>
+          <Menu>
+            <Button
+              type="button"
+              className="sidebar-icon-button"
+              aria-label="Create new"
+              title="Create new"
+              disabled={!connected}
+              render={<MenuTrigger />}
+            >
+              <PlusIcon aria-hidden />
+            </Button>
+            <MenuPopup aria-label="Create new" side="bottom">
+              <MenuItem className="ui-menu-item" onClick={() => onCreate()}>
+                <PlusIcon size={16} aria-hidden />
+                New Agent
+              </MenuItem>
+              <MenuItem className="ui-menu-item" onClick={onCreateTeam}>
+                <PlusIcon size={16} aria-hidden />
+                New Team
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
         </div>
         <nav className="sidebar-agents" aria-label="Agents">
           {[

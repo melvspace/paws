@@ -300,7 +300,6 @@
   width: 28px;
   height: 28px;
 }
-.teams-settings .team-create,
 .teams-settings .team-editor-form {
   max-width: none;
   width: 100%;
@@ -308,18 +307,6 @@
   padding: 0;
   border: 0;
   background: transparent;
-}
-.team-create {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.team-create input {
-  min-width: 0;
-  flex: 1;
-}
-.team-create button {
-  white-space: nowrap;
 }
 .team-stack-row {
   flex-direction: column;

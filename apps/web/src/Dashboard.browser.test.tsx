@@ -395,7 +395,15 @@ it.each([
     return Response.json([]);
   });
   await using _screen = await render(<Dashboard />);
-  await page.getByRole("button", { name: button, exact: true }).click();
+  if (teamId === null) {
+    await page.getByRole("button", { name: "Create new", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "New Agent", exact: true })
+      .click();
+  } else {
+    await page.getByRole("button", { name: button, exact: true }).click();
+  }
+
   await expect
     .element(page.getByRole("combobox", { name: "Team", exact: true }))
     .not.toBeInTheDocument();
@@ -426,4 +434,23 @@ it.each([
     teamId,
     sandbox: false,
   });
+});
+
+it("opens a standalone team dialog from the sidebar menu", async () => {
+  mockRequests();
+  await using _screen = await render(<Dashboard />);
+  await page.getByRole("button", { name: "Create new", exact: true }).click();
+  await page.getByRole("menuitem", { name: "New Team", exact: true }).click();
+  await expect
+    .element(page.getByRole("dialog", { name: "New team", exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByRole("navigation", { name: "Settings pages" }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByRole("textbox", { name: "Name", exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Create team", exact: true }))
+    .toBeVisible();
 });

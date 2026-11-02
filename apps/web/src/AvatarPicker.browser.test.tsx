@@ -26,6 +26,10 @@ it("creates an agent with the selected animal and color", async () => {
     await using _screen = await render(
       <AgentDialog agent={null} connected onDismiss={dismiss} />,
     );
+    await expect
+      .element(page.getByRole("button", { name: "Edit avatar" }))
+      .toHaveAttribute("aria-expanded", "false");
+    await page.getByRole("button", { name: "Edit avatar" }).click();
     await page.getByRole("textbox", { name: "Name" }).fill("Ada");
     await page.getByRole("button", { name: "mouse", exact: true }).click();
     await page.getByRole("button", { name: "red", exact: true }).click();

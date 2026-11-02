@@ -272,7 +272,7 @@ export function AgentDialog({
       {!connected && <p role="status">Reconnecting…</p>}
       <Form onSubmit={(event) => void submit(event)}>
         <AvatarPicker
-          compact={embedded}
+          compact={embedded || !agent}
           value={avatar}
           disabled={
             pending === "delete" ||
@@ -292,7 +292,7 @@ export function AgentDialog({
           className={
             agent
               ? "settings-group agent-settings-fields"
-              : "agent-settings-fields agent-create-fields"
+              : "agent-settings-fields agent-create-fields creation-dialog-fields"
           }
         >
           <div className={agent ? "settings-row" : undefined}>
@@ -392,13 +392,16 @@ export function AgentDialog({
           <div className="actions">
             <Button
               type="button"
-              className="secondary"
+              variant="ghost"
               disabled={pending !== null}
               onClick={onDismiss}
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={pending !== null || !connected}>
+            <Button
+              type="submit"
+              disabled={pending !== null || !connected || !name.trim()}
+            >
               {pending === "save" ? "Creating…" : "Create agent"}
             </Button>
           </div>
@@ -531,7 +534,9 @@ export function AgentDialog({
     >
       <DialogPopup
         className={
-          agent ? "agent-dialog agent-settings-dialog" : "agent-dialog"
+          agent
+            ? "agent-dialog agent-settings-dialog"
+            : "agent-dialog creation-dialog agent-create-dialog"
         }
         aria-busy={pending !== null}
         initialFocus={inputRef}
@@ -541,7 +546,7 @@ export function AgentDialog({
           return previous instanceof HTMLElement && previous.isConnected
             ? previous
             : document.querySelector<HTMLButtonElement>(
-                'button[aria-label="New agent"]',
+                'button[aria-label="Create new"]',
               );
         }}
       >
