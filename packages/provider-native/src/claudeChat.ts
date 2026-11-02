@@ -44,7 +44,7 @@ export async function runClaudeTurn(
   });
   const allowedTools = [
     "paws_exec",
-    "paws_team_tool",
+    "paws_mcp",
     "paws_memory",
     "paws_send_message",
     "paws_finish_turn",
@@ -116,7 +116,7 @@ export async function runClaudeTurn(
         ...(turn.nativeThreadId ? { resume: turn.nativeThreadId } : {}),
         model: turn.selection.modelId,
         ...(validEffort ? { effort: validEffort } : {}),
-        systemPrompt: chatInstructions(turn.agentName),
+        systemPrompt: chatInstructions(turn.agentName, turn.workspace),
         settingSources: [],
         settings: {
           disableAllHooks: true,

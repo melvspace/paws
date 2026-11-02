@@ -45,7 +45,7 @@ it("places an unclipped Edit control below the avatar", async () => {
   expect(change).toHaveBeenCalledWith({ animal: "dog", color: "red" });
 });
 
-it("autosaves membership immediately and memories on blur without an explicit save button", async () => {
+it("confirms membership changes and autosaves memories on blur without an explicit save button", async () => {
   const agent = {
     id: "ada",
     name: "Ada",
@@ -79,15 +79,7 @@ it("autosaves membership immediately and memories on blur without an explicit sa
     await expect
       .element(page.getByRole("button", { name: "Save changes" }))
       .not.toBeInTheDocument();
-    const checkbox = page.getByRole("checkbox", {
-      name: "Introvert",
-      exact: true,
-    });
-    const control = checkbox.element();
-    expect(control.getBoundingClientRect().width).toBe(16);
-    expect(
-      control.closest("label")!.getBoundingClientRect().height,
-    ).toBeLessThan(32);
+    const team = page.getByRole("combobox", { name: "Team", exact: true });
     const name = page
       .getByRole("textbox", { name: "Name", exact: true })
       .element();
@@ -109,11 +101,13 @@ it("autosaves membership immediately and memories on blur without an explicit sa
     expect(document.body.textContent).not.toContain(
       "Share skills, files, and memories with teammates.",
     );
-    await checkbox.click();
+    await team.selectOptions("project");
+    expect(fetchMock.mock.calls).toHaveLength(0);
+    await page.getByRole("button", { name: "Move agent", exact: true }).click();
     await expect.poll(() => fetchMock.mock.calls.length).toBe(1);
     expect(
       JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)),
-    ).toMatchObject({ teamIds: ["project"] });
+    ).toMatchObject({ fromTeamId: null, toTeamId: "project" });
     await page
       .getByRole("textbox", { name: "Personal memories", exact: true })
       .fill("Prefer concise answers");

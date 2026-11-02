@@ -72,7 +72,7 @@ export async function runPiTurn(
           "--session",
           join(launch.cwd, `${id}.jsonl`),
           "--append-system-prompt",
-          chatInstructions(turn.agentName),
+          chatInstructions(turn.agentName, turn.workspace),
         ],
       },
       async (rpc) => {

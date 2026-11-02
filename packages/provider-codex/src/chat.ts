@@ -164,7 +164,7 @@ const memoryTool = {
 
 const teamTool = {
   type: "function",
-  name: "paws_team_tool",
+  name: "paws_mcp",
   description: teamToolDescription,
   inputSchema: {
     type: "object",
@@ -172,27 +172,14 @@ const teamTool = {
       teamId: { type: "string" },
       action: {
         type: "string",
-        enum: [
-          "list",
-          "install",
-          "configure",
-          "tools",
-          "call",
-          "exec",
-          "start",
-          "read",
-          "cancel",
-          "sessions",
-        ],
+        enum: ["list", "configure", "tools", "call"],
       },
-      sessionId: { type: "string" },
-      script: { type: "string" },
       integrationId: { type: "string" },
       integration: {
         type: "object",
         properties: {
           id: { type: "string" },
-          kind: { type: "string", enum: ["cli", "mcp-stdio", "mcp-http"] },
+          kind: { type: "string", enum: ["mcp-stdio", "mcp-http"] },
           command: { type: "string" },
           args: { type: "array", items: { type: "string" } },
           url: { type: "string" },
@@ -202,7 +189,6 @@ const teamTool = {
       },
       tool: { type: "string" },
       arguments: { type: "object", additionalProperties: true },
-      args: { type: "array", items: { type: "string" } },
       secrets: { type: "object", additionalProperties: { type: "string" } },
     },
     required: ["teamId", "action"],
@@ -293,12 +279,12 @@ export async function runCodexTurn(
         ...(await credentials()),
       });
       const runtime = {
-        cwd: "/workspace",
+        cwd: turn.workspace ?? "/workspace",
         model: turn.selection.modelId,
         approvalPolicy: "never",
-        sandbox: "danger-full-access", // The enclosing container is the execution boundary.
+        sandbox: "danger-full-access", // The selected environment owns execution privileges.
         serviceTier: turn.selection.options.serviceTier ?? "default",
-        developerInstructions: chatInstructions(turn.agentName),
+        developerInstructions: chatInstructions(turn.agentName, turn.workspace),
         config: {
           "features.multi_agent": false,
           "features.plugins": false,
@@ -564,7 +550,7 @@ export async function runCodexTurn(
           "paws_send_message",
           "request_secret",
           "paws_read_attachment",
-          "paws_team_tool",
+          "paws_mcp",
           "paws_memory",
           "paws_routine",
           "paws_finish_turn",
@@ -575,7 +561,7 @@ export async function runCodexTurn(
       try {
         if (
           call.tool === "paws_memory" ||
-          call.tool === "paws_team_tool" ||
+          call.tool === "paws_mcp" ||
           call.tool === "paws_routine"
         ) {
           turn.signal.throwIfAborted();
@@ -706,7 +692,7 @@ export async function runCodexTurn(
       } catch (error) {
         if (
           call.tool === "paws_memory" ||
-          call.tool === "paws_team_tool" ||
+          call.tool === "paws_mcp" ||
           call.tool === "paws_routine"
         ) {
           turn.onTool?.(call.tool, "failed");

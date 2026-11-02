@@ -13,9 +13,9 @@ import {
 import { teamMcpHarness } from "./teamMcpHarness.ts";
 import { teamMcpAuthHttp } from "./teamMcpAuth.ts";
 import { saveIntegrationSecrets } from "./teamIntegrations.ts";
-import { closeTeamCommands } from "./teamCommandSessions.ts";
 import { teamResources } from "./teamResources.ts";
 import { isAllowedRequestOrigin } from "./requestOrigin.ts";
+import { stopEnvironment } from "@paws/runtime";
 import * as Http from "node:http";
 import { homedir } from "node:os";
 import * as Path from "node:path";
@@ -36,7 +36,7 @@ import { providerHttp } from "./providerHttp.ts";
 import { makeChatService } from "./ChatService.ts";
 import { makeChatRunner } from "./chatRunner.ts";
 import { chatHttp } from "./chatHttp.ts";
-import type { RunChatTurn } from "@paws/provider-core";
+import { ChatExecutionError, type RunChatTurn } from "@paws/provider-core";
 
 export function createServer(
   root: string,
@@ -46,14 +46,23 @@ export function createServer(
     discoverProviders?: Parameters<typeof makeProviderService>[1];
   } = {},
 ) {
-  const agents = makeAgentService(root);
+  const agents = makeAgentService(
+    root,
+    (id) => !chat.busy(id) && !routines?.busy(id),
+  );
   const providers = makeProviderService(root, options.discoverProviders, () => {
     void broadcast().catch(() => {});
   });
   let routines: ReturnType<typeof makeRoutineService>;
-  const execute = serializeAgentExecution(
-    options.runChat ?? makeChatRunner(root, providers),
-  );
+  const runChat = options.runChat ?? makeChatRunner(root, providers);
+  const execute = serializeAgentExecution(async (turn) => {
+    if (agents.changing(turn.agentId))
+      throw new ChatExecutionError(
+        "Agent environment is changing. Retry shortly.",
+      );
+
+    await runChat(turn);
+  });
   const run: RunChatTurn = (turn) =>
     execute({
       ...turn,
@@ -231,13 +240,24 @@ export function createServer(
       const teamId = /^\/api\/teams\/([^/]+)$/.exec(request.url ?? "")?.[1];
 
       if (request.method === "DELETE" && teamId) {
-        for (const agent of await Effect.runPromise(agents.list())) {
-          if (agent.teamIds?.includes(teamId)) await chat.stop(agent.id);
+        const members = (await Effect.runPromise(agents.list())).filter(
+          (agent) => agent.teamId === teamId,
+        );
+
+        if (members.length) {
+          response.writeHead(409).end(
+            JSON.stringify({
+              error: "Move the team's agents before deleting it.",
+            }),
+          );
+
+          return;
         }
 
-        await closeNativeMcpLogins(root, teamId);
-        await closeTeamCommands(root, teamId);
         const removed = await Effect.runPromise(agents.removeTeam(teamId));
+        await closeNativeMcpLogins(root, teamId);
+
+        if (removed) await stopEnvironment(root, teamId, "team");
         await broadcast();
         response.writeHead(removed ? 204 : 404).end();
 
@@ -247,6 +267,16 @@ export function createServer(
       const agentId = /^\/api\/agents\/([^/]+)$/.exec(request.url ?? "")?.[1];
 
       if (request.method === "DELETE" && agentId) {
+        if (agents.changing(agentId)) {
+          response.writeHead(409).end(
+            JSON.stringify({
+              error: "Agent environment is changing. Retry shortly.",
+            }),
+          );
+
+          return;
+        }
+
         const exists = (await Effect.runPromise(agents.list())).some(
           (agent) => agent.id === agentId,
         );
@@ -266,6 +296,7 @@ export function createServer(
           return;
         }
 
+        await stopEnvironment(root, agentId, "agent");
         await broadcast();
         response.writeHead(204).end();
 
@@ -312,7 +343,7 @@ export function createServer(
             JSON.parse(body),
           );
 
-          if (chat.get(moveId).status !== "idle") {
+          if (chat.busy(moveId) || routines.busy(moveId)) {
             response.writeHead(409).end(
               JSON.stringify({
                 error: "Only idle agents can move between teams.",
@@ -322,7 +353,9 @@ export function createServer(
             return;
           }
 
-          const moved = Effect.runSync(agents.moveTeam(moveId, input));
+          const moved = await Effect.runPromise(agents.moveTeam(moveId, input));
+          chat.invalidateEnvironment(moveId);
+          routines.invalidateEnvironment(moveId);
           await broadcast();
           response.end(JSON.stringify(moved));
 
@@ -341,11 +374,6 @@ export function createServer(
               team.id,
               input.integrations.map((item) => item.id),
             );
-            await closeTeamCommands(
-              root,
-              team.id,
-              input.integrations.map((item) => item.id),
-            );
           }
 
           await broadcast();
@@ -358,7 +386,22 @@ export function createServer(
 
         const input = Schema.decodeUnknownSync(
           isCreate ? CreateAgent : UpdateAgent,
+          { onExcessProperty: "error" },
         )(JSON.parse(body));
+
+        if (
+          updateId &&
+          input.sandbox !== undefined &&
+          (chat.busy(updateId) || routines.busy(updateId))
+        ) {
+          response.writeHead(409).end(
+            JSON.stringify({
+              error: "Only idle agents can change environments.",
+            }),
+          );
+
+          return;
+        }
         const agent = await Effect.runPromise(
           updateId ? agents.update(updateId, input) : agents.create(input),
         );
@@ -371,7 +414,10 @@ export function createServer(
           return;
         }
 
-        if (updateId && input.teamIds) await chat.stop(updateId);
+        if (updateId && input.sandbox !== undefined) {
+          chat.invalidateEnvironment(updateId);
+          routines.invalidateEnvironment(updateId);
+        }
 
         await broadcast();
 
@@ -449,7 +495,6 @@ export function createServer(
       await routines.close();
       await chat.close();
       await closeNativeMcpLogins(root);
-      await closeTeamCommands(root);
       await providers.close();
       agents.close();
     },

@@ -1,3 +1,4 @@
+import { ReassignAgentDialog } from "./ReassignAgentDialog.tsx";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -11,9 +12,9 @@ import {
   saveTeam,
   getTeam,
   deleteTeam,
-  updateAgent,
+  conversationsAtom,
 } from "@paws/client-runtime";
-import type { Team, UpdateTeam } from "@paws/contracts";
+import type { Agent, Team, UpdateTeam } from "@paws/contracts";
 import { Input } from "./components/ui/input.tsx";
 import { Textarea } from "./components/ui/textarea.tsx";
 import { Button } from "./components/ui/button.tsx";
@@ -49,6 +50,7 @@ export function TeamsSettings({
   const [selected, setSelected] = useState<Team | null>(null);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+  const [template, setTemplate] = useState("paws-team-runtime:1");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
@@ -57,7 +59,7 @@ export function TeamsSettings({
     setError("");
 
     try {
-      const team = await saveTeam({ name, memory: "" });
+      const team = await saveTeam({ name, memory: "", template });
       setSelected(team);
       setCreating(false);
       setName("");
@@ -109,6 +111,13 @@ export function TeamsSettings({
             maxLength={80}
             disabled={pending}
           />
+          <Input
+            aria-label="Container template"
+            value={template}
+            onChange={(event) => setTemplate(event.target.value)}
+            required
+            disabled={pending}
+          />
           <Button
             type="button"
             variant="ghost"
@@ -138,9 +147,8 @@ export function TeamsSettings({
               <span>{team.name}</span>
               <span className="team-row-meta">
                 {
-                  snapshot.agents.filter((agent) =>
-                    agent.teamIds?.includes(team.id),
-                  ).length
+                  snapshot.agents.filter((agent) => agent.teamId === team.id)
+                    .length
                 }
               </span>
               <ChevronRightIcon size={16} />
@@ -166,6 +174,11 @@ function TeamDetails({
   beforeClose?: RefObject<(() => Promise<void>) | null> | undefined;
 }) {
   const { snapshot, connected } = useAtomValue(agentsAtom);
+  const conversations = useAtomValue(conversationsAtom);
+  const [moveRequest, setMoveRequest] = useState<{
+    agent: Agent;
+    destination: Team | null;
+  } | null>(null);
   const [tab, setTab] = useState<(typeof tabs)[number]>("General");
   const [draft, setDraft] = useState(team);
   const draftRef = useRef(team);
@@ -370,6 +383,10 @@ function TeamDetails({
               />
             </div>
             <div className="settings-row">
+              <span>Container template</span>
+              <span>{team.template ?? "paws-team-runtime:1"}</span>
+            </div>
+            <div className="settings-row">
               <span>Delete team</span>
               <Button
                 variant="ghost"
@@ -395,19 +412,21 @@ function TeamDetails({
                 <span>{agent.name}</span>
                 <Checkbox
                   aria-label={agent.name}
-                  checked={agent.teamIds?.includes(team.id) ?? false}
-                  disabled={pending || !connected}
+                  checked={agent.teamId === team.id}
+                  disabled={
+                    pending ||
+                    !connected ||
+                    conversations.some(
+                      (conversation) =>
+                        conversation.agentId === agent.id &&
+                        conversation.status === "running",
+                    )
+                  }
                   onCheckedChange={(checked) => {
-                    setPending(true);
-                    setError("");
-                    void updateAgent(agent.id, {
-                      name: agent.name,
-                      teamIds: checked
-                        ? [...(agent.teamIds ?? []), team.id]
-                        : (agent.teamIds ?? []).filter((id) => id !== team.id),
-                    })
-                      .catch(() => setError("Could not update membership."))
-                      .finally(() => setPending(false));
+                    setMoveRequest({
+                      agent,
+                      destination: checked ? team : null,
+                    });
                   }}
                 />
               </label>
@@ -460,6 +479,15 @@ function TeamDetails({
           />
         )}
       </div>
+      {moveRequest && (
+        <ReassignAgentDialog
+          agent={moveRequest.agent}
+          destination={moveRequest.destination}
+          connected={connected}
+          onClose={() => setMoveRequest(null)}
+          onMoved={() => {}}
+        />
+      )}
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogPopup>
           <AlertDialogHeader>

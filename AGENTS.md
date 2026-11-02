@@ -14,8 +14,10 @@ independent of provider protocols. Architecture adapted from T3 Code (MIT).
 - `packages/provider-core`: provider interfaces. Provider-specific behavior belongs
   in `packages/provider-*`; normalize it before exposing it to orchestration.
 - `packages/runtime`: agent environment provisioning and execution boundaries.
-  Separate directories are not security isolation. Execution must require a
-  container runtime lease; keep credentials outside agent-readable mounts.
+  Teams own persistent containers created from a stored template. Each agent has
+  a personal folder; directories inside a team are not isolation. Standalone
+  agents run on the host unless sandbox is enabled. Keep provider credentials
+  and administrative state outside container mounts.
 - `packages/shared`: small, environment-independent helpers.
 
 Prefer SOLID, DRY, and KISS. Keep services reusable from transports and future MCP
@@ -52,8 +54,9 @@ and keep sidebar controls compact. Use the original agent settings as the visual
 baseline: hide its title accessibly, use concise field labels, and omit redundant
 prose, placeholders, status slogans, and repeated headings. Group related rows in
 one container with dividers, not separate rounded cards. Hide empty Unassigned;
-keep actual teams available as drop targets. Allow dragging idle agents between team sections; preserve
-unrelated memberships and validate moves on the server.
+keep actual teams available as drop targets. Agents have at most one team. Confirm
+reassignment of idle agents, move personal files, and leave team files behind.
+Validate moves and sandbox changes against chat and routine activity on the server.
 
 Keep the compact Paws glossary in `packages/provider-core/src/glossary.ts` current
 when domain terms or their meaning change; use neutral definitions, not behavior

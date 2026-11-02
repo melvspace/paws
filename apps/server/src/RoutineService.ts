@@ -394,11 +394,7 @@ export function makeRoutineService(
           run.context ??
           JSON.stringify({
             ...context,
-            skills: listAgentSkills(
-              root,
-              run.agentId,
-              context.teams.map((team) => team.id),
-            ),
+            skills: listAgentSkills(root, run.agentId, context.teamId ?? null),
           }),
       };
       write("routine_runs", started);
@@ -830,6 +826,17 @@ export function makeRoutineService(
 
   return {
     limits,
+    busy: (agentId: string) =>
+      runs().some(
+        (run) =>
+          run.agentId === agentId &&
+          (run.status === "running" || executions.has(run.id)),
+      ),
+    invalidateEnvironment(agentId: string) {
+      for (const run of runs().filter((item) => item.agentId === agentId)) {
+        conversations.invalidateEnvironment(run.id);
+      }
+    },
     ready,
     tick,
     tool,

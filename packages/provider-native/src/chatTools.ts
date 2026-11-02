@@ -64,29 +64,16 @@ export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
       },
     },
     {
-      name: "paws_team_tool",
+      name: "paws_mcp",
       description: teamToolDescription,
       schema: z.object({
         teamId: z.string(),
-        action: z.enum([
-          "list",
-          "install",
-          "configure",
-          "tools",
-          "call",
-          "exec",
-          "start",
-          "read",
-          "cancel",
-          "sessions",
-        ]),
-        sessionId: z.string().optional(),
-        script: z.string().optional(),
+        action: z.enum(["list", "configure", "tools", "call"]),
         integrationId: z.string().optional(),
         integration: z
           .object({
             id: z.string(),
-            kind: z.enum(["cli", "mcp-stdio", "mcp-http"]),
+            kind: z.enum(["mcp-stdio", "mcp-http"]),
             command: z.string().optional(),
             args: z.array(z.string()).optional(),
             url: z.string().optional(),
@@ -94,7 +81,6 @@ export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
           .optional(),
         tool: z.string().optional(),
         arguments: z.record(z.string(), z.unknown()).optional(),
-        args: z.array(z.string()).optional(),
         secrets: z.record(z.string(), z.string()).optional(),
       }),
       async execute(value: unknown) {
@@ -192,7 +178,7 @@ export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
     {
       name: "paws_exec",
       description:
-        "Run a shell command in your isolated agent workspace. Use this to read and edit files and run programs. Working directory: /workspace.",
+        "Run a shell command in your selected execution environment. Read and edit files, install software, and run programs. Use the working directory supplied in your instructions.",
       schema: z.object({ command: z.string().min(1).max(32000) }),
       async execute(value: unknown) {
         const { command } = z

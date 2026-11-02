@@ -105,7 +105,7 @@ it("saves on dismissal and keeps failed edits open", async () => {
   await expect
     .element(page.getByRole("alert"))
     .toHaveTextContent(
-      "Could not save agent settings. Check your connection and name.",
+      "Could not save agent settings. Check your connection and fields.",
     );
   await expect
     .element(page.getByRole("dialog", { name: "Agent settings" }))

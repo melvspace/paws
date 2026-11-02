@@ -81,7 +81,7 @@ export function makeCodexChatRunner(
       root,
       turn.agentId,
       provider.config.binaryPath,
-      agentContext(root, turn.agentId).teams.map((team) => team.id),
+      agentContext(root, turn.agentId),
     );
 
     try {
@@ -89,11 +89,19 @@ export function makeCodexChatRunner(
         {
           command: lease.command,
           args: lease.args,
-          cwd: root,
+          cwd:
+            lease.workspace.startsWith("/team/") ||
+            lease.isolation === "container"
+              ? root
+              : lease.workspace,
           signal: turn.signal,
-          env: { PATH: process.env.PATH },
+          env: {
+            PATH: process.env.PATH,
+            HOME: lease.home,
+            CODEX_HOME: `${lease.home}/.codex`,
+          },
         },
-        turn,
+        { ...turn, workspace: lease.workspace, home: lease.home },
         credentials,
         async (reference) => {
           if (!turn.consumeSecret) throw new Error("Secret is unavailable.");

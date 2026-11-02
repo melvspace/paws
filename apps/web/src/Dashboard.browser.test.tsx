@@ -208,7 +208,7 @@ it("keeps failed edits visible when closing the sidebar or navigating away", asy
   await expect
     .element(page.getByRole("alert"))
     .toHaveTextContent(
-      "Could not save agent settings. Check your connection and name.",
+      "Could not save agent settings. Check your connection and fields.",
     );
   await expect.element(name).toHaveValue("Edited Grace");
   await page.getByRole("button", { name: "Close Agent settings tab" }).click();
@@ -367,4 +367,63 @@ it("awaits pending edits before accepting browser hash navigation", async () => 
   } finally {
     finish(new Response(null, { status: 204 }));
   }
+});
+
+it.each([
+  { button: "New agent", teamId: null },
+  { button: "New agent in Project", teamId: "project" },
+])("creates an agent in the context of $button", async ({ button, teamId }) => {
+  appAtomRegistry.set(agentsAtom, {
+    connected: true,
+    error: null,
+    snapshot: {
+      agents,
+      teams: [
+        { id: "project", name: "Project", memory: "", createdAt: "2026-11-01" },
+      ],
+    },
+  });
+  const created: unknown[] = [];
+  vi.spyOn(window, "fetch").mockImplementation(async (_input, init) => {
+    if (init?.method === "POST") {
+      const input = JSON.parse(String(init.body));
+      created.push(input);
+
+      return Response.json({ ...agents[0], ...input, id: "created" });
+    }
+
+    return Response.json([]);
+  });
+  await using _screen = await render(<Dashboard />);
+  await page.getByRole("button", { name: button, exact: true }).click();
+  await expect
+    .element(page.getByRole("combobox", { name: "Team", exact: true }))
+    .not.toBeInTheDocument();
+
+  await expect
+    .element(
+      page.getByRole("textbox", { name: "Personal memories", exact: true }),
+    )
+    .not.toBeInTheDocument();
+
+  if (teamId) {
+    await expect
+      .element(page.getByRole("switch", { name: "Sandbox", exact: true }))
+      .not.toBeInTheDocument();
+  } else {
+    await expect
+      .element(page.getByRole("switch", { name: "Sandbox", exact: true }))
+      .not.toBeChecked();
+  }
+
+  await page
+    .getByRole("textbox", { name: "Name", exact: true })
+    .fill("New assistant");
+  await page.getByRole("button", { name: "Create agent", exact: true }).click();
+  await expect.poll(() => created.length).toBe(1);
+  expect(created[0]).toMatchObject({
+    name: "New assistant",
+    teamId,
+    sandbox: false,
+  });
 });

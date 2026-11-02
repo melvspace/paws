@@ -214,7 +214,7 @@ export async function runMuseTurn(
               input: [
                 {
                   type: "text",
-                  text: `${chatInstructions(turn.agentName)}\n\n${nativePrompt(turn, await interactionText(turn, runtime))}`,
+                  text: `${chatInstructions(turn.agentName, turn.workspace)}\n\n${nativePrompt(turn, await interactionText(turn, runtime))}`,
                 },
               ],
               displayText: turn.text,

@@ -561,7 +561,7 @@ it("persists image-only replies, scopes access to the owner, and retains images 
   await using fixture = await setup(async (turn) => {
     await turn.onImage!(
       "generated",
-      "/home/agent/.codex/generated_images/test.png",
+      `${fixture.root}/agents/${fixture.agent.id}/home/.codex/generated_images/test.png`,
     );
   });
   const directory = `${fixture.root}/agents/${fixture.agent.id}/home/.codex/generated_images`;
@@ -621,7 +621,7 @@ it("recovers a completed native image without rerunning the turn and does not du
           kind: "image_gen.generation",
           id: "cat",
           status: "completed",
-          savedPath: "/home/agent/.codex/generated_images/cat.png",
+          savedPath: `${fixture.root}/agents/${fixture.agent.id}/home/.codex/generated_images/cat.png`,
           failure: null,
         },
       },
@@ -657,7 +657,7 @@ it("rejects generated image paths that escape the agent home", async () => {
     saveGeneratedImage(
       fixture.root,
       fixture.agent.id,
-      "/home/agent/.codex/generated_images/escape.png",
+      `${fixture.root}/agents/${fixture.agent.id}/home/.codex/generated_images/escape.png`,
     ),
   ).rejects.toThrow("Invalid generated image path");
   await expect(
@@ -1068,9 +1068,16 @@ it("attaches workspace media and documents durably, scopes downloads, and suppor
       "files",
       { text: "Here are the files.", actions: [], fields: [] },
       [
-        { path: "/workspace/clip.mp4" },
-        { path: "/workspace/report.pdf", name: "Отчёт.pdf" },
-        { path: "/workspace/demo.html" },
+        {
+          path: `${fixture.root}/agents/${fixture.agent.id}/workspace/clip.mp4`,
+        },
+        {
+          path: `${fixture.root}/agents/${fixture.agent.id}/workspace/report.pdf`,
+          name: "Отчёт.pdf",
+        },
+        {
+          path: `${fixture.root}/agents/${fixture.agent.id}/workspace/demo.html`,
+        },
       ],
     );
   });
@@ -1169,7 +1176,11 @@ it("upgrades old harness sessions with a context handoff and current attachment 
       await turn.onMessage(
         "file",
         { text: "Attached.", actions: [], fields: [] },
-        [{ path: "/workspace/video.mp4" }],
+        [
+          {
+            path: `${fixture.root}/agents/${fixture.agent.id}/workspace/video.mp4`,
+          },
+        ],
       );
   });
   const workspace = `${fixture.root}/agents/${fixture.agent.id}/workspace`;
@@ -1599,7 +1610,7 @@ it("delivers installed skills to any provider and steering while keeping user me
   );
   await expect.poll(() => turns.length).toBe(1);
   expect(turns[0]?.text).toContain(
-    "/home/agent/.agents/skills/writer/SKILL.md",
+    `${fixture.root}/agents/${fixture.agent.id}/home/.agents/skills/writer/SKILL.md`,
   );
   expect(fixture.chat.get(fixture.agent.id).messages[0]?.text).toBe(
     "$writer draft this",
@@ -1639,7 +1650,7 @@ it("uploads user files, persists their message and queue metadata, and scopes im
   expect(file.mediaType).toBe("image/png");
   expect(
     await readFile(
-      `${fixture.root}/agents/${fixture.agent.id}/workspace/${file.path!.slice("/workspace/".length)}`,
+      `${fixture.root}/agents/${fixture.agent.id}/workspace/${file.path!.slice(`${fixture.root}/agents/${fixture.agent.id}/workspace/`.length)}`,
     ),
   ).toEqual(image);
   expect(
@@ -1668,7 +1679,9 @@ it("uploads user files, persists their message and queue metadata, and scopes im
   expect(resolved).toMatchObject({
     name: "cat.png",
     mediaType: "image/png",
-    path: expect.stringMatching(/^\/workspace\//),
+    path: expect.stringContaining(
+      `${fixture.root}/agents/${fixture.agent.id}/workspace/`,
+    ),
   });
   expect(await turns[0]!.viewImage!(resolved.path)).toEqual({
     mimeType: "image/png",
@@ -1785,9 +1798,16 @@ it("silently completes without trailing text, cards or attachments and resets si
     await turn.onMessage(
       "card",
       { text: "Acknowledged", actions: [], fields: [] },
-      [{ path: "/workspace/does-not-exist.txt" }],
+      [
+        {
+          path: `${fixture.root}/agents/${fixture.agent.id}/workspace/does-not-exist.txt`,
+        },
+      ],
     );
-    await turn.onImage?.("image", "/workspace/does-not-exist.png");
+    await turn.onImage?.(
+      "image",
+      `${fixture.root}/agents/${fixture.agent.id}/workspace/does-not-exist.png`,
+    );
   });
   await Effect.runPromise(fixture.chat.send(fixture.agent.id, input("one")));
   await expect

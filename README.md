@@ -22,8 +22,8 @@ persistent agents and their individual workspaces.
   running reply when supported, queue the next message, or stop the turn.
 - **Respond right in chat.** Agents can send buttons and forms, or request a
   secret through a private input instead of a chat message.
-- **Give agents room to work.** Commands and file edits run in Docker containers
-  with access to the agent's own workspace.
+- **Give agents room to work.** Team members share a persistent Docker environment.
+  Standalone agents run on the host or in an optional private sandbox.
 
 ## Getting started
 
@@ -95,19 +95,19 @@ Deleting an agent removes it and its conversation from Paws, but preserves its
 workspace and home files. Back up your state directory if you want to keep your
 agents and conversations safe.
 
-CLI and local MCP integrations run in a shared Debian environment. Agents can install software
-and system dependencies with the `paws_team_tool` install action, then configure
-CLI or MCP commands to use it. Successful installations survive new sessions and
-are available to every member through team integrations. Ordinary agent shells
-remain separate. Failed installations keep the previous OS image. Shared files
-are read-only during installation; integration authentication is excluded.
+Each agent belongs to one team or is unassigned. A team owns a persistent container
+created from its chosen template. Members share installed software, running
+processes, and team files at `/team/files`, with personal homes and workspaces at
+`/team/agents/<uuid>/`. Personal folders organize files; teammates can access them.
+Use the ordinary shell for commands and `sudo` for system packages. Installed
+software survives container and application restarts. Shared MCP connections are
+managed through `paws_mcp`; local MCP commands use the same team environment.
 
-CLI commands that wait for browser approval can run in command sessions. Agents
-start the command, read its sign-in link, and resume the same session after your
-approval. Sessions keep the integration's authentication home, survive chat turns,
-and expire after 30 minutes. Cancelling a session, deleting its integration or
-team, or shutting down Paws stops its container. Completed output stays private
-and redacted for later reads.
+Unassigned agents default to host execution (`sandbox: false`). Enable Sandbox in
+agent settings for a private persistent container. Host agents have the access
+of the account running Paws. Reassignment requires an idle agent and confirmation;
+personal files move with it, shared team files stay behind, and provider sessions
+restart with the conversation history. Move all members before deleting a team.
 
 Remote MCP connections use the active harness when a native adapter is available
 (currently Codex). Paws runs that client in an isolated helper with a private team
@@ -121,14 +121,15 @@ minutes; shutdown cancels pending attempts. Saved credentials are reused by team
 members using that harness. Other harnesses retain the generic HTTP OAuth/bearer
 client; a service can still restrict which clients it accepts.
 
-Team environment image references live in the state directory; their filesystem
-layers live in Docker's image store. Include both when backing up installed team
-software. Rebuild the base images with `pnpm runtime:build` after runtime updates.
+Templates are recorded in team settings. Installed software lives in retained
+Docker container layers, while personal and shared files live in the state
+directory. Back up both to retain a complete team environment. Rebuilding the
+base template with `pnpm runtime:build` affects newly created environments.
 
-Agents can run commands and edit files in their containers without approval
-prompts. Containers have outbound network access. Provider credentials remain
-outside agent workspaces, but provider executables run on the host, so use ones
-you trust. Secrets entered through private inputs are delivered as temporary
+Agents can run commands without approval prompts. Containers have outbound
+network access. Paws keeps its database and provider authentication outside
+container mounts. Host agents can access whatever the host account permits.
+Use provider executables you trust. Secrets entered through private inputs are delivered as temporary
 files for the agent to use; they are not saved in chat.
 
 Paws is intended for local use. Authentication for remote hosting is not

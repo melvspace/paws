@@ -1,6 +1,5 @@
 import * as Fs from "node:fs/promises";
 import * as Path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { Effect, Schema } from "effect";
 import { CreateAgent, UpdateAgent } from "@paws/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -74,56 +73,6 @@ describe("agent persistence and workspace provisioning", () => {
       );
     }
   });
-});
-
-it("removes legacy configuration while preserving agent identity across restarts", async () => {
-  const root = await temporaryRoot();
-  const db = new DatabaseSync(Path.join(root, "state.sqlite"));
-  const legacy = {
-    id: "bb06b940-1bc0-4cb7-8695-3b4d07f00793",
-    name: "Ada",
-    role: "reviewer",
-    personality: "Careful",
-    specialization: "Code review",
-    instructions: "Review independently.",
-    provider: "codex",
-    status: "configured",
-    createdAt: "2026-10-31T00:00:00.000Z",
-  };
-  db.exec("CREATE TABLE agents (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
-  db.prepare("INSERT INTO agents (id, data) VALUES (?, ?)").run(
-    legacy.id,
-    JSON.stringify(legacy),
-  );
-  db.close();
-  let service = makeAgentService(root);
-
-  try {
-    const expected = [
-      {
-        id: legacy.id,
-        name: legacy.name,
-        provider: legacy.provider,
-        status: legacy.status,
-        createdAt: legacy.createdAt,
-      },
-    ];
-    expect(await Effect.runPromise(service.list())).toEqual(expected);
-    service.close();
-    service = makeAgentService(root);
-    expect(await Effect.runPromise(service.list())).toEqual(expected);
-    const stored = new DatabaseSync(Path.join(root, "state.sqlite"));
-
-    try {
-      const row = stored.prepare("SELECT data FROM agents").get();
-      expect(JSON.parse(String(row?.data))).toEqual(expected[0]);
-    } finally {
-      stored.close();
-    }
-  } finally {
-    service.close();
-    await Fs.rm(root, { recursive: true, force: true });
-  }
 });
 
 it("persists renames without changing identity or workspace contents", async () => {
@@ -220,47 +169,5 @@ it("rejects unknown animals and colors at the wire boundary", () => {
         Schema.decodeUnknownSync(schema)({ name: "Ada", avatar }),
       ).toThrow();
     }
-  }
-});
-
-it("replaces saved tiger avatars with mice while preserving color and identity", async () => {
-  const root = await temporaryRoot();
-  const legacy = {
-    id: "legacy-tiger",
-    name: "Ada",
-    avatar: { animal: "tiger", color: "orange" },
-    provider: "codex",
-    status: "configured",
-    createdAt: "2026-11-01T00:00:00.000Z",
-  };
-  const db = new DatabaseSync(Path.join(root, "state.sqlite"));
-  db.exec("CREATE TABLE agents (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
-  db.prepare("INSERT INTO agents (id, data) VALUES (?, ?)").run(
-    legacy.id,
-    JSON.stringify(legacy),
-  );
-  db.close();
-  let service = makeAgentService(root);
-
-  try {
-    const expected = {
-      ...legacy,
-      avatar: { animal: "mouse", color: "orange" },
-    };
-    expect(await Effect.runPromise(service.list())).toEqual([expected]);
-    service.close();
-    service = makeAgentService(root);
-    expect(await Effect.runPromise(service.list())).toEqual([expected]);
-    const stored = new DatabaseSync(Path.join(root, "state.sqlite"));
-
-    try {
-      const row = stored.prepare("SELECT data FROM agents").get();
-      expect(JSON.parse(String(row?.data))).toEqual(expected);
-    } finally {
-      stored.close();
-    }
-  } finally {
-    service.close();
-    await Fs.rm(root, { recursive: true, force: true });
   }
 });

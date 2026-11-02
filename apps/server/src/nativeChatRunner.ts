@@ -44,7 +44,7 @@ export function makeNativeChatRunner(
     const lease = await leaseToolRuntime(
       root,
       turn.agentId,
-      agentContext(root, turn.agentId).teams.map((team) => team.id),
+      agentContext(root, turn.agentId),
     ).catch(() => {
       throw new ChatExecutionError(
         "Chat runtime unavailable. Run pnpm runtime:build with Docker running.",
@@ -76,7 +76,7 @@ export function makeNativeChatRunner(
             ? { PAWS_CURSOR_AUTH_FILE: join(root, "cursor-auth.json") }
             : {}),
         }),
-        guarded,
+        { ...guarded, workspace: lease.workspace, home: lease.home },
         {
           execute: lease.execute,
           deliverSecret: async (reference) => {

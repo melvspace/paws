@@ -1,10 +1,11 @@
+import { agentExecutionPaths } from "./teamContext.ts";
 import { assertAgentId } from "@paws/shared";
 import * as Fs from "node:fs";
 import * as Path from "node:path";
 import { parseDocument } from "yaml";
 import { Schema } from "effect";
 import type { AgentSkill } from "@paws/contracts";
-import { workspaceLayout } from "@paws/runtime";
+import { resolveWorkspaceDirectory } from "@paws/runtime";
 
 const metadata = Schema.Struct({
   name: Schema.String,
@@ -16,9 +17,18 @@ const metadata = Schema.Struct({
 export function listAgentSkills(
   root: string,
   agentId: string,
-  teamIds: readonly string[] = [],
+  teamId: string | null = null,
 ): AgentSkill[] {
-  const layout = workspaceLayout(root, agentId);
+  const paths = agentExecutionPaths(root, agentId);
+  let workspace: string;
+  let home: string;
+
+  try {
+    workspace = resolveWorkspaceDirectory(root, agentId, "workspace");
+    home = resolveWorkspaceDirectory(root, agentId, "home");
+  } catch {
+    return [];
+  }
   const skills = new Map<string, AgentSkill>();
   let visited = 0;
 
@@ -27,7 +37,7 @@ export function listAgentSkills(
 
     try {
       const real = Fs.realpathSync(directory);
-      const relative = Path.relative(mount, real);
+      const relative = Path.relative(Fs.realpathSync(mount), real);
 
       if (relative.startsWith("..") || Path.isAbsolute(relative)) return;
       if (!Fs.lstatSync(directory).isDirectory()) return;
@@ -98,8 +108,8 @@ export function listAgentSkills(
   }
 
   for (const [host, virtual] of [
-    [layout.workspace, "/workspace"],
-    [layout.home, "/home/agent"],
+    [workspace, paths.workspace],
+    [home, paths.home],
   ]) {
     for (const folder of [
       ".agents/skills",
@@ -110,10 +120,10 @@ export function listAgentSkills(
     }
   }
 
-  for (const id of teamIds) {
+  for (const id of teamId ? [teamId] : []) {
     assertAgentId(id);
     const host = Path.join(root, "teams", id, "skills");
-    visit(host, host, `/teams/${id}/skills`);
+    visit(host, host, "/team/skills");
   }
 
   return [...skills.values()].sort((a, b) => a.name.localeCompare(b.name));

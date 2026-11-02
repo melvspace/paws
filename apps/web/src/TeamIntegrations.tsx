@@ -63,7 +63,7 @@ export function TeamIntegrations({
           disabled={disabled}
           onClick={() =>
             setEditing({
-              item: { id: "", kind: "cli", command: "", args: [] },
+              item: { id: "", kind: "mcp-stdio", command: "", args: [] },
               existing: false,
             })
           }
@@ -86,11 +86,7 @@ export function TeamIntegrations({
               <PlugIcon size={16} />
               <span>{item.id}</span>
               <span className="team-row-meta">
-                {item.kind === "cli"
-                  ? "CLI"
-                  : item.kind === "mcp-http"
-                    ? "Remote MCP"
-                    : "Local MCP"}
+                {item.kind === "mcp-http" ? "Remote MCP" : "Local MCP"}
               </span>
               <ChevronRightIcon size={16} />
             </Button>
@@ -319,18 +315,13 @@ function IntegrationEditor({
               onChange={(event) => {
                 const kind = event.target.value;
 
-                if (
-                  kind === "cli" ||
-                  kind === "mcp-stdio" ||
-                  kind === "mcp-http"
-                ) {
+                if (kind === "mcp-stdio" || kind === "mcp-http") {
                   change({ kind });
                   setCredentialName(kind === "mcp-http" ? "BEARER_TOKEN" : "");
                 }
               }}
               onBlur={autosave}
             >
-              <option value="cli">CLI tool</option>
               <option value="mcp-stdio">Local MCP</option>
               <option value="mcp-http">Remote MCP</option>
             </select>

@@ -1,9 +1,10 @@
+import { ReassignAgentDialog } from "./ReassignAgentDialog.tsx";
 import { Input } from "./components/ui/input.tsx";
 import { Button } from "./components/ui/button.tsx";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { conversationsAtom, moveAgentTeam } from "@paws/client-runtime";
+import { conversationsAtom } from "@paws/client-runtime";
 import {
   PanelLeft,
   PanelLeftClose,
@@ -20,7 +21,7 @@ interface AgentSidebarProps {
   teams?: readonly Team[];
   selectedId: string | null;
   connected: boolean;
-  onCreate: () => void;
+  onCreate: (teamId?: string) => void;
   onSettings: (agent: Agent) => void;
   onAppSettings: () => void;
   onNavigate?: (agent: Agent) => void;
@@ -51,39 +52,33 @@ export function AgentSidebar({
   } | null>(null);
   const [closedTeams, setClosedTeams] = useState<readonly string[]>([]);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
-  const [moving, setMoving] = useState<string | null>(null);
-  const [moveError, setMoveError] = useState<string | null>(null);
-  const isIdle = (id: string) => (activities.get(id) ?? "idle") === "idle";
+  const [moveRequest, setMoveRequest] = useState<{
+    agent: Agent;
+    destination: Team | null;
+  } | null>(null);
+  const moving = moveRequest?.agent.id ?? null;
+  const isIdle = (id: string) => activities.get(id) !== "working";
 
-  async function drop(toTeamId: string | null) {
+  function drop(toTeamId: string | null) {
     const source = dragged;
     setDragged(null);
     setDropTarget(null);
+    const agent = agents.find((item) => item.id === source?.agentId);
 
     if (
       !source ||
+      !agent ||
       source.fromTeamId === toTeamId ||
       !connected ||
       moving ||
-      !isIdle(source.agentId)
+      !isIdle(agent.id)
     )
       return;
 
-    setMoving(source.agentId);
-    setMoveError(null);
-
-    try {
-      await moveAgentTeam(source.agentId, source.fromTeamId, toTeamId);
-      setClosedTeams((ids) =>
-        ids.filter((id) => id !== (toTeamId ?? "unassigned")),
-      );
-    } catch (cause) {
-      setMoveError(
-        cause instanceof Error ? cause.message : "Could not move agent.",
-      );
-    } finally {
-      setMoving(null);
-    }
+    setMoveRequest({
+      agent,
+      destination: teams.find((team) => team.id === toTeamId) ?? null,
+    });
   }
 
   const [desktopCollapsed, setCollapsed] = useState(false);
@@ -157,34 +152,22 @@ export function AgentSidebar({
             aria-label="New agent"
             title="New agent"
             disabled={!connected}
-            onClick={onCreate}
+            onClick={() => onCreate()}
           >
             <PlusIcon aria-hidden />
           </Button>
         </div>
-        {moveError && (
-          <p className="sidebar-empty" role="alert">
-            {moveError}
-          </p>
-        )}
-        {moving && (
-          <p className="sidebar-empty" role="status">
-            Moving agent…
-          </p>
-        )}
         <nav className="sidebar-agents" aria-label="Agents">
           {[
             ...teams.map((team) => ({
               id: team.id,
               name: team.name,
-              agents: visibleAgents.filter((agent) =>
-                agent.teamIds?.includes(team.id),
-              ),
+              agents: visibleAgents.filter((agent) => agent.teamId === team.id),
             })),
             {
               id: "unassigned",
               name: "Unassigned",
-              agents: visibleAgents.filter((agent) => !agent.teamIds?.length),
+              agents: visibleAgents.filter((agent) => !agent.teamId),
             },
           ]
             .filter(
@@ -231,12 +214,26 @@ export function AgentSidebar({
                   void drop(group.id === "unassigned" ? null : group.id);
                 }}
               >
-                <Collapsible.Trigger className="sidebar-team-heading">
-                  {group.name}{" "}
-                  {group.agents.length > 0 && (
-                    <span>{group.agents.length}</span>
+                <div className="sidebar-team-header">
+                  <Collapsible.Trigger className="sidebar-team-heading">
+                    {group.name}{" "}
+                    {group.agents.length > 0 && (
+                      <span>{group.agents.length}</span>
+                    )}
+                  </Collapsible.Trigger>
+                  {group.id !== "unassigned" && (
+                    <Button
+                      type="button"
+                      className="sidebar-icon-button"
+                      aria-label={`New agent in ${group.name}`}
+                      title={`New agent in ${group.name}`}
+                      disabled={!connected}
+                      onClick={() => onCreate(group.id)}
+                    >
+                      <PlusIcon aria-hidden />
+                    </Button>
                   )}
-                </Collapsible.Trigger>
+                </div>
                 <Collapsible.Panel>
                   <ul>
                     {group.agents.map((agent) => (
@@ -324,6 +321,21 @@ export function AgentSidebar({
           )}
         </nav>
       </Collapsible.Panel>
+      {moveRequest && (
+        <ReassignAgentDialog
+          agent={moveRequest.agent}
+          destination={moveRequest.destination}
+          connected={connected}
+          onClose={() => setMoveRequest(null)}
+          onMoved={() =>
+            setClosedTeams((ids) =>
+              ids.filter(
+                (id) => id !== (moveRequest.destination?.id ?? "unassigned"),
+              ),
+            )
+          }
+        />
+      )}
       <div className="sidebar-footer">
         <Button
           type="button"

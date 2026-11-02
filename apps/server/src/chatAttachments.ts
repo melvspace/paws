@@ -1,3 +1,4 @@
+import { agentExecutionPaths } from "./teamContext.ts";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -18,7 +19,7 @@ import {
   extname,
 } from "node:path";
 import type { ChatAttachment, ChatFileInput } from "@paws/contracts";
-import { workspaceLayout } from "@paws/runtime";
+import { resolveWorkspaceDirectory } from "@paws/runtime";
 
 function inside(root: string, path: string) {
   const suffix = relative(root, path);
@@ -31,12 +32,12 @@ export async function saveGeneratedImage(
   agentId: string,
   savedPath: string,
 ): Promise<ChatAttachment> {
-  const prefix = "/home/agent/.codex/generated_images/";
+  const prefix = `${agentExecutionPaths(root, agentId).home}/.codex/generated_images/`;
 
   if (!savedPath.startsWith(prefix))
     throw new Error("Invalid generated image path.");
 
-  const home = await realpath(workspaceLayout(root, agentId).home);
+  const home = resolveWorkspaceDirectory(root, agentId, "home");
   const directory = await realpath(join(home, ".codex/generated_images"));
   const source = await realpath(
     resolve(directory, savedPath.slice(prefix.length)),
@@ -160,7 +161,8 @@ export async function saveWorkspaceAttachments(
   if (files.length > 4) throw new Error("Too many attachments.");
   if (!files.length) return [];
 
-  const workspace = await realpath(workspaceLayout(root, agentId).workspace);
+  const workspace = resolveWorkspaceDirectory(root, agentId, "workspace");
+  const virtual = agentExecutionPaths(root, agentId).workspace;
   const saved: { attachment: ChatAttachment; data: Buffer }[] = [];
   let total = 0;
 
@@ -169,12 +171,15 @@ export async function saveWorkspaceAttachments(
       !file.path ||
       file.path.length > 4096 ||
       file.path.includes("\0") ||
-      (isAbsolute(file.path) && !file.path.startsWith("/workspace/"))
+      (isAbsolute(file.path) && !file.path.startsWith(`${virtual}/`))
     )
       throw new Error("Attach a file inside /workspace.");
 
     const source = await realpath(
-      resolve(workspace, file.path.replace(/^\/workspace\//, "")),
+      resolve(
+        workspace,
+        isAbsolute(file.path) ? file.path.slice(virtual.length + 1) : file.path,
+      ),
     );
 
     if (!inside(workspace, source))
@@ -261,7 +266,8 @@ export async function saveUploadedAttachment(
   if (!name || name === "." || name === "..")
     throw new Error("Invalid filename.");
 
-  const workspace = await realpath(workspaceLayout(root, agentId).workspace);
+  const workspace = resolveWorkspaceDirectory(root, agentId, "workspace");
+  const virtual = agentExecutionPaths(root, agentId).workspace;
   const directory = await mkdtemp(join(workspace, ".paws-upload-"));
 
   try {
@@ -292,7 +298,7 @@ export async function saveUploadedAttachment(
       name,
       mediaType: fileMediaType(data, name),
       size: data.length,
-      path: `/workspace/${basename(directory)}/${name}`,
+      path: `${virtual}/${basename(directory)}/${name}`,
     };
     const destination = join(root, "chat-attachments", agentId);
     await mkdir(destination, { recursive: true, mode: 0o700 });
