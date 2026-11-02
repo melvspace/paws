@@ -83,8 +83,7 @@ function scheduleLabel(trigger: SaveRoutine["trigger"]) {
   if (trigger.kind === "interval")
     return `Every ${trigger.minutes} ${trigger.minutes === 1 ? "minute" : "minutes"}`;
   if (trigger.kind === "once") return formatRoutineTime(trigger.at);
-  if (trigger.kind === "webhook")
-    return trigger.eventType ? `Webhook · ${trigger.eventType}` : "Webhook";
+  if (trigger.kind === "webhook") return "Webhook";
 
   const presets: Record<string, string> = {
     "0 9 * * *": "Daily at 09:00",
@@ -1045,32 +1044,14 @@ function RoutineEditor({
           </label>
         )}
         {draft.trigger.kind === "webhook" && (
-          <>
-            <label className="settings-row">
-              Event type
-              <Input
-                value={draft.trigger.eventType ?? ""}
-                onChange={(event) => {
-                  if (draft.trigger.kind === "webhook")
-                    change({
-                      trigger: {
-                        ...draft.trigger,
-                        eventType: event.target.value || undefined,
-                      },
-                    });
-                }}
-                onBlur={blur}
-              />
-            </label>
-            <div className="settings-row routine-filter-row">
-              <span>Filters</span>
-              <RoutineConditionBuilder
-                filters={filters}
-                onChange={changeFilters}
-                onCommit={blur}
-              />
-            </div>
-          </>
+          <div className="settings-row routine-filter-row">
+            <span>Filters</span>
+            <RoutineConditionBuilder
+              filters={filters}
+              onChange={changeFilters}
+              onCommit={blur}
+            />
+          </div>
         )}
       </div>
       <details className="routine-advanced">

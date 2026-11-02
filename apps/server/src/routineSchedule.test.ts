@@ -37,9 +37,6 @@ it.each([
   expect(decoded).toEqual(trigger);
   validateTrigger(trigger);
   expect(matchesRoutineEvent(trigger, payload)).toBe(expected);
-  expect(
-    matchesRoutineEvent({ ...trigger, eventType: "push" }, payload, "issue"),
-  ).toBe(false);
 });
 
 it("uses Boolean identities for empty groups", () => {

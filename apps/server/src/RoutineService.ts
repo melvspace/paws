@@ -714,8 +714,7 @@ export function makeRoutineService(
 
     try {
       const run =
-        !delivery.ignore &&
-        matchesRoutineEvent(routine.trigger, payload, delivery.eventType)
+        !delivery.ignore && matchesRoutineEvent(routine.trigger, payload)
           ? enqueue(id, "webhook", body.toString("utf8"))
           : undefined;
 

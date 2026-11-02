@@ -23,7 +23,7 @@ export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
     {
       name: "paws_routine",
       description:
-        "Manage your own routines or query chat history. Actions: list; save with routine (name, instruction, enabled, trigger, missed skip/latest, timeoutMinutes), optional id and current revision; delete/run with id; history with optional run id or text search; message with text to your main chat. Trigger: {kind: once, at: ISO date}, {kind: interval, minutes}, {kind: cron, expression: five fields, timezone: IANA zone}, or {kind: webhook, filters: {combinator: and/or, rules: [{path, operator: equals/in/exists, value?} or nested group]}, eventType?}. Webhook run requires payload as a JSON string. No access to signing secrets.",
+        "Manage your own routines or query chat history. Actions: list; save with routine (name, instruction, enabled, trigger, missed skip/latest, timeoutMinutes), optional id and current revision; delete/run with id; history with optional run id or text search; message with text to your main chat. Trigger: {kind: once, at: ISO date}, {kind: interval, minutes}, {kind: cron, expression: five fields, timezone: IANA zone}, or {kind: webhook, filters: {combinator: and/or, rules: [{path, operator: equals/in/exists, value?} or nested group]}}. Webhook run requires payload as a JSON string. No access to signing secrets.",
       schema: z.object({
         action: z.enum(["list", "save", "delete", "run", "history", "message"]),
         id: z.string().optional(),

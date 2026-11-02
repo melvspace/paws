@@ -31,7 +31,6 @@ export const RoutineTrigger = Schema.Union([
   }),
   Schema.Struct({
     kind: Schema.Literal("webhook"),
-    eventType: Schema.optional(Schema.String),
     filters: RoutineFilterGroup,
   }),
 ]);

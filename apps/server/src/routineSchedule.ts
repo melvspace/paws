@@ -102,7 +102,6 @@ export function nextRoutineTime(
 export function matchesRoutineEvent(
   trigger: Extract<RoutineTrigger, { kind: "webhook" }>,
   payload: unknown,
-  eventType?: string,
 ) {
   const field = (path: string) =>
     path
@@ -114,9 +113,6 @@ export function matchesRoutineEvent(
             : undefined,
         payload,
       );
-
-  if (trigger.eventType && (eventType ?? field("type")) !== trigger.eventType)
-    return false;
 
   function matches(filter: RoutineFilter | RoutineFilterGroup): boolean {
     if ("rules" in filter)

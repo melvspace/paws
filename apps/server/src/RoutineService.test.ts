@@ -145,7 +145,6 @@ it("authenticates signed raw payloads, filters events, durably deduplicates deli
     definition({
       trigger: {
         kind: "webhook",
-        eventType: "issue",
         filters: {
           combinator: "and",
           rules: [{ path: "data.repo", operator: "equals", value: "paws" }],
@@ -532,7 +531,6 @@ it("preserves webhook signatures after filter edits and revokes them when leavin
       ...routine,
       trigger: {
         kind: "webhook",
-        eventType: "issue",
         filters: { combinator: "and", rules: [] },
       },
     },
@@ -813,15 +811,19 @@ it("deduplicates native GitLab and generic deliveries across restarts without ch
   expect(JSON.stringify(state)).not.toContain(secret);
 });
 
-it("filters by native event headers and acknowledges GitHub pings without starting runs", async () => {
+it("filters by builder conditions and acknowledges GitHub pings without starting runs", async () => {
   await using fixture = await setup();
   const routine = fixture.service.save(
     fixture.agent.id,
     definition({
       trigger: {
         kind: "webhook",
-        eventType: "Merge Request Hook",
-        filters: { combinator: "and", rules: [] },
+        filters: {
+          combinator: "and",
+          rules: [
+            { path: "object_kind", operator: "equals", value: "merge_request" },
+          ],
+        },
       },
     }),
   );
@@ -832,7 +834,7 @@ it("filters by native event headers and acknowledges GitHub pings without starti
       routine.id,
       {
         "x-gitlab-token": secret,
-        "x-gitlab-event": "Merge Request Hook",
+        "x-gitlab-event": "Push Hook",
       },
       body,
     ).outcome,
@@ -842,9 +844,9 @@ it("filters by native event headers and acknowledges GitHub pings without starti
       routine.id,
       {
         "x-gitlab-token": secret,
-        "x-gitlab-event": "Push Hook",
+        "x-gitlab-event": "Merge Request Hook",
       },
-      body,
+      Buffer.from('{"object_kind":"push"}'),
     ).outcome,
   ).toBe("filtered");
   fixture.service.save(
