@@ -39,4 +39,9 @@ export interface RuntimeLease {
   dispose(): Promise<void>;
 }
 
-export { leaseCodexRuntime, leaseToolRuntime } from "./container.ts";
+export {
+  containerArgs,
+  runtimeIdentity,
+  leaseCodexRuntime,
+  leaseToolRuntime,
+} from "./container.ts";

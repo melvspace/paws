@@ -1,3 +1,4 @@
+import { TeamsSettings } from "../TeamsSettings.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Button } from "../components/ui/button.tsx";
 // Adapted from T3 Code AppRouteModal, SettingsContentLayout, and SettingsSidebarNav (MIT).
@@ -5,6 +6,7 @@ import { Fragment, useRef, useState } from "react";
 import {
   PaintbrushIcon,
   PlugIcon,
+  UsersIcon,
   SearchIcon,
   XIcon,
   MessageSquareIcon,
@@ -25,9 +27,11 @@ export function AppSettingsDialog({
   initialPage = "Appearance",
 }: {
   onDismiss: () => void;
-  initialPage?: "Appearance" | "Chat" | "Providers";
+  initialPage?: "Appearance" | "Chat" | "Providers" | "Teams";
 }) {
   const [page, setPage] = useState(initialPage);
+  const beforeClose = useRef<(() => Promise<void>) | null>(null);
+  const closing = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const pages = [
@@ -48,13 +52,40 @@ export function AppSettingsDialog({
         "providers models codex claude cursor grok fx opencode antigravity muse pi acp authentication",
       Icon: PlugIcon,
     },
+    {
+      name: "Teams" as const,
+      keywords:
+        "teams members skills memories files tools mcp shared authentication",
+      Icon: UsersIcon,
+    },
   ].filter((item) => item.keywords.includes(query.trim().toLowerCase()));
+
+  async function dismiss() {
+    if (closing.current) return;
+
+    closing.current = true;
+
+    try {
+      if (document.activeElement instanceof HTMLElement)
+        document.activeElement.blur();
+
+      await beforeClose.current?.();
+      onDismiss();
+    } catch {
+      // The active settings editor keeps failed edits visible.
+    } finally {
+      closing.current = false;
+    }
+  }
 
   return (
     <Dialog
       open
-      onOpenChange={(open) => {
-        if (!open) onDismiss();
+      onOpenChange={(open, details) => {
+        if (!open) {
+          details.cancel();
+          void dismiss();
+        }
       }}
     >
       <DialogPopup
@@ -81,7 +112,11 @@ export function AppSettingsDialog({
               <Button
                 className="settings-nav-item"
                 aria-current={page === name ? "page" : undefined}
-                onClick={() => setPage(name)}
+                onClick={() => {
+                  void Promise.resolve(beforeClose.current?.())
+                    .then(() => setPage(name))
+                    .catch(() => {});
+                }}
               >
                 <Icon size={16} aria-hidden />
                 <span>{name}</span>
@@ -119,6 +154,8 @@ export function AppSettingsDialog({
                 </section>
               ) : page === "Chat" ? (
                 <ChatSettings />
+              ) : page === "Teams" ? (
+                <TeamsSettings beforeClose={beforeClose} />
               ) : (
                 <ProviderSettings />
               )}

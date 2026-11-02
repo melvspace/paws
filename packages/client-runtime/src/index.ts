@@ -4,6 +4,7 @@ import { providersAtom } from "./providers.ts";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import {
   Agent,
+  Team,
   Snapshot,
   type CreateAgent,
   type UpdateAgent,
@@ -119,3 +120,65 @@ export async function deleteAgent(id: string) {
 export * from "./providers.ts";
 
 export * from "./chat.ts";
+
+export async function saveTeam(
+  input:
+    | import("@paws/contracts").SaveTeam
+    | import("@paws/contracts").UpdateTeam,
+  id?: string,
+) {
+  const response = await fetch(
+    id ? `/api/teams/${encodeURIComponent(id)}` : "/api/teams",
+    {
+      method: id ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+
+  if (!response.ok)
+    throw new Error(
+      "Could not save team. Retry, or discard team edits to reload the latest values.",
+    );
+
+  return Schema.decodeUnknownSync(Team)(await response.json());
+}
+
+export async function deleteTeam(id: string) {
+  const response = await fetch(`/api/teams/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok && response.status !== 404)
+    throw new Error("Could not delete team.");
+}
+
+export async function moveAgentTeam(
+  id: string,
+  fromTeamId: string | null,
+  toTeamId: string | null,
+) {
+  const response = await fetch(`/api/agents/${encodeURIComponent(id)}/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fromTeamId, toTeamId }),
+  });
+
+  if (!response.ok)
+    throw new Error(
+      response.status === 409
+        ? "Only idle agents can move between teams."
+        : "Could not move agent. Check your connection and team membership.",
+    );
+}
+
+export async function getTeam(id: string) {
+  const response = await fetch("/api/agents");
+
+  if (!response.ok) throw new Error("Could not reload team. Try again.");
+
+  const snapshot = Schema.decodeUnknownSync(Snapshot)(await response.json());
+  const team = snapshot.teams?.find((item) => item.id === id);
+
+  return team ?? null;
+}

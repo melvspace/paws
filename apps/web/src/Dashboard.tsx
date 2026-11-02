@@ -33,7 +33,7 @@ export function Dashboard() {
   const { snapshot, connected, error } = useAtomValue(agentsAtom);
   const [dialog, setDialog] = useState<{ agent: Agent | null } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState<
-    "Appearance" | "Providers" | null
+    "Appearance" | "Providers" | "Teams" | null
   >(null);
   const hash = useSyncExternalStore(subscribeToSelection, selectionSnapshot);
   const agent = selectedAgent(snapshot.agents, hash);
@@ -48,6 +48,7 @@ export function Dashboard() {
   const sidebar = (
     <AgentSidebar
       agents={snapshot.agents}
+      teams={snapshot.teams ?? []}
       selectedId={agent?.id ?? null}
       connected={connected}
       onCreate={() => {

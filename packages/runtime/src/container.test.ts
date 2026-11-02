@@ -114,7 +114,7 @@ process.exit(process.argv[2]==='run' ? 1 : 0);
       launch.filter(
         (_value: string, index: number) => launch[index - 1] === "--mount",
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(launch.join(" ")).not.toMatch(
       /auth.json|usr\/local\/bin|API_KEY|docker.sock/,
     );

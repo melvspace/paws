@@ -8,6 +8,7 @@ export default defineConfig({
   optimizeDeps: {
     include: [
       "@base-ui/react/collapsible",
+      "@base-ui/react/checkbox",
       "@base-ui/react/menu",
       "@base-ui/react/select",
       "@tanstack/react-router",

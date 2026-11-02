@@ -1,3 +1,4 @@
+import { assertAgentId } from "@paws/shared";
 import * as Fs from "node:fs";
 import * as Path from "node:path";
 import { parseDocument } from "yaml";
@@ -12,7 +13,11 @@ const metadata = Schema.Struct({
 });
 
 // Workspace skills take precedence over home skills, independent of provider.
-export function listAgentSkills(root: string, agentId: string): AgentSkill[] {
+export function listAgentSkills(
+  root: string,
+  agentId: string,
+  teamIds: readonly string[] = [],
+): AgentSkill[] {
   const layout = workspaceLayout(root, agentId);
   const skills = new Map<string, AgentSkill>();
   let visited = 0;
@@ -103,6 +108,12 @@ export function listAgentSkills(root: string, agentId: string): AgentSkill[] {
     ]) {
       visit(Path.join(host!, folder), host!, `${virtual}/${folder}`);
     }
+  }
+
+  for (const id of teamIds) {
+    assertAgentId(id);
+    const host = Path.join(root, "teams", id, "skills");
+    visit(host, host, `/teams/${id}/skills`);
   }
 
   return [...skills.values()].sort((a, b) => a.name.localeCompare(b.name));

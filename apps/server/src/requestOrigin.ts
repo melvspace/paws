@@ -30,3 +30,16 @@ export function isAllowedRequestOrigin(headers: IncomingHttpHeaders) {
     return false;
   }
 }
+
+// Loading a sign-in page grants no access. Browser wrappers and external links
+// do not reliably preserve navigation metadata; validate the destination host,
+// and enforce the ordinary origin policy on submissions instead.
+export function isAllowedSignInRequest(
+  headers: IncomingHttpHeaders,
+  method: string | undefined,
+) {
+  if (!isAllowedRequestOrigin({ origin: `http://${headers.host}` }))
+    return false;
+
+  return method === "GET" || isAllowedRequestOrigin(headers);
+}

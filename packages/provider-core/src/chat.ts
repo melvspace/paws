@@ -25,6 +25,8 @@ export interface ChatAttachmentFile {
 }
 
 export interface ChatTurn {
+  memoryTool?(input: unknown): Promise<unknown>;
+  teamTool?(input: unknown): Promise<unknown>;
   agentId: string;
   agentName: string;
   nativeThreadId: string | null;
@@ -65,6 +67,9 @@ export type RunChatTurn = (turn: ChatTurn) => Promise<void>;
 
 // Adapters may expose only deliberately safe, user-facing execution errors.
 export class ChatExecutionError extends Error {}
+
+// Only explicitly sanitized diagnostics may cross the tool/provider boundary.
+export class ChatToolError extends Error {}
 
 // The adapter refused resume before consuming any new input; a fresh handoff is safe.
 export class ChatSessionUnavailableError extends Error {}

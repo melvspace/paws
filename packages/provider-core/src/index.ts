@@ -22,4 +22,9 @@ export interface ProviderAdapter {
 export * from "./catalog.ts";
 export * from "./chat.ts";
 
-export { chatInstructions, chatHarnessRevision } from "./instructions.ts";
+export {
+  chatInstructions,
+  chatHarnessRevision,
+  teamToolDescription,
+} from "./instructions.ts";
+export type { McpHarnessClient } from "./mcp.ts";

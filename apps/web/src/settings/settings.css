@@ -198,3 +198,194 @@
     padding: 16px;
   }
 }
+
+.teams-settings {
+  width: 100%;
+  min-width: 0;
+}
+.team-page-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+.team-collection {
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.team-collection > * + * {
+  border-top: 1px solid var(--border);
+}
+.team-collection-row {
+  display: flex;
+  width: 100%;
+  min-height: 56px;
+  justify-content: flex-start;
+  padding: 14px 18px;
+  border-radius: 0;
+  font-size: 13px;
+}
+.team-collection-row > span:first-of-type {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+.team-row-meta,
+.team-empty,
+.team-resource-path {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.team-empty {
+  margin: 24px 0;
+  text-align: center;
+}
+.team-detail-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.team-detail-heading > span {
+  flex: 1;
+}
+.team-tabs {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.team-tabs [role="tab"] {
+  padding: 10px 0;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.team-tabs [aria-selected="true"] {
+  border-bottom-color: var(--foreground);
+  color: var(--foreground);
+}
+.teams-settings .settings-row > label {
+  margin: 0;
+  font-size: 13px;
+}
+.teams-settings .settings-row > select {
+  flex: 0 0 55%;
+  width: 55%;
+  min-width: 0;
+}
+.teams-settings .settings-row > input {
+  flex-basis: 55%;
+  width: 55%;
+}
+.team-member-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 14px 18px;
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+}
+.team-member-row > span:not([data-slot]) {
+  flex: 1;
+}
+.team-member-row .agent-avatar {
+  width: 28px;
+  height: 28px;
+}
+.teams-settings .team-create,
+.teams-settings .team-editor-form {
+  max-width: none;
+  width: 100%;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.team-create {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.team-create input {
+  min-width: 0;
+  flex: 1;
+}
+.team-create button {
+  white-space: nowrap;
+}
+.team-stack-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+.team-editor-form .actions {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+.team-files > .team-list:empty {
+  display: none;
+}
+.team-files label {
+  margin: 0;
+  font-weight: 400;
+}
+.team-files details {
+  margin-top: 16px;
+}
+.team-files details label {
+  display: block;
+  margin: 12px 0 6px;
+}
+.team-files ul {
+  padding: 0;
+  margin: 0 0 16px;
+  list-style: none;
+}
+.team-files li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .teams-settings .settings-row > input,
+  .teams-settings .settings-row > select {
+    width: 100%;
+    flex-basis: auto;
+  }
+  .team-tabs {
+    gap: 14px;
+  }
+}
+
+.team-file-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.team-file-toolbar > span {
+  flex: 1;
+}
+.team-file-row a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: inherit;
+  text-decoration: none;
+}
+.team-file-row button {
+  justify-content: flex-start;
+  width: 100%;
+  padding: 0;
+  font-size: 13px;
+}

@@ -41,6 +41,29 @@ function Harness({
   );
 }
 
+it("shows the hint only while the composer is empty, including after multiline edits", async () => {
+  const fetch = vi
+    .spyOn(window, "fetch")
+    .mockImplementation(async () => Response.json([]));
+
+  try {
+    await using _screen = await render(<Harness />);
+    const input = page.getByRole("textbox", { name: "Message Ada" });
+    const hint = () => getComputedStyle(input.element(), "::before").content;
+
+    expect(hint()).toBe('"Ask anything. $ skills, / commands"');
+    await input.fill("Check next sprint tasks");
+    expect(hint()).toBe("none");
+    await userEvent.keyboard("{End}{Shift>}{Enter}{/Shift}check");
+    expect(input.element().textContent).toContain("check");
+    expect(hint()).toBe("none");
+    await input.fill("");
+    expect(hint()).toBe('"Ask anything. $ skills, / commands"');
+  } finally {
+    fetch.mockRestore();
+  }
+});
+
 it("searches skills, inserts a chip without sending, persists Markdown, supports undo and Escape", async () => {
   const fetch = vi
     .spyOn(window, "fetch")

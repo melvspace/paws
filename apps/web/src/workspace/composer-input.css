@@ -51,7 +51,7 @@
   margin: 0 0 0.45em;
   color: inherit;
 }
-.composer-editor .tiptap:has(> p:only-child > br:only-child)::before {
+.composer-editor[data-empty="true"] .tiptap::before {
   content: attr(data-placeholder);
   float: left;
   height: 0;

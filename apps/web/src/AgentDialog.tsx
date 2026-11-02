@@ -1,3 +1,7 @@
+import { Checkbox } from "./components/ui/checkbox.tsx";
+import { Textarea } from "./components/ui/textarea.tsx";
+import { useAtomValue } from "@effect/atom-react";
+import { agentsAtom } from "@paws/client-runtime";
 import { Input } from "./components/ui/input.tsx";
 import { Button } from "./components/ui/button.tsx";
 import { useRef, useState, type FormEvent } from "react";
@@ -36,67 +40,88 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
   const keepAgentRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const saveInFlight = useRef<Promise<boolean> | null>(null);
-  const [avatar, setAvatar] = useState<AgentAvatar>(
-    () => agent?.avatar ?? defaultAgentAvatar(agent?.id ?? crypto.randomUUID()),
+  const initialAvatar = useRef<AgentAvatar>(
+    agent?.avatar ?? defaultAgentAvatar(agent?.id ?? crypto.randomUUID()),
   );
-  const saved = useRef({ name: agent?.name ?? "", avatar });
-  const [name, setName] = useState(agent?.name ?? "");
+  const { snapshot } = useAtomValue(agentsAtom);
+  const [draft, setDraft] = useState({
+    name: agent?.name ?? "",
+    avatar: initialAvatar.current,
+    teamIds: agent?.teamIds ?? [],
+    memory: agent?.memory ?? "",
+  });
+  const draftRef = useRef(draft);
+  const saved = useRef(draft);
+  const { name, avatar, teamIds, memory } = draft;
+
+  function change(patch: Partial<typeof draft>) {
+    draftRef.current = { ...draftRef.current, ...patch };
+    setDraft(draftRef.current);
+    setError(null);
+  }
+
   const [pending, setPending] = useState<"save" | "delete" | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function saveAgent(nextAvatar = avatar): Promise<boolean> {
-    if (saveInFlight.current) {
-      return saveInFlight.current;
-    }
+  function saveAgent(): Promise<boolean> {
+    if (saveInFlight.current) return saveInFlight.current;
+    if (!agent) return Promise.resolve(true);
 
-    const nextName = name.trim();
+    const request = (async () => {
+      while (true) {
+        const next = {
+          ...draftRef.current,
+          name: draftRef.current.name.trim(),
+        };
 
-    if (
-      !agent ||
-      (nextName === saved.current.name &&
-        nextAvatar.animal === saved.current.avatar.animal &&
-        nextAvatar.color === saved.current.avatar.color)
-    ) {
-      return Promise.resolve(true);
-    }
+        if (JSON.stringify(next) === JSON.stringify(saved.current)) return true;
+        if (!next.name || next.name.length > 80) {
+          setError("Enter a name of 1–80 characters.");
+          inputRef.current?.focus();
 
-    if (!nextName || nextName.length > 80) {
-      setError("Enter a name of 1–80 characters.");
-      inputRef.current?.focus();
+          return false;
+        }
 
-      return Promise.resolve(false);
-    }
+        if (!connected) {
+          setError("Reconnect to save your changes.");
 
-    if (!connected) {
-      setError("Reconnect to save your changes.");
+          return false;
+        }
 
-      return Promise.resolve(false);
-    }
+        setPending("save");
+        setError(null);
 
-    setPending("save");
-    setError(null);
-    const request = updateAgent(agent.id, {
-      name: nextName,
-      avatar: nextAvatar,
-    })
-      .then(() => {
-        saved.current = { name: nextName, avatar: nextAvatar };
-        setName(nextName);
+        try {
+          await updateAgent(agent.id, {
+            name: next.name,
+            avatar: next.avatar,
+            ...(JSON.stringify(next.teamIds) !==
+            JSON.stringify(saved.current.teamIds)
+              ? { teamIds: next.teamIds }
+              : {}),
+            ...(next.memory !== saved.current.memory
+              ? { memory: next.memory }
+              : {}),
+          });
+          saved.current = next;
 
-        return true;
-      })
-      .catch((cause: unknown) => {
-        setError(
-          cause instanceof Error ? cause.message : "Unable to save agent.",
-        );
+          if (draftRef.current.name.trim() === next.name) {
+            draftRef.current = { ...draftRef.current, name: next.name };
+            setDraft(draftRef.current);
+          }
+        } catch (cause) {
+          setError(
+            cause instanceof Error ? cause.message : "Unable to save agent.",
+          );
 
-        return false;
-      })
-      .finally(() => {
-        saveInFlight.current = null;
-        setPending(null);
-      });
+          return false;
+        }
+      }
+    })().finally(() => {
+      saveInFlight.current = null;
+      setPending(null);
+    });
     saveInFlight.current = request;
 
     return request;
@@ -135,7 +160,12 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
     setError(null);
 
     try {
-      const created = await createAgent({ name: name.trim(), avatar });
+      const created = await createAgent({
+        name: name.trim(),
+        avatar,
+        ...(teamIds.length ? { teamIds } : {}),
+        ...(memory ? { memory } : {}),
+      });
       location.hash = `agent-${created.id}`;
       onDismiss();
     } catch (cause) {
@@ -221,17 +251,27 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
         <Form onSubmit={(event) => void submit(event)}>
           <AvatarPicker
             value={avatar}
-            disabled={pending !== null || confirmingDelete || !connected}
+            disabled={
+              pending === "delete" ||
+              (!agent && pending !== null) ||
+              confirmingDelete ||
+              !connected
+            }
             onChange={(nextAvatar) => {
-              setAvatar(nextAvatar);
-              setError(null);
+              change({ avatar: nextAvatar });
 
               if (agent) {
-                void saveAgent(nextAvatar);
+                void saveAgent();
               }
             }}
           />
-          <div className={agent ? "settings-group" : undefined}>
+          <div
+            className={
+              agent
+                ? "settings-group agent-settings-fields"
+                : "agent-settings-fields"
+            }
+          >
             <div className={agent ? "settings-row" : undefined}>
               <div className="settings-copy">
                 <label htmlFor="agent-name">Name</label>
@@ -242,17 +282,9 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
                 ref={inputRef}
                 value={name}
                 onChange={(event) => {
-                  setName(event.target.value);
-                  setError(null);
+                  change({ name: event.target.value });
                 }}
-                onBlur={(event) => {
-                  if (
-                    event.relatedTarget instanceof Node &&
-                    event.currentTarget.form?.contains(event.relatedTarget)
-                  ) {
-                    return;
-                  }
-
+                onBlur={() => {
                   if (agent && !confirmingDelete && pending !== "delete") {
                     void saveAgent();
                   }
@@ -260,7 +292,6 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
                 required
                 maxLength={80}
                 placeholder="e.g. Ada"
-                readOnly={agent !== null && pending === "save"}
                 disabled={
                   pending === "delete" ||
                   (!agent && pending !== null) ||
@@ -268,8 +299,69 @@ export function AgentDialog({ agent, connected, onDismiss }: AgentDialogProps) {
                 }
               />
             </div>
-          </div>
 
+            {!!snapshot.teams?.length && (
+              <div className="settings-row agent-teams-row">
+                <span id="agent-teams-title">Teams</span>
+                <fieldset
+                  className="agent-team-options"
+                  aria-labelledby="agent-teams-title"
+                  disabled={
+                    pending === "delete" ||
+                    (!agent && pending !== null) ||
+                    !connected ||
+                    confirmingDelete
+                  }
+                >
+                  {snapshot.teams.map((team) => (
+                    <label key={team.id} className="team-membership">
+                      <Checkbox
+                        disabled={
+                          pending === "delete" ||
+                          (!agent && pending !== null) ||
+                          !connected ||
+                          confirmingDelete
+                        }
+                        aria-label={team.name}
+                        checked={teamIds.includes(team.id)}
+                        onCheckedChange={(checked) => {
+                          change({
+                            teamIds: checked
+                              ? [...draftRef.current.teamIds, team.id]
+                              : draftRef.current.teamIds.filter(
+                                  (id) => id !== team.id,
+                                ),
+                          });
+
+                          if (agent) void saveAgent();
+                        }}
+                      />
+                      <span>{team.name}</span>
+                    </label>
+                  ))}
+                </fieldset>
+              </div>
+            )}
+            <div className="settings-row agent-memory-row">
+              <label htmlFor="agent-memory">Personal memories</label>
+              <Textarea
+                id="agent-memory"
+                value={memory}
+                maxLength={16000}
+                disabled={
+                  pending === "delete" ||
+                  (!agent && pending !== null) ||
+                  !connected ||
+                  confirmingDelete
+                }
+                onChange={(event) => change({ memory: event.target.value })}
+                onBlur={() => {
+                  if (agent && !confirmingDelete && pending !== "delete")
+                    void saveAgent();
+                }}
+              />
+            </div>
+          </div>
           {!agent && (
             <div className="actions">
               <Button

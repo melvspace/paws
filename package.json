@@ -13,7 +13,7 @@
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
     "check": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
-    "runtime:build": "docker build -t paws-chat-runtime:1 packages/runtime/docker"
+    "runtime:build": "docker build -t paws-chat-runtime:1 packages/runtime/docker && docker build -f packages/runtime/docker/Dockerfile.team -t paws-team-runtime:1 packages/runtime/docker"
   },
   "devDependencies": {
     "@types/node": "catalog:",

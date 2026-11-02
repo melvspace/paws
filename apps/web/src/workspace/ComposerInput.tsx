@@ -494,7 +494,11 @@ export function ComposerInput({
           {attachmentError}
         </div>
       )}
-      <EditorContent editor={editor} className="composer-editor" />
+      <EditorContent
+        editor={editor}
+        className="composer-editor"
+        data-empty={editor?.isEmpty || undefined}
+      />
       {limitReached && (
         <span role="status" className="composer-limit">
           Messages can contain up to 32,000 characters.

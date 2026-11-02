@@ -1,0 +1,8 @@
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git bash nodejs npm python3 python3-venv \
+    build-essential pkg-config unzip xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /opt/paws/bin
+ENV PATH="/opt/paws/bin:/opt/paws/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+WORKDIR /workspace

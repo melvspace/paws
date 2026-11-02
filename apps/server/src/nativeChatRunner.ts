@@ -1,3 +1,4 @@
+import { agentContext } from "./teamContext.ts";
 import type { ProviderDriver } from "@paws/contracts";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -40,7 +41,11 @@ export function makeNativeChatRunner(
       provider.config.id,
     );
     await mkdir(control, { recursive: true, mode: 0o700 });
-    const lease = await leaseToolRuntime(root, turn.agentId).catch(() => {
+    const lease = await leaseToolRuntime(
+      root,
+      turn.agentId,
+      agentContext(root, turn.agentId).teams.map((team) => team.id),
+    ).catch(() => {
       throw new ChatExecutionError(
         "Chat runtime unavailable. Run pnpm runtime:build with Docker running.",
       );

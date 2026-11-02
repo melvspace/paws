@@ -44,6 +44,8 @@ export async function runClaudeTurn(
   });
   const allowedTools = [
     "paws_exec",
+    "paws_team_tool",
+    "paws_memory",
     "paws_send_message",
     "paws_finish_turn",
     "request_secret",

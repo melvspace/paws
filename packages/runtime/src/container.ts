@@ -1,8 +1,9 @@
+import { assertAgentId } from "@paws/shared";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { realpath, access } from "node:fs/promises";
-import { constants } from "node:fs";
+import { constants, mkdirSync, writeFileSync } from "node:fs";
 import { delimiter, join, isAbsolute, dirname, basename } from "node:path";
 import { provisionWorkspace, type RuntimeLease } from "./index.ts";
 
@@ -65,10 +66,29 @@ export async function resolveExecutable(command: string) {
   throw new Error("Codex executable not found.");
 }
 
+export function runtimeIdentity(root: string) {
+  const uid = process.getuid?.() ?? 1000;
+  const gid = process.getgid?.() ?? 1000;
+  const directory = join(root, "runtime");
+  const path = join(directory, `passwd-${uid}-${gid}`);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  writeFileSync(
+    path,
+    `root:x:0:0:root:/root:/bin/sh\n${uid === 0 ? "" : `agent:x:${uid}:${gid}:Paws agent:/home/agent:/bin/sh\n`}`,
+    { mode: 0o600 },
+  );
+
+  return path;
+}
+
 export function containerArgs(input: {
   name: string;
   workspace: string;
   home: string;
+  identity?: string;
+  image?: string;
+  teamIds?: readonly string[];
+  root?: string;
   binary?: string;
   entrypoint?: string[];
   helpers?: string[];
@@ -97,6 +117,19 @@ export function containerArgs(input: {
     `type=bind,src=${input.workspace},dst=/workspace`,
     "--mount",
     `type=bind,src=${input.home},dst=/home/agent`,
+    ...(input.identity
+      ? ["--mount", `type=bind,src=${input.identity},dst=/etc/passwd,readonly`]
+      : []),
+    ...(input.teamIds ?? []).flatMap((id) => {
+      assertAgentId(id);
+
+      if (!input.root) throw new Error("Team mounts require a data root.");
+
+      return ["skills", "files"].flatMap((folder) => [
+        "--mount",
+        `type=bind,src=${join(input.root!, "teams", id, folder)},dst=/teams/${id}/${folder}${folder === "skills" ? ",readonly" : ""}`,
+      ]);
+    }),
     ...(input.binary
       ? [
           "--mount",
@@ -113,7 +146,7 @@ export function containerArgs(input: {
     "HOME=/home/agent",
     "--env",
     "CODEX_HOME=/home/agent/.codex",
-    runtimeImage,
+    input.image ?? runtimeImage,
     ...(input.entrypoint ?? ["codex", "app-server", "--listen", "stdio://"]),
   ];
 }
@@ -122,6 +155,7 @@ export async function leaseCodexRuntime(
   root: string,
   agentId: string,
   binaryPath: string,
+  teamIds: readonly string[] = [],
 ): Promise<
   RuntimeLease & {
     command: string;
@@ -170,8 +204,11 @@ export async function leaseCodexRuntime(
       writeRuntimeSecret(name, reference, value),
     args: containerArgs({
       name,
+      identity: runtimeIdentity(root),
       workspace: layout.workspace,
       home: layout.home,
+      root,
+      teamIds,
       binary,
       helpers,
       uid: process.getuid?.() ?? 1000,
@@ -188,13 +225,20 @@ export async function leaseCodexRuntime(
 
 // The provider SDK stays on the host with its credentials, but has no native tools.
 // Its only execution capability is this container-backed tool lease.
-export async function leaseToolRuntime(root: string, agentId: string) {
+export async function leaseToolRuntime(
+  root: string,
+  agentId: string,
+  teamIds: readonly string[] = [],
+) {
   const layout = await provisionWorkspace(root, agentId);
   const name = `paws-tools-${agentId}-${randomUUID().slice(0, 8)}`;
   const args = containerArgs({
     name,
+    identity: runtimeIdentity(root),
     workspace: layout.workspace,
     home: layout.home,
+    root,
+    teamIds,
     uid: process.getuid?.() ?? 1000,
     gid: process.getgid?.() ?? 1000,
     entrypoint: ["sleep", "infinity"],

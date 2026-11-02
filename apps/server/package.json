@@ -8,11 +8,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@paws/contracts": "workspace:*",
     "@paws/provider-codex": "workspace:*",
     "@paws/provider-core": "workspace:*",
     "@paws/provider-native": "workspace:*",
     "@paws/runtime": "workspace:*",
+    "@paws/shared": "workspace:*",
     "effect": "catalog:",
     "ws": "catalog:",
     "yaml": "^2.9.1"
