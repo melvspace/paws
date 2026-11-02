@@ -25,6 +25,7 @@ if (args[0] === 'container' && !existsSync(${JSON.stringify(`${root}/created-`)}
 }
 if (args[0] === 'create') writeFileSync(${JSON.stringify(`${root}/created-`)} + args[2], 'created');
 if (args[0] === 'start' && existsSync(${JSON.stringify(`${root}/fail-start`)})) process.exit(1);
+if (args.some((arg) => arg.includes('apt-get install')) && existsSync(${JSON.stringify(`${root}/fail-bootstrap`)})) process.exit(1);
 `,
     { mode: 0o700 },
   );
@@ -233,4 +234,51 @@ it("reports failed persistent stops and permits retry after daemon recovery", as
     ["stop", lease.container],
     ["stop", lease.container],
   ]);
+});
+
+it("starts saved team images and prepares missing runtime tools before provider commands", async () => {
+  await using fixture = await dockerFixture();
+  const image = `sha256:${"a".repeat(64)}`;
+  const lease = await leaseToolRuntime(fixture.root, randomUUID(), {
+    teamId: randomUUID(),
+    template: image,
+  });
+  await lease.dispose();
+  const calls = await fixture.calls();
+  expect(calls.find(([operation]) => operation === "create")).toContain(image);
+  const dependencies = calls.findIndex((args) =>
+    args.some((arg) => arg.includes("apt-get install")),
+  );
+  const identity = calls.findIndex((args) =>
+    args.some((arg) => arg.includes("useradd")),
+  );
+  expect(dependencies).toBeGreaterThan(0);
+  expect(dependencies).toBeLessThan(identity);
+  expect(calls[dependencies]?.join(" ")).toContain(
+    "sudo util-linux procps ripgrep ffmpeg",
+  );
+});
+
+it("retries dependency bootstrap failures without replacing the saved team image", async () => {
+  await using fixture = await dockerFixture();
+  const id = randomUUID();
+  const environment = {
+    teamId: randomUUID(),
+    template: `sha256:${"b".repeat(64)}`,
+  };
+  await writeFile(`${fixture.root}/fail-bootstrap`, "fail");
+  await expect(
+    leaseToolRuntime(fixture.root, id, environment),
+  ).rejects.toThrow();
+  expect(
+    (await fixture.calls()).some((args) =>
+      args.some((arg) => arg.includes("useradd")),
+    ),
+  ).toBe(false);
+  await rm(`${fixture.root}/fail-bootstrap`);
+  const lease = await leaseToolRuntime(fixture.root, id, environment);
+  await lease.dispose();
+  expect(
+    (await fixture.calls()).filter(([operation]) => operation === "create"),
+  ).toHaveLength(1);
 });

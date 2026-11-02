@@ -52,7 +52,13 @@ export function makeAgentService(
   db.exec(
     "CREATE TABLE IF NOT EXISTS teams (id TEXT PRIMARY KEY, data TEXT NOT NULL)",
   );
-  migrateAgents(db);
+  try {
+    migrateAgents(db, root);
+  } catch (error) {
+    db.close();
+
+    throw error;
+  }
   const transitions = new Set<string>();
   const deletingTeams = new Set<string>();
   const pendingTeams = new Map<string, string | null>();

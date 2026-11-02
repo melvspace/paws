@@ -263,3 +263,101 @@ it("migrates legacy memberships and retired integrations idempotently while arch
     await Fs.rm(root, { recursive: true, force: true });
   }
 });
+
+it("preserves the tiger-to-mouse migration across two restarts", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const root = await temporaryRoot();
+  const legacy = {
+    id: "legacy-tiger",
+    name: "Ada",
+    avatar: { animal: "tiger", color: "orange" },
+    provider: "codex",
+    status: "configured",
+    createdAt: "2026-11-01T00:00:00.000Z",
+  };
+  const db = new DatabaseSync(Path.join(root, "state.sqlite"));
+  db.exec("CREATE TABLE agents (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  db.prepare("INSERT INTO agents VALUES (?, ?)").run(
+    legacy.id,
+    JSON.stringify(legacy),
+  );
+  db.close();
+
+  try {
+    for (let restart = 0; restart < 2; restart++) {
+      const service = makeAgentService(root);
+
+      try {
+        expect(await Effect.runPromise(service.list())).toEqual([
+          {
+            ...legacy,
+            avatar: { animal: "mouse", color: "orange" },
+            teamId: null,
+            sandbox: true,
+          },
+        ]);
+      } finally {
+        service.close();
+      }
+    }
+  } finally {
+    await Fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+it("imports saved team images once without replacing templates or following filesystem links", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { randomUUID } = await import("node:crypto");
+  const root = await temporaryRoot();
+  const id = randomUUID();
+  const image = `sha256:${"a".repeat(64)}`;
+  const directory = Path.join(root, "teams", id);
+  await Fs.mkdir(directory, { recursive: true });
+  await Fs.writeFile(
+    Path.join(directory, "environment.json"),
+    JSON.stringify({ image }),
+  );
+  const db = new DatabaseSync(Path.join(root, "state.sqlite"));
+  db.exec("CREATE TABLE teams (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  db.prepare("INSERT INTO teams VALUES (?, ?)").run(
+    id,
+    JSON.stringify({
+      id,
+      name: "Existing team",
+      memory: "",
+      integrations: [
+        {
+          id: "local",
+          kind: "mcp-stdio",
+          command: "/opt/paws/bin/installed-tool",
+        },
+      ],
+      createdAt: new Date().toISOString(),
+    }),
+  );
+  db.close();
+
+  try {
+    for (let restart = 0; restart < 2; restart++) {
+      const service = makeAgentService(root);
+
+      try {
+        expect((await Effect.runPromise(service.listTeams()))[0]).toMatchObject(
+          { id, template: image },
+        );
+      } finally {
+        service.close();
+      }
+
+      // A mounted team may mutate this file after migration; it no longer
+      // controls which image the server selects.
+      await Fs.rm(Path.join(directory, "environment.json"), { force: true });
+      await Fs.symlink(
+        "/untrusted/environment.json",
+        Path.join(directory, "environment.json"),
+      );
+    }
+  } finally {
+    await Fs.rm(root, { recursive: true, force: true });
+  }
+});

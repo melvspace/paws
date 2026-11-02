@@ -1,3 +1,6 @@
+import * as Fs from "node:fs";
+import { join } from "node:path";
+import { assertAgentId } from "@paws/shared";
 import type { DatabaseSync } from "node:sqlite";
 import { Schema } from "effect";
 
@@ -7,7 +10,7 @@ const record = Schema.decodeUnknownSync(
 
 // Preserve original records so retired integrations and extra memberships remain
 // recoverable without exposing them through the current wire contracts.
-export function migrateAgents(db: DatabaseSync) {
+export function migrateAgents(db: DatabaseSync, root: string) {
   db.exec("BEGIN IMMEDIATE");
 
   try {
@@ -34,7 +37,18 @@ export function migrateAgents(db: DatabaseSync) {
 
           delete data.teamIds;
           changed = true;
-        } else if (table === "teams" && Array.isArray(data.integrations)) {
+        }
+
+        if (table === "agents" && data.avatar !== undefined) {
+          const avatar = record(data.avatar);
+
+          if (avatar.animal === "tiger") {
+            data.avatar = { ...avatar, animal: "mouse" };
+            changed = true;
+          }
+        }
+
+        if (table === "teams" && Array.isArray(data.integrations)) {
           const integrations = data.integrations.map((item) => record(item));
 
           if (integrations.some((item) => item.kind === "cli")) {
@@ -43,6 +57,11 @@ export function migrateAgents(db: DatabaseSync) {
             );
             changed = true;
           }
+        }
+
+        if (table === "teams" && data.template === undefined) {
+          data.template = legacyTeamImage(root, String(row.id));
+          changed = true;
         }
 
         if (!changed) continue;
@@ -62,5 +81,57 @@ export function migrateAgents(db: DatabaseSync) {
     db.exec("ROLLBACK");
 
     throw error;
+  }
+}
+
+// Import the old committed image once, into server-owned SQLite state. Never
+// consult a mutable file inside a mounted team directory during execution.
+function legacyTeamImage(root: string, teamId: string) {
+  assertAgentId(teamId);
+  const descriptors: number[] = [];
+  const descriptorRoot =
+    process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";
+
+  try {
+    let directory = root;
+
+    for (const part of ["", "teams", teamId]) {
+      if (part) directory = join(directory, part);
+
+      const descriptor = Fs.openSync(
+        directory,
+        Fs.constants.O_RDONLY |
+          Fs.constants.O_DIRECTORY |
+          Fs.constants.O_NOFOLLOW,
+      );
+      descriptors.push(descriptor);
+      directory = join(descriptorRoot, String(descriptor));
+    }
+
+    const descriptor = Fs.openSync(
+      join(directory, "environment.json"),
+      Fs.constants.O_RDONLY | Fs.constants.O_NOFOLLOW | Fs.constants.O_NONBLOCK,
+    );
+    descriptors.push(descriptor);
+    const stat = Fs.fstatSync(descriptor);
+
+    if (!stat.isFile() || stat.size > 65536)
+      throw new Error("Invalid team environment image.");
+
+    const image = Schema.decodeUnknownSync(
+      Schema.Struct({ image: Schema.String }),
+    )(JSON.parse(Fs.readFileSync(descriptor, "utf8"))).image;
+
+    if (!/^sha256:[a-f0-9]{64}$/.test(image))
+      throw new Error("Invalid team environment image.");
+
+    return image;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT")
+      return "paws-team-runtime:1";
+
+    throw error;
+  } finally {
+    for (const descriptor of descriptors.reverse()) Fs.closeSync(descriptor);
   }
 }

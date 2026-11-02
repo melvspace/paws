@@ -181,6 +181,23 @@ export async function ensureEnvironment(
       }
 
       await exec("docker", ["start", name], { timeout: 30_000 });
+      // Older committed team images predate these runtime dependencies. Install
+      // missing tools in the retained writable layer before starting a provider.
+      await exec(
+        "docker",
+        [
+          "exec",
+          "--user=0:0",
+          name,
+          "/usr/bin/timeout",
+          "--kill-after=5",
+          "110",
+          "/bin/sh",
+          "-ec",
+          'for tool in sudo setsid ps rg ffmpeg; do if ! command -v "$tool" >/dev/null; then apt-get update; apt-get install -y --no-install-recommends sudo util-linux procps ripgrep ffmpeg; break; fi; done',
+        ],
+        { signal: AbortSignal.timeout(120_000) },
+      );
       // Ordinary files use the server's uid; sudo grants full control inside this
       // environment without making every private home/file host-root-owned.
       await exec(

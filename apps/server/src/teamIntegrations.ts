@@ -258,7 +258,10 @@ export async function teamTool(
     );
   }
 
-  const lease = await leaseToolRuntime(root, agentId, { teamId: team.id });
+  const lease = await leaseToolRuntime(root, agentId, {
+    teamId: team.id,
+    template: team.template,
+  });
   const timeout = AbortSignal.any([signal, AbortSignal.timeout(180000)]);
   const launch = lease.launch("/usr/bin/timeout", [
     "--kill-after=5",
