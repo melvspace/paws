@@ -529,6 +529,124 @@ it.each(["toggle", "delete"])(
   },
 );
 
+it.each(["success", "failure"])(
+  "awaits webhook rotation and retains its %s result before dismissal",
+  async (result) => {
+    let routine: Routine = {
+      ...routineListFixture(),
+      trigger: { kind: "webhook", filters: [] },
+    };
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    const writes: number[] = [];
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const requests = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async (input, init) => {
+        const path = String(input);
+
+        if (path === "/api/routine-preview") return Response.json([]);
+        if (path.endsWith("/rotate")) return pending;
+
+        if (init?.method === "PATCH") {
+          const body = JSON.parse(String(init.body));
+          writes.push(body.revision);
+          routine = {
+            ...routine,
+            ...body.routine,
+            revision: routine.revision + 1,
+          };
+
+          return Response.json({ routine });
+        }
+
+        return Response.json({ routines: [routine], runs: [], events: [] });
+      });
+    const dismiss = vi.fn();
+
+    try {
+      await using _screen = await render(<RoutinesPanel onDismiss={dismiss} />);
+      await page.getByRole("button", { name: "Digest", exact: true }).click();
+      await page.getByRole("button", { name: "Rotate signing secret" }).click();
+      const instruction = page.getByRole("textbox", {
+        name: "Instruction",
+        exact: true,
+      });
+      await instruction.fill("Edited during rotation");
+      await page
+        .getByRole("button", { name: "Close settings", exact: true })
+        .click();
+      expect(dismiss).not.toHaveBeenCalled();
+      finish(
+        result === "success"
+          ? Response.json({
+              endpoint: "/hooks/digest",
+              secret: "rotated-secret",
+            })
+          : Response.json({ error: "Rotation failed." }, { status: 500 }),
+      );
+
+      if (result === "success") {
+        await expect
+          .element(
+            page.getByRole("textbox", { name: "Signing secret", exact: true }),
+          )
+          .toHaveValue("rotated-secret");
+        await expect
+          .element(page.getByRole("alert"))
+          .toHaveTextContent(
+            "Copy and dismiss this secret before leaving settings.",
+          );
+        expect(dismiss).not.toHaveBeenCalled();
+        expect(writes).toEqual([1]);
+        await expect.element(instruction).toHaveValue("Edited during rotation");
+        await expect
+          .element(page.getByRole("button", { name: "Rotate signing secret" }))
+          .toBeDisabled();
+        await page.getByRole("button", { name: "Back to routines" }).click();
+        await expect
+          .element(page.getByText("Edited during rotation", { exact: true }))
+          .toBeVisible();
+        await page
+          .getByRole("button", { name: "Agent settings", exact: true })
+          .click();
+        await expect
+          .element(
+            page.getByRole("textbox", { name: "Signing secret", exact: true }),
+          )
+          .toBeVisible();
+        await page.getByRole("button", { name: "Dismiss secret" }).click();
+        await page
+          .getByRole("button", { name: "Close settings", exact: true })
+          .click();
+        await expect.poll(() => dismiss.mock.calls.length).toBe(1);
+      } else {
+        await expect
+          .element(page.getByRole("alert"))
+          .toHaveTextContent("Error: Rotation failed.");
+        expect(dismiss).not.toHaveBeenCalled();
+        await expect.element(instruction).toHaveValue("Edited during rotation");
+        await expect
+          .element(page.getByRole("button", { name: "Rotate signing secret" }))
+          .toBeEnabled();
+        await expect
+          .element(
+            page.getByRole("textbox", { name: "Signing secret", exact: true }),
+          )
+          .not.toBeInTheDocument();
+      }
+    } finally {
+      finish(
+        Response.json({ endpoint: "/hooks/digest", secret: "rotated-secret" }),
+      );
+      confirm.mockRestore();
+      requests.mockRestore();
+    }
+  },
+);
+
 it("keeps a failed routine edit visible when dismissal cannot save it", async () => {
   appAtomRegistry.set(agentsAtom, {
     connected: true,
@@ -905,6 +1023,16 @@ it.each([
         .toBeVisible();
       await expect.element(instruction).not.toBeInTheDocument();
     } else if (scenario === "dismissal") {
+      expect(dismiss).not.toHaveBeenCalled();
+      await expect
+        .element(
+          page.getByRole("textbox", { name: "Signing secret", exact: true }),
+        )
+        .toHaveValue("original-secret");
+      await page.getByRole("button", { name: "Dismiss secret" }).click();
+      await page
+        .getByRole("button", { name: "Close settings", exact: true })
+        .click();
       await expect.poll(() => dismiss.mock.calls.length).toBe(1);
     } else if (scenario === "filters") {
       await expect

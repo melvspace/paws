@@ -30,6 +30,7 @@ import { Textarea } from "../components/ui/textarea.tsx";
 import "./routines.css";
 
 type State = typeof RoutineState.Type;
+type WebhookSecret = { endpoint: string; secret: string };
 const empty: State = { routines: [], runs: [], events: [] };
 const defaultRoutine = (): SaveRoutine => ({
   name: "",
@@ -125,15 +126,20 @@ export function RoutinesSettings({
   const [selectedRun, setSelectedRun] = useState<RoutineRun | null>(null);
   const [runCursors, setRunCursors] = useState<readonly number[]>([]);
   const runCursor = runCursors.at(-1);
-  const [secret, setSecret] = useState<{
-    endpoint: string;
-    secret: string;
-  } | null>(null);
+  const [secret, setSecret] = useState<WebhookSecret | null>(null);
+  const unacknowledgedSecret = useRef<WebhookSecret | null>(null);
+  const [secretBlocked, setSecretBlocked] = useState(false);
   const initialRun = useRef(initialRunId);
   const flush = useRef<(() => Promise<void>) | null>(null);
   const mutation = useRef(0);
   const listSaves = useRef(new Map<string, Promise<Routine>>());
   const [savingIds, setSavingIds] = useState<readonly string[]>([]);
+
+  function revealSecret(webhook: WebhookSecret) {
+    unacknowledgedSecret.current = webhook;
+    setSecret(webhook);
+    setSecretBlocked(false);
+  }
 
   function acceptSaved(routine: Routine) {
     mutation.current++;
@@ -245,6 +251,14 @@ export function RoutinesSettings({
     const save = async () => {
       await Promise.all(listSaves.current.values());
       await flush.current?.();
+
+      if (unacknowledgedSecret.current) {
+        setSecretBlocked(true);
+
+        throw new Error(
+          "Acknowledge the signing secret before leaving settings.",
+        );
+      }
     };
     beforeClose.current = save;
 
@@ -301,7 +315,7 @@ export function RoutinesSettings({
           <Button
             className="routine-new"
             variant="outline"
-            disabled={!connected}
+            disabled={!connected || !!secret}
             onClick={() => void select("new")}
           >
             <PlusIcon size={14} aria-hidden />
@@ -315,6 +329,11 @@ export function RoutinesSettings({
         {secret && (
           <div className="settings-group routine-secret">
             <p>Copy this signing secret now. It is shown once.</p>
+            {secretBlocked && (
+              <p role="alert">
+                Copy and dismiss this secret before leaving settings.
+              </p>
+            )}
             <label>
               Endpoint
               <Input readOnly value={secret.endpoint} />
@@ -329,7 +348,15 @@ export function RoutinesSettings({
               X-Paws-Delivery-Id. Public delivery requires your configured
               ingress.
             </p>
-            <Button onClick={() => setSecret(null)}>Dismiss secret</Button>
+            <Button
+              onClick={() => {
+                unacknowledgedSecret.current = null;
+                setSecret(null);
+                setSecretBlocked(false);
+              }}
+            >
+              Dismiss secret
+            </Button>
           </div>
         )}
         {editing ? (
@@ -339,11 +366,13 @@ export function RoutinesSettings({
             routine={editing === "new" ? null : editing}
             connected={connected}
             flush={flush}
+            secretPending={!!secret}
+            onSecret={revealSecret}
             onSaved={(routine, webhook) => {
               acceptSaved(routine);
               setEditing(routine);
 
-              if (webhook) setSecret(webhook);
+              if (webhook) revealSecret(webhook);
             }}
             onClose={() => void select(null)}
             onDeleted={(id) => {
@@ -487,17 +516,18 @@ function RoutineEditor({
   onSaved,
   onClose,
   onDeleted,
+  secretPending,
+  onSecret,
 }: {
   agentId: string;
   routine: Routine | null;
   connected: boolean;
   flush: MutableRefObject<(() => Promise<void>) | null>;
-  onSaved(
-    routine: Routine,
-    webhook?: { endpoint: string; secret: string },
-  ): void;
+  onSaved(routine: Routine, webhook?: WebhookSecret): void;
   onClose(): void;
   onDeleted(id: string): void;
+  secretPending: boolean;
+  onSecret(secret: WebhookSecret): void;
 }) {
   const [draft, setDraft] = useState<SaveRoutine>(routine ?? defaultRoutine());
   const current = useRef(draft);
@@ -633,15 +663,12 @@ function RoutineEditor({
     if (routineId.current) void save().catch(() => {});
   }
 
-  function remove() {
-    if (!routine || inFlight.current) return;
+  function runPendingOperation(operation: () => Promise<void>) {
+    if (inFlight.current) return inFlight.current;
 
+    setError(null);
     setPending(true);
-    const task = routineRequest(routinePath(agentId, routine.id), "DELETE")
-      .then(() => {
-        saved.current = JSON.stringify(current.current);
-        onDeleted(routine.id);
-      })
+    const task = operation()
       .catch((cause) => {
         setError(String(cause));
 
@@ -652,7 +679,43 @@ function RoutineEditor({
         setPending(false);
       });
     inFlight.current = task;
-    void task.catch(() => {});
+
+    return task;
+  }
+
+  function remove() {
+    if (!routine || inFlight.current) return;
+
+    void runPendingOperation(async () => {
+      await routineRequest(routinePath(agentId, routine.id), "DELETE");
+      saved.current = JSON.stringify(current.current);
+      onDeleted(routine.id);
+    }).catch(() => {});
+  }
+
+  function rotateSecret() {
+    if (!routine || inFlight.current || secretPending) return;
+    if (
+      !window.confirm(
+        "Rotate the signing secret? Existing senders must use the new secret.",
+      )
+    )
+      return;
+
+    void runPendingOperation(async () => {
+      const value = await routineRequest(
+        `${routinePath(agentId, routine.id)}/rotate`,
+        "POST",
+      );
+
+      onSecret(
+        Schema.decodeUnknownSync(
+          Schema.Struct({ endpoint: Schema.String, secret: Schema.String }),
+        )(value),
+      );
+    })
+      .then(() => saveRef.current())
+      .catch(() => {});
   }
 
   return (
@@ -705,6 +768,7 @@ function RoutineEditor({
         <label className="settings-row">
           Trigger
           <select
+            disabled={secretPending}
             value={draft.trigger.kind}
             onChange={(event) => {
               const kind = event.target.value;
@@ -1069,7 +1133,7 @@ function RoutineEditor({
       )}
       {!routine ? (
         <Button
-          disabled={pending || !connected}
+          disabled={pending || !connected || secretPending}
           onClick={() => void save().catch(() => {})}
         >
           Create routine
@@ -1105,31 +1169,8 @@ function RoutineEditor({
             </Button>
             {draft.trigger.kind === "webhook" && (
               <Button
-                disabled={!connected || pending}
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      "Rotate the signing secret? Existing senders must use the new secret.",
-                    )
-                  )
-                    return;
-                  void routineRequest(
-                    `${routinePath(agentId, routine.id)}/rotate`,
-                    "POST",
-                  )
-                    .then((value) =>
-                      onSaved(
-                        routine,
-                        Schema.decodeUnknownSync(
-                          Schema.Struct({
-                            endpoint: Schema.String,
-                            secret: Schema.String,
-                          }),
-                        )(value),
-                      ),
-                    )
-                    .catch((cause) => setError(String(cause)));
-                }}
+                disabled={!connected || pending || secretPending}
+                onClick={rotateSecret}
               >
                 Rotate signing secret
               </Button>
@@ -1137,7 +1178,7 @@ function RoutineEditor({
             <Button
               variant="ghost"
               className="routine-delete"
-              disabled={!connected || pending}
+              disabled={!connected || pending || secretPending}
               onClick={() => setConfirmDelete(true)}
             >
               <Trash2Icon size={13} aria-hidden />
