@@ -132,6 +132,8 @@ export function RoutinesSettings({
   const initialRun = useRef(initialRunId);
   const flush = useRef<(() => Promise<void>) | null>(null);
   const mutation = useRef(0);
+  const listSaves = useRef(new Map<string, Promise<Routine>>());
+  const [savingIds, setSavingIds] = useState<readonly string[]>([]);
 
   function acceptSaved(routine: Routine) {
     mutation.current++;
@@ -143,6 +145,29 @@ export function RoutinesSettings({
           )
         : [...current.routines, routine],
     }));
+  }
+
+  function toggleRoutine(routine: Routine, enabled: boolean) {
+    if (listSaves.current.has(routine.id)) return;
+
+    setSavingIds((current) => [...current, routine.id]);
+    const task = saveRoutine(
+      agentId,
+      { ...routine, enabled },
+      routine.id,
+      routine.revision,
+    )
+      .then(({ routine: saved }) => {
+        acceptSaved(saved);
+
+        return saved;
+      })
+      .finally(() => {
+        listSaves.current.delete(routine.id);
+        setSavingIds((current) => current.filter((id) => id !== routine.id));
+      });
+    listSaves.current.set(routine.id, task);
+    void task.catch((cause) => setError(String(cause)));
   }
 
   useEffect(() => {
@@ -218,6 +243,7 @@ export function RoutinesSettings({
 
   useEffect(() => {
     const save = async () => {
+      await Promise.all(listSaves.current.values());
       await flush.current?.();
     };
     beforeClose.current = save;
@@ -229,8 +255,12 @@ export function RoutinesSettings({
 
   async function select(next: Routine | "new" | null) {
     try {
+      const saved =
+        next && next !== "new"
+          ? await listSaves.current.get(next.id)
+          : undefined;
       await flush.current?.();
-      setEditing(next);
+      setEditing(saved ?? next);
       setSelectedRun(null);
     } catch {
       /* Keep failed edits visible. */
@@ -316,6 +346,16 @@ export function RoutinesSettings({
               if (webhook) setSecret(webhook);
             }}
             onClose={() => void select(null)}
+            onDeleted={(id) => {
+              mutation.current++;
+              setState((current) => ({
+                ...current,
+                routines: current.routines.filter(
+                  (routine) => routine.id !== id,
+                ),
+              }));
+              setEditing(null);
+            }}
           />
         ) : selectedRun ? (
           <RunDetails
@@ -363,17 +403,10 @@ export function RoutinesSettings({
                       className="routine-card-switch"
                       aria-label={`Enable ${routine.name}`}
                       checked={routine.enabled}
-                      disabled={!connected}
-                      onCheckedChange={(enabled) => {
-                        void saveRoutine(
-                          agentId,
-                          { ...routine, enabled },
-                          routine.id,
-                          routine.revision,
-                        )
-                          .then(({ routine }) => acceptSaved(routine))
-                          .catch((cause) => setError(String(cause)));
-                      }}
+                      disabled={!connected || savingIds.includes(routine.id)}
+                      onCheckedChange={(enabled) =>
+                        toggleRoutine(routine, enabled)
+                      }
                     />
                   </div>
                 ))}
@@ -453,6 +486,7 @@ function RoutineEditor({
   flush,
   onSaved,
   onClose,
+  onDeleted,
 }: {
   agentId: string;
   routine: Routine | null;
@@ -463,6 +497,7 @@ function RoutineEditor({
     webhook?: { endpoint: string; secret: string },
   ): void;
   onClose(): void;
+  onDeleted(id: string): void;
 }) {
   const [draft, setDraft] = useState<SaveRoutine>(routine ?? defaultRoutine());
   const current = useRef(draft);
@@ -596,6 +631,28 @@ function RoutineEditor({
 
   function blur() {
     if (routineId.current) void save().catch(() => {});
+  }
+
+  function remove() {
+    if (!routine || inFlight.current) return;
+
+    setPending(true);
+    const task = routineRequest(routinePath(agentId, routine.id), "DELETE")
+      .then(() => {
+        saved.current = JSON.stringify(current.current);
+        onDeleted(routine.id);
+      })
+      .catch((cause) => {
+        setError(String(cause));
+
+        throw cause;
+      })
+      .finally(() => {
+        inFlight.current = null;
+        setPending(false);
+      });
+    inFlight.current = task;
+    void task.catch(() => {});
   }
 
   return (
@@ -1095,17 +1152,8 @@ function RoutineEditor({
               </Button>
               <Button
                 variant="destructive"
-                onClick={() =>
-                  void routineRequest(
-                    routinePath(agentId, routine.id),
-                    "DELETE",
-                  )
-                    .then(() => {
-                      saved.current = JSON.stringify(current.current);
-                      onClose();
-                    })
-                    .catch((cause) => setError(String(cause)))
-                }
+                disabled={!connected || pending}
+                onClick={remove}
               >
                 Confirm deletion
               </Button>

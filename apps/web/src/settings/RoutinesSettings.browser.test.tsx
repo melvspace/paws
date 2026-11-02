@@ -326,6 +326,209 @@ it.each(["immediate", "stale refresh"])(
   },
 );
 
+function routineListFixture(): Routine {
+  appAtomRegistry.set(agentsAtom, {
+    connected: true,
+    error: null,
+    snapshot: {
+      agents: [
+        {
+          id: "ada",
+          name: "Ada",
+          provider: "codex",
+          status: "configured",
+          createdAt: "2026-11-01",
+        },
+      ],
+    },
+  });
+
+  return {
+    id: "00000000-0000-4000-8000-000000000001",
+    agentId: "ada",
+    name: "Digest",
+    instruction: "Summarize tickets",
+    enabled: true,
+    missed: "skip",
+    timeoutMinutes: 60,
+    trigger: { kind: "interval", minutes: 5 },
+    nextAt: null,
+    revision: 1,
+    createdAt: "2026-11-01",
+    updatedAt: "2026-11-01",
+    changedBy: "user",
+    deleted: false,
+  };
+}
+
+it("awaits a pending list toggle before opening the current routine revision", async () => {
+  let routine = routineListFixture();
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  const revisions: number[] = [];
+  const requests = vi
+    .spyOn(window, "fetch")
+    .mockImplementation(async (input, init) => {
+      if (String(input) === "/api/routine-preview") return Response.json([]);
+
+      if (init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body));
+        revisions.push(body.revision);
+
+        if (body.revision !== routine.revision)
+          return new Response(null, { status: 409 });
+
+        routine = {
+          ...routine,
+          ...body.routine,
+          revision: routine.revision + 1,
+        };
+
+        return revisions.length === 1 ? pending : Response.json({ routine });
+      }
+
+      return Response.json({ routines: [routine], runs: [], events: [] });
+    });
+
+  try {
+    await using _screen = await render(<RoutinesPanel onDismiss={() => {}} />);
+    await page.getByRole("switch", { name: "Enable Digest" }).click();
+    await expect.poll(() => revisions.length).toBe(1);
+    await page.getByRole("button", { name: "Digest", exact: true }).click();
+    const instruction = page.getByRole("textbox", {
+      name: "Instruction",
+      exact: true,
+    });
+    await expect.element(instruction).not.toBeInTheDocument();
+    finish(Response.json({ routine }));
+    await instruction.fill("Include owners");
+    await page.getByRole("button", { name: "Back to routines" }).click();
+    await expect
+      .element(page.getByText("Include owners", { exact: true }))
+      .toBeVisible();
+    expect(revisions).toEqual([1, 2]);
+  } finally {
+    finish(Response.json({ routine }));
+    requests.mockRestore();
+  }
+});
+
+it("removes a deleted routine immediately and ignores an older refresh", async () => {
+  const routine = routineListFixture();
+  let reads = 0;
+  let finish: ((response: Response) => void) | undefined;
+  const requests = vi
+    .spyOn(window, "fetch")
+    .mockImplementation(async (input, init) => {
+      if (String(input) === "/api/routine-preview") return Response.json([]);
+      if (init?.method === "DELETE") return Response.json({});
+
+      reads++;
+
+      if (reads > 1)
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+
+      return Response.json({ routines: [routine], runs: [], events: [] });
+    });
+
+  try {
+    await using _screen = await render(<RoutinesPanel onDismiss={() => {}} />);
+    await page.getByRole("button", { name: "Digest", exact: true }).click();
+    await expect.poll(() => finish, { timeout: 4000 }).toBeDefined();
+    await page
+      .getByRole("button", { name: "Delete routine", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Confirm deletion" }).click();
+    await expect
+      .element(page.getByText("No routines yet", { exact: true }))
+      .toBeVisible();
+    finish?.(Response.json({ routines: [routine], runs: [], events: [] }));
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+    await expect
+      .element(page.getByRole("button", { name: "Digest", exact: true }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByText("No routines yet", { exact: true }))
+      .toBeVisible();
+  } finally {
+    finish?.(Response.json({ routines: [], runs: [], events: [] }));
+    requests.mockRestore();
+  }
+});
+
+it.each(["toggle", "delete"])(
+  "awaits a pending routine %s and retains its failure when closing settings",
+  async (action) => {
+    const routine = routineListFixture();
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    const requests = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async (input, init) => {
+        if (String(input) === "/api/routine-preview") return Response.json([]);
+        if (init?.method === "PATCH" || init?.method === "DELETE")
+          return pending;
+
+        return Response.json({ routines: [routine], runs: [], events: [] });
+      });
+    const dismiss = vi.fn();
+
+    try {
+      await using _screen = await render(<RoutinesPanel onDismiss={dismiss} />);
+
+      if (action === "toggle")
+        await page.getByRole("switch", { name: "Enable Digest" }).click();
+      else {
+        await page.getByRole("button", { name: "Digest", exact: true }).click();
+        await page
+          .getByRole("button", { name: "Delete routine", exact: true })
+          .click();
+        await page.getByRole("button", { name: "Confirm deletion" }).click();
+      }
+
+      await page
+        .getByRole("button", { name: "Close settings", exact: true })
+        .click();
+      expect(dismiss).not.toHaveBeenCalled();
+      finish(
+        Response.json({ error: "Please retry this change." }, { status: 500 }),
+      );
+      await expect
+        .element(page.getByRole("alert"))
+        .toHaveTextContent("Error: Please retry this change.");
+      expect(dismiss).not.toHaveBeenCalled();
+
+      if (action === "toggle") {
+        await expect
+          .element(page.getByRole("switch", { name: "Enable Digest" }))
+          .toBeEnabled();
+      } else {
+        await expect
+          .element(
+            page.getByRole("textbox", { name: "Instruction", exact: true }),
+          )
+          .toHaveValue(routine.instruction);
+        await expect
+          .element(page.getByRole("button", { name: "Confirm deletion" }))
+          .toBeEnabled();
+      }
+    } finally {
+      finish(
+        Response.json({ error: "Please retry this change." }, { status: 500 }),
+      );
+      requests.mockRestore();
+    }
+  },
+);
+
 it("keeps a failed routine edit visible when dismissal cannot save it", async () => {
   appAtomRegistry.set(agentsAtom, {
     connected: true,
