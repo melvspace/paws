@@ -4,6 +4,46 @@ import { agentsAtom } from "@paws/client-runtime";
 import { appAtomRegistry } from "./lib/atomRegistry.ts";
 import { render } from "../test/render.tsx";
 import { AgentDialog } from "./AgentDialog.tsx";
+import { AvatarPicker } from "./AvatarPicker.tsx";
+import "./settings/agent-settings.css";
+
+it("places an unclipped Edit control below the avatar", async () => {
+  const change = vi.fn();
+  await using _screen = await render(
+    <div className="agent-settings-content">
+      <AvatarPicker
+        compact
+        value={{ animal: "raccoon", color: "red" }}
+        disabled={false}
+        onChange={change}
+      />
+    </div>,
+  );
+  const edit = page.getByRole("button", { name: "Edit avatar" });
+  const button = edit.element().getBoundingClientRect();
+  const avatar = edit.element().querySelector<SVGSVGElement>(".agent-avatar")!;
+  const label = edit
+    .element()
+    .querySelector<HTMLElement>(".agent-avatar-edit-label")!;
+  const pencil = label.querySelector<SVGSVGElement>(".lucide-pencil")!;
+  const face = avatar.getBoundingClientRect();
+
+  expect(face.width).toBe(80);
+  expect(face.height).toBe(80);
+  expect(
+    Math.abs(face.left + face.width / 2 - button.left - button.width / 2),
+  ).toBeLessThan(1);
+  expect(label.textContent).toBe("Edit");
+  expect(label.getBoundingClientRect().top).toBeGreaterThan(face.bottom);
+  expect(getComputedStyle(pencil).padding).toBe("0px");
+  expect(getComputedStyle(pencil).borderRadius).toBe("0px");
+  expect(getComputedStyle(pencil).overflow).toBe("visible");
+  expect(pencil.getBoundingClientRect().width).toBe(12);
+  expect(pencil.getBoundingClientRect().height).toBe(12);
+  await edit.click();
+  await page.getByRole("button", { name: "dog", exact: true }).click();
+  expect(change).toHaveBeenCalledWith({ animal: "dog", color: "red" });
+});
 
 it("autosaves membership immediately and memories on blur without an explicit save button", async () => {
   const agent = {

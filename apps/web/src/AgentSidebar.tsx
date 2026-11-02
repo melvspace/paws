@@ -23,7 +23,7 @@ interface AgentSidebarProps {
   onCreate: () => void;
   onSettings: (agent: Agent) => void;
   onAppSettings: () => void;
-  onNavigate?: () => void;
+  onNavigate?: (agent: Agent) => void;
   onClose?: (() => void) | undefined;
 }
 
@@ -272,7 +272,18 @@ export function AgentSidebar({
                         <a
                           draggable={false}
                           href={`#agent-${agent.id}`}
-                          onClick={onNavigate}
+                          onClick={(event) => {
+                            if (
+                              onNavigate &&
+                              !event.metaKey &&
+                              !event.ctrlKey &&
+                              !event.shiftKey &&
+                              !event.altKey
+                            ) {
+                              event.preventDefault();
+                              onNavigate(agent);
+                            }
+                          }}
                           title={agent.name}
                           aria-current={
                             agent.id === selectedId ? "page" : undefined

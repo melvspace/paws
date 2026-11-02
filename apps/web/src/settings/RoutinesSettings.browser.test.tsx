@@ -4,7 +4,123 @@ import { agentsAtom } from "@paws/client-runtime";
 import type { Routine } from "@paws/contracts";
 import { appAtomRegistry } from "../lib/atomRegistry.ts";
 import { render } from "../../test/render.tsx";
-import { AppSettingsDialog } from "./AppSettingsDialog.tsx";
+import { useRef } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { AgentSettingsPanel } from "./AgentSettingsPanel.tsx";
+import { ChatRightPanel } from "../workspace/ChatRightPanel.tsx";
+import { Button } from "../components/ui/button.tsx";
+
+function RoutinesPanel({
+  onDismiss,
+  initialRunId,
+}: {
+  onDismiss: () => void;
+  initialRunId?: string | undefined;
+}) {
+  const beforeClose = useRef<(() => Promise<void>) | null>(null);
+  const { snapshot, connected } = useAtomValue(agentsAtom);
+
+  async function close() {
+    try {
+      if (document.activeElement instanceof HTMLElement)
+        document.activeElement.blur();
+
+      await beforeClose.current?.();
+      onDismiss();
+    } catch {
+      // Keep failed edits visible, as in the workspace.
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", width: "100vw", height: "100dvh" }}>
+      <ChatRightPanel
+        agentId={snapshot.agents[0]!.id}
+        open
+        maximized={false}
+        sheet={window.innerWidth < 760}
+        rowWidth={window.innerWidth}
+        viewportWidth={window.innerWidth}
+        controls={<Button onClick={() => void close()}>Close settings</Button>}
+        onClose={() => void close()}
+      >
+        <AgentSettingsPanel
+          agent={snapshot.agents[0]!}
+          connected={connected}
+          beforeClose={beforeClose}
+          onDismiss={onDismiss}
+          initialPage="routines"
+          initialRunId={initialRunId}
+        />
+      </ChatRightPanel>
+    </div>
+  );
+}
+
+it.each(["fast", "slow"])(
+  "avoids flashing loading text for %s routine responses",
+  async (speed) => {
+    appAtomRegistry.set(agentsAtom, {
+      connected: true,
+      error: null,
+      snapshot: {
+        agents: [
+          {
+            id: "ada",
+            name: "Ada",
+            provider: "codex",
+            status: "configured",
+            createdAt: "2026-11-01",
+          },
+        ],
+      },
+    });
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    const fetchMock = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async () =>
+        speed === "slow"
+          ? pending
+          : Response.json({ routines: [], runs: [], events: [] }),
+      );
+    const loadingLabels: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of [...record.addedNodes, ...record.removedNodes]) {
+          if (node.textContent?.includes("Loading routines…"))
+            loadingLabels.push(node.textContent);
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    try {
+      await using _screen = await render(
+        <RoutinesPanel onDismiss={() => {}} />,
+      );
+
+      if (speed === "slow") {
+        await expect
+          .element(page.getByRole("status"))
+          .toHaveTextContent("Loading routines…");
+        finish(Response.json({ routines: [], runs: [], events: [] }));
+      }
+
+      await expect
+        .element(page.getByText("No routines yet", { exact: true }))
+        .toBeVisible();
+
+      if (speed === "fast") expect(loadingLabels).toEqual([]);
+    } finally {
+      observer.disconnect();
+      finish(Response.json({ routines: [], runs: [], events: [] }));
+      fetchMock.mockRestore();
+    }
+  },
+);
 
 it("edits routines with autosave and flushes instructions before dismissing Settings", async () => {
   appAtomRegistry.set(agentsAtom, {
@@ -63,10 +179,18 @@ it("edits routines with autosave and flushes instructions before dismissing Sett
   const dismiss = vi.fn();
 
   try {
-    await using _screen = await render(
-      <AppSettingsDialog initialPage="Routines" onDismiss={dismiss} />,
-    );
-    await page.getByRole("button", { name: "Digest", exact: true }).click();
+    await using _screen = await render(<RoutinesPanel onDismiss={dismiss} />);
+    await page
+      .getByRole("switch", { name: "Enable Digest", exact: true })
+      .click();
+    await expect.poll(() => writes.length).toBe(1);
+    await expect
+      .element(page.getByRole("textbox", { name: "Instruction", exact: true }))
+      .not.toBeInTheDocument();
+    writes.length = 0;
+    await page
+      .getByText("Summarize tickets", { exact: true })
+      .click({ force: true });
     await expect
       .element(page.getByRole("button", { name: "Save", exact: true }))
       .not.toBeInTheDocument();
@@ -78,7 +202,7 @@ it("edits routines with autosave and flushes instructions before dismissing Sett
       .click();
     await expect.poll(() => writes.length).toBe(1);
     expect(writes[0]).toMatchObject({
-      revision: 1,
+      revision: 2,
       routine: { instruction: "Summarize tickets and include owners" },
     });
     await expect.poll(() => dismiss.mock.calls.length).toBe(1);
@@ -134,9 +258,7 @@ it("keeps a failed routine edit visible when dismissal cannot save it", async ()
   const dismiss = vi.fn();
 
   try {
-    await using _screen = await render(
-      <AppSettingsDialog initialPage="Routines" onDismiss={dismiss} />,
-    );
+    await using _screen = await render(<RoutinesPanel onDismiss={dismiss} />);
     await page.getByRole("button", { name: "Digest", exact: true }).click();
     await page
       .getByRole("textbox", { name: "Instruction", exact: true })
@@ -179,11 +301,9 @@ it("keeps routine actions compact and advanced execution settings out of the def
     );
 
   try {
-    await using _screen = await render(
-      <AppSettingsDialog initialPage="Routines" onDismiss={() => {}} />,
-    );
+    await using _screen = await render(<RoutinesPanel onDismiss={() => {}} />);
     const create = page.getByRole("button", {
-      name: "Create routine",
+      name: "New",
       exact: true,
     });
     await expect.element(create).toBeVisible();
@@ -256,9 +376,7 @@ it.each([
     });
 
   try {
-    await using _screen = await render(
-      <AppSettingsDialog initialPage="Routines" onDismiss={() => {}} />,
-    );
+    await using _screen = await render(<RoutinesPanel onDismiss={() => {}} />);
     await expect
       .element(page.getByRole("button", { name: routine.name, exact: true }))
       .toBeVisible();
@@ -370,12 +488,8 @@ it.each([
   const dismiss = vi.fn();
 
   try {
-    await using _screen = await render(
-      <AppSettingsDialog initialPage="Routines" onDismiss={dismiss} />,
-    );
-    await page
-      .getByRole("button", { name: "Create routine", exact: true })
-      .click();
+    await using _screen = await render(<RoutinesPanel onDismiss={dismiss} />);
+    await page.getByRole("button", { name: "New", exact: true }).click();
     await page
       .getByRole("textbox", { name: "Name", exact: true })
       .fill("Digest");
@@ -420,8 +534,8 @@ it.each([
 
     if (scenario === "navigation") {
       await page
-        .getByRole("combobox", { name: "Agent", exact: true })
-        .selectOptions("grace");
+        .getByRole("button", { name: "Back to routines", exact: true })
+        .click();
       await expect.element(instruction).toBeVisible();
     }
 
@@ -469,8 +583,8 @@ it.each([
     });
     if (scenario === "navigation") {
       await expect
-        .element(page.getByRole("combobox", { name: "Agent", exact: true }))
-        .toHaveValue("grace");
+        .element(page.getByRole("heading", { name: "Routines", exact: true }))
+        .toBeVisible();
       await expect.element(instruction).not.toBeInTheDocument();
     } else if (scenario === "dismissal") {
       await expect.poll(() => dismiss.mock.calls.length).toBe(1);
@@ -568,11 +682,8 @@ it.each(["link", "pagination", "missing"])(
 
     try {
       await using _screen = await render(
-        <AppSettingsDialog
-          initialPage="Routines"
-          initialRoutine={
-            mode === "pagination" ? undefined : { agentId: "ada", runId: oldId }
-          }
+        <RoutinesPanel
+          initialRunId={mode === "pagination" ? undefined : oldId}
           onDismiss={() => {}}
         />,
       );
@@ -597,18 +708,18 @@ it.each(["link", "pagination", "missing"])(
 
       await expect
         .element(page.getByRole("textbox", { name: "Message", exact: true }))
-        .toBeVisible();
+        .not.toBeInTheDocument();
       await expect
         .element(page.getByRole("button", { name: "Cancel run", exact: true }))
         .toBeVisible();
-      await expect
-        .poll(() => paths.includes(`/api/routine-runs/${oldId}`))
-        .toBe(true);
+      expect(paths).not.toContain(`/api/routine-runs/${oldId}`);
 
       if (mode === "link")
         expect(paths).toContain(`/api/routine-runs/${oldId}/details`);
       if (mode === "pagination") {
-        await page.getByRole("button", { name: "Back", exact: true }).click();
+        await page
+          .getByRole("button", { name: "Back to routines", exact: true })
+          .click();
         await page
           .getByRole("button", { name: "Newer runs", exact: true })
           .click();

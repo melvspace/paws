@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type MutableRefObject,
 } from "react";
 import { CornerUpRightIcon, ListPlusIcon, SettingsIcon } from "lucide-react";
 import type { Agent, FollowUpMode } from "@paws/contracts";
@@ -29,12 +30,17 @@ import "./workspace.css";
 import { ChatHistory } from "./ChatHistory.tsx";
 import { useConversation } from "./useConversation.ts";
 import { useChatPreferences } from "../settings/chatPreferences.ts";
+import { AgentSettingsPanel } from "../settings/AgentSettingsPanel.tsx";
 
 interface AgentWorkspaceProps {
   agent: Agent;
   onSettings: () => void;
   onProviderSettings: () => void;
   navigation?: ReactNode;
+  settingsOpen?: boolean;
+  initialRunId?: string | undefined;
+  beforeLeave?: MutableRefObject<(() => Promise<void>) | null>;
+  onSettingsClosed?: () => void;
 }
 
 export function AgentWorkspace({
@@ -42,6 +48,10 @@ export function AgentWorkspace({
   onSettings,
   onProviderSettings,
   navigation,
+  settingsOpen = false,
+  initialRunId,
+  beforeLeave,
+  onSettingsClosed,
 }: AgentWorkspaceProps) {
   const chat = useConversation(agent.id);
   const { connected } = useAtomValue(agentsAtom);
@@ -73,6 +83,8 @@ export function AgentWorkspace({
     viewportHeight: 800,
   });
   const [maximized, setMaximized] = useState(false);
+  const settingsFlush = useRef<(() => Promise<void>) | null>(null);
+  const flush = beforeLeave ?? settingsFlush;
   const [state, setState] = useState(() =>
     readWorkspace({ getItem: (key) => localStorage.getItem(key) }, agent.id),
   );
@@ -146,7 +158,21 @@ export function AgentWorkspace({
   }
 
   const sheet = bounds.width < 760;
-  const rightPanelMaximized = maximized && state.sidebarOpen && !sheet;
+  const rightPanelOpen = state.sidebarOpen || settingsOpen;
+  const rightPanelMaximized = maximized && rightPanelOpen && !sheet;
+
+  async function closeRightPanel() {
+    try {
+      if (document.activeElement instanceof HTMLElement)
+        document.activeElement.blur();
+
+      await flush.current?.();
+      onSettingsClosed?.();
+      setState((current) => ({ ...current, sidebarOpen: false }));
+    } catch {
+      // Keep failed settings edits visible.
+    }
+  }
 
   // Measure the workspace rather than the window so the agent rail participates in limits.
   useLayoutEffect(() => {
@@ -190,14 +216,17 @@ export function AgentWorkspace({
   const controls = (
     <PanelLayoutControls
       terminalOpen={state.bottomOpen}
-      rightPanelOpen={state.sidebarOpen}
+      rightPanelOpen={rightPanelOpen}
       maximized={rightPanelMaximized}
       showMaximize={!sheet}
       onToggleTerminal={() => {
         setMaximized(false);
         toggle("bottomOpen");
       }}
-      onToggleRightPanel={() => toggle("sidebarOpen")}
+      onToggleRightPanel={() => {
+        if (rightPanelOpen) void closeRightPanel();
+        else toggle("sidebarOpen");
+      }}
       onToggleMaximized={() => setMaximized(!maximized)}
     />
   );
@@ -230,7 +259,7 @@ export function AgentWorkspace({
           >
             <SettingsIcon aria-hidden />
           </Button>
-          {(!state.sidebarOpen || sheet) && controls}
+          {(!rightPanelOpen || sheet) && controls}
         </header>
         <section className="chat-panel" id="workspace-chat" aria-label="Chat">
           <ChatHistory
@@ -461,16 +490,42 @@ export function AgentWorkspace({
       </div>
       <ChatRightPanel
         agentId={agent.id}
-        open={state.sidebarOpen}
+        open={rightPanelOpen}
         sheet={sheet}
         maximized={rightPanelMaximized}
         rowWidth={bounds.width}
         viewportWidth={bounds.viewportWidth}
         controls={controls}
-        onClose={() =>
-          setState((current) => ({ ...current, sidebarOpen: false }))
-        }
-      />
+        onClose={() => void closeRightPanel()}
+        onTabChange={(tab) => {
+          if (tab === "settings") {
+            onSettings();
+
+            return;
+          }
+
+          void Promise.resolve(flush.current?.())
+            .then(() => {
+              onSettingsClosed?.();
+              setState((current) => ({ ...current, sidebarOpen: true }));
+            })
+            .catch(() => {});
+        }}
+      >
+        {settingsOpen && (
+          <AgentSettingsPanel
+            key={initialRunId ?? "settings"}
+            agent={agent}
+            connected={connected}
+            beforeClose={flush}
+            initialRunId={initialRunId}
+            onDismiss={() => {
+              onSettingsClosed?.();
+              setState((current) => ({ ...current, sidebarOpen: false }));
+            }}
+          />
+        )}
+      </ChatRightPanel>
     </div>
   );
 }

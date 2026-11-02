@@ -31,25 +31,14 @@
   gap: 6px;
   font-size: 12px;
 }
-.routine-toolbar {
+.routine-agent-panel {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
 }
-.routine-agent-select {
-  width: 220px;
-  max-width: 60%;
-  display: grid;
-  gap: 6px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
-.routine-agent-select select {
-  color: var(--foreground);
-}
-.routine-toolbar > .ui-button {
-  flex: 0 0 auto;
+.routine-new {
+  align-self: flex-start;
   width: auto;
 }
 .routine-empty {
@@ -73,11 +62,33 @@
 .routines-settings .settings-row + .settings-row {
   border-top: 1px solid var(--border);
 }
+.routine-card {
+  position: relative;
+}
+.routine-card:hover {
+  background: var(--accent);
+}
+.routine-list-title::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+.routine-list-title:focus-visible::after {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+.routine-card-switch {
+  position: relative;
+  z-index: 1;
+}
 .routine-list-copy {
   flex: 1;
   min-width: 0;
 }
 .routine-list-title.ui-button {
+  position: static;
   display: block;
   padding: 0;
   min-height: 22px;
@@ -114,21 +125,37 @@
   gap: 16px;
   min-width: 0;
 }
-.routine-editor-heading {
+.routine-breadcrumb {
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-size: 13px;
-  font-weight: 500;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted-foreground);
 }
-.routine-editor-heading > span {
+.routine-breadcrumb h2 {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
 }
-.routine-editor-heading .ui-button {
-  margin-left: -8px;
+.routine-breadcrumb .routine-breadcrumb-parent {
+  flex-shrink: 0;
+  min-height: 28px;
+  padding: 2px 0;
+  font-size: 12px;
+  font-weight: 400;
   color: var(--muted-foreground);
+}
+.routine-breadcrumb-parent:hover {
+  color: var(--foreground);
+}
+.routine-breadcrumb > span {
+  opacity: 0.5;
 }
 .routine-fields .settings-row {
   display: grid;
@@ -245,9 +272,6 @@
   }
   .routine-fields .routine-enabled-row {
     grid-template-columns: 1fr auto;
-  }
-  .routine-toolbar {
-    gap: 12px;
   }
 }
 

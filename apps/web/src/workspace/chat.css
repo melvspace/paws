@@ -720,7 +720,3 @@
 .chat-routine-origin svg {
   flex-shrink: 0;
 }
-.chat-routine-origin:hover {
-  color: var(--foreground);
-  text-decoration: underline;
-}

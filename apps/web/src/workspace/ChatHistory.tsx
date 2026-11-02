@@ -505,14 +505,10 @@ export function ChatHistory({
                   }
                 >
                   {origin && (
-                    <a
-                      className="chat-routine-origin"
-                      href={`#routine/${conversation!.agentId}/${origin.runId}`}
-                      aria-label={`Open run of ${origin.name}`}
-                    >
+                    <span className="chat-routine-origin">
                       <ClockIcon aria-hidden size={12} />
                       <span>{origin.name}</span>
-                    </a>
+                    </span>
                   )}
                   {message.role === "assistant" ? (
                     <MessageMarkdown text={messageText} />

@@ -15,8 +15,6 @@ import {
   saveRoutine,
   routinePath,
   routineRequest,
-  loadRoutineConversation,
-  respondToRoutine,
 } from "@paws/client-runtime";
 import { Schema } from "effect";
 import {
@@ -24,13 +22,11 @@ import {
   type SaveRoutine,
   RoutineState,
   type RoutineRun,
-  type Conversation,
   type RoutineFilter,
 } from "@paws/contracts";
 import { Button } from "../components/ui/button.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Textarea } from "../components/ui/textarea.tsx";
-import { ChatHistory } from "../workspace/ChatHistory.tsx";
 import "./routines.css";
 
 type State = typeof RoutineState.Type;
@@ -98,21 +94,30 @@ function scheduleLabel(trigger: SaveRoutine["trigger"]) {
   return `${presets[trigger.expression] ?? trigger.expression} · ${trigger.timezone}`;
 }
 
+function RoutineLoading() {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setVisible(true), 200);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  return visible ? <p role="status">Loading routines…</p> : null;
+}
+
 export function RoutinesSettings({
   beforeClose,
-  initialRoutine,
+  agentId,
+  initialRunId,
+  onBack,
 }: {
   beforeClose: MutableRefObject<(() => Promise<void>) | null>;
-  initialRoutine?: { agentId: string; runId: string } | undefined;
+  agentId: string;
+  initialRunId?: string | undefined;
+  onBack: () => void;
 }) {
   const { snapshot, connected } = useAtomValue(agentsAtom);
-  const [agentId, setAgentId] = useState(
-    initialRoutine?.agentId ??
-      snapshot.agents.find((agent) => `#agent-${agent.id}` === location.hash)
-        ?.id ??
-      snapshot.agents[0]?.id ??
-      "",
-  );
   const [state, setState] = useState<State>(empty);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -124,7 +129,7 @@ export function RoutinesSettings({
     endpoint: string;
     secret: string;
   } | null>(null);
-  const initialRun = useRef(initialRoutine?.runId);
+  const initialRun = useRef(initialRunId);
   const flush = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
@@ -201,200 +206,210 @@ export function RoutinesSettings({
 
   if (!snapshot.agents.length) return <p>Create an agent to add routines.</p>;
 
+  const detail = editing !== null || selectedRun !== null;
+  const title =
+    editing === "new"
+      ? "New routine"
+      : editing
+        ? editing.name
+        : selectedRun
+          ? "Run details"
+          : "Routines";
+
   return (
-    <section aria-label="Routines" className="routines-settings">
-      <header className="routine-toolbar">
-        <label className="routine-agent-select">
-          Agent
-          <select
-            value={agentId}
-            disabled={!connected}
-            onChange={(event) => {
-              const next = event.target.value;
-              void Promise.resolve(flush.current?.())
-                .then(() => {
-                  setAgentId(next);
-                  setRunCursors([]);
-                  initialRun.current = undefined;
-                  setEditing(null);
-                  setSelectedRun(null);
-                  setSecret(null);
-                })
-                .catch(() => {});
-            }}
-          >
-            {snapshot.agents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {!editing && !selectedRun && (
+    <section
+      aria-label="Routines"
+      className="routines-settings"
+      aria-busy={loading}
+    >
+      <nav className="routine-breadcrumb" aria-label="Routine navigation">
+        <Button
+          variant="ghost"
+          className="routine-breadcrumb-parent"
+          aria-label={detail ? "Back to routines" : "Agent settings"}
+          onClick={detail ? () => void select(null) : onBack}
+        >
+          <ChevronLeftIcon size={14} aria-hidden />
+          {detail ? "Routines" : "Agent settings"}
+        </Button>
+        <span aria-hidden>/</span>
+        <h2 title={title}>{title}</h2>
+        {!detail && (
           <Button
+            className="routine-new"
             variant="outline"
             disabled={!connected}
             onClick={() => void select("new")}
           >
             <PlusIcon size={14} aria-hidden />
-            Create routine
+            New
           </Button>
         )}
-      </header>
-      {!connected && <p role="status">Reconnecting…</p>}
-      {error && <p role="alert">{error}</p>}
-      {secret && (
-        <div className="settings-group routine-secret">
-          <p>Copy this signing secret now. It is shown once.</p>
-          <label>
-            Endpoint
-            <Input readOnly value={secret.endpoint} />
-          </label>
-          <label>
-            Signing secret
-            <Input readOnly value={secret.secret} />
-          </label>
-          <p>
-            POST JSON with X-Paws-Timestamp (Unix seconds), X-Paws-Signature
-            (hex HMAC-SHA256 of timestamp + “.” + raw body), and optional
-            X-Paws-Delivery-Id. Public delivery requires your configured
-            ingress.
-          </p>
-          <Button onClick={() => setSecret(null)}>Dismiss secret</Button>
-        </div>
-      )}
-      {editing ? (
-        <RoutineEditor
-          key={editing === "new" ? "new" : editing.id}
-          agentId={agentId}
-          routine={editing === "new" ? null : editing}
-          connected={connected}
-          flush={flush}
-          onSaved={(routine, webhook) => {
-            setEditing(routine);
-            if (webhook) setSecret(webhook);
-          }}
-          onClose={() => void select(null)}
-        />
-      ) : selectedRun ? (
-        <RunDetails
-          run={
-            state.runs.find((item) => item.id === selectedRun.id) ?? selectedRun
-          }
-          connected={connected}
-          onClose={() => setSelectedRun(null)}
-        />
-      ) : (
-        <>
-          {loading ? (
-            <p role="status">Loading routines…</p>
-          ) : !state.routines.length ? (
-            <div className="routine-empty">
-              <Clock3Icon size={24} aria-hidden />
-              <p>No routines yet</p>
-            </div>
-          ) : (
-            <div className="settings-group routine-list">
-              {state.routines.map((routine) => (
-                <div className="settings-row" key={routine.id}>
-                  <div className="routine-list-copy">
-                    <Button
-                      className="routine-list-title"
-                      variant="ghost"
-                      onClick={() => void select(routine)}
-                    >
-                      {routine.name}
-                    </Button>
-                    <p className="routine-list-instruction">
-                      {routine.instruction}
-                    </p>
-                    <p className="routine-list-schedule">
-                      <Clock3Icon size={12} aria-hidden />
-                      {scheduleLabel(routine.trigger)} ·{" "}
-                      {routine.enabled
-                        ? routine.nextAt
-                          ? formatRoutineTime(routine.nextAt)
-                          : "Webhook"
-                        : "Paused"}
-                    </p>
-                  </div>
-                  <Switch
-                    aria-label={`Enable ${routine.name}`}
-                    checked={routine.enabled}
-                    disabled={!connected}
-                    onCheckedChange={(enabled) => {
-                      void saveRoutine(
-                        agentId,
-                        { ...routine, enabled },
-                        routine.id,
-                        routine.revision,
-                      )
-                        .then(() => loadRoutines(agentId, undefined, runCursor))
-                        .then(setState)
-                        .catch((cause) => setError(String(cause)));
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-          {!!state.runs.length && (
-            <>
-              <h3 className="routine-section-title">Run history</h3>
-              <div className="settings-group">
-                {state.runs.map((run) => (
-                  <div className="settings-row routine-run-row" key={run.id}>
-                    <Button variant="ghost" onClick={() => setSelectedRun(run)}>
-                      {state.routines.find(
-                        (routine) => routine.id === run.routineId,
-                      )?.name ?? "Deleted routine"}{" "}
-                      · {new Date(run.createdAt).toLocaleString()}
-                    </Button>
-                    <span className="routine-status" data-status={run.status}>
-                      {run.status}
-                    </span>
+      </nav>
+      <div className="routine-agent-panel">
+        {!connected && <p role="status">Reconnecting…</p>}
+        {error && <p role="alert">{error}</p>}
+        {secret && (
+          <div className="settings-group routine-secret">
+            <p>Copy this signing secret now. It is shown once.</p>
+            <label>
+              Endpoint
+              <Input readOnly value={secret.endpoint} />
+            </label>
+            <label>
+              Signing secret
+              <Input readOnly value={secret.secret} />
+            </label>
+            <p>
+              POST JSON with X-Paws-Timestamp (Unix seconds), X-Paws-Signature
+              (hex HMAC-SHA256 of timestamp + “.” + raw body), and optional
+              X-Paws-Delivery-Id. Public delivery requires your configured
+              ingress.
+            </p>
+            <Button onClick={() => setSecret(null)}>Dismiss secret</Button>
+          </div>
+        )}
+        {editing ? (
+          <RoutineEditor
+            key={editing === "new" ? "new" : editing.id}
+            agentId={agentId}
+            routine={editing === "new" ? null : editing}
+            connected={connected}
+            flush={flush}
+            onSaved={(routine, webhook) => {
+              setEditing(routine);
+              if (webhook) setSecret(webhook);
+            }}
+            onClose={() => void select(null)}
+          />
+        ) : selectedRun ? (
+          <RunDetails
+            run={
+              state.runs.find((item) => item.id === selectedRun.id) ??
+              selectedRun
+            }
+            connected={connected}
+          />
+        ) : (
+          <>
+            {loading ? (
+              <RoutineLoading />
+            ) : !state.routines.length ? (
+              <div className="routine-empty">
+                <Clock3Icon size={24} aria-hidden />
+                <p>No routines yet</p>
+              </div>
+            ) : (
+              <div className="settings-group routine-list">
+                {state.routines.map((routine) => (
+                  <div className="settings-row routine-card" key={routine.id}>
+                    <div className="routine-list-copy">
+                      <Button
+                        className="routine-list-title"
+                        variant="ghost"
+                        onClick={() => void select(routine)}
+                      >
+                        {routine.name}
+                      </Button>
+                      <p className="routine-list-instruction">
+                        {routine.instruction}
+                      </p>
+                      <p className="routine-list-schedule">
+                        <Clock3Icon size={12} aria-hidden />
+                        {scheduleLabel(routine.trigger)} ·{" "}
+                        {routine.enabled
+                          ? routine.nextAt
+                            ? formatRoutineTime(routine.nextAt)
+                            : "Webhook"
+                          : "Paused"}
+                      </p>
+                    </div>
+                    <Switch
+                      className="routine-card-switch"
+                      aria-label={`Enable ${routine.name}`}
+                      checked={routine.enabled}
+                      disabled={!connected}
+                      onCheckedChange={(enabled) => {
+                        void saveRoutine(
+                          agentId,
+                          { ...routine, enabled },
+                          routine.id,
+                          routine.revision,
+                        )
+                          .then(() =>
+                            loadRoutines(agentId, undefined, runCursor),
+                          )
+                          .then(setState)
+                          .catch((cause) => setError(String(cause)));
+                      }}
+                    />
                   </div>
                 ))}
               </div>
-            </>
-          )}
-          {(runCursors.length > 0 || state.nextRunCursor != null) && (
-            <div className="routine-actions">
-              <Button
-                disabled={loading || runCursors.length === 0}
-                onClick={() => setRunCursors((cursors) => cursors.slice(0, -1))}
-              >
-                Newer runs
-              </Button>
-              <Button
-                disabled={loading || state.nextRunCursor == null}
-                onClick={() => {
-                  const cursor = state.nextRunCursor;
+            )}
+            {!!state.runs.length && (
+              <>
+                <h3 className="routine-section-title">Run history</h3>
+                <div className="settings-group">
+                  {state.runs.map((run) => (
+                    <div className="settings-row routine-run-row" key={run.id}>
+                      <Button
+                        variant="ghost"
+                        onClick={() => setSelectedRun(run)}
+                      >
+                        {state.routines.find(
+                          (routine) => routine.id === run.routineId,
+                        )?.name ?? "Deleted routine"}{" "}
+                        · {new Date(run.createdAt).toLocaleString()}
+                      </Button>
+                      <span className="routine-status" data-status={run.status}>
+                        {run.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {(runCursors.length > 0 || state.nextRunCursor != null) && (
+              <div className="routine-actions">
+                <Button
+                  disabled={loading || runCursors.length === 0}
+                  onClick={() =>
+                    setRunCursors((cursors) => cursors.slice(0, -1))
+                  }
+                >
+                  Newer runs
+                </Button>
+                <Button
+                  disabled={loading || state.nextRunCursor == null}
+                  onClick={() => {
+                    const cursor = state.nextRunCursor;
 
-                  if (cursor != null)
-                    setRunCursors((cursors) => [...cursors, cursor]);
-                }}
-              >
-                Older runs
-              </Button>
-            </div>
-          )}
-          {!!state.events.length && (
-            <details>
-              <summary>Trigger history</summary>
-              <ul>
-                {state.events.map((event) => (
-                  <li key={event.id}>
-                    {new Date(event.createdAt).toLocaleString()} ·{" "}
-                    {event.outcome}
-                    {event.deliveryId ? ` · ${event.deliveryId}` : ""}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </>
-      )}
+                    if (cursor != null)
+                      setRunCursors((cursors) => [...cursors, cursor]);
+                  }}
+                >
+                  Older runs
+                </Button>
+              </div>
+            )}
+            {!!state.events.length && (
+              <details>
+                <summary>Trigger history</summary>
+                <ul>
+                  {state.events.map((event) => (
+                    <li key={event.id}>
+                      {new Date(event.createdAt).toLocaleString()} ·{" "}
+                      {event.outcome}
+                      {event.deliveryId ? ` · ${event.deliveryId}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </>
+        )}
+      </div>
     </section>
   );
 }
@@ -553,13 +568,6 @@ function RoutineEditor({
 
   return (
     <div className="routine-editor">
-      <div className="routine-editor-heading">
-        <Button variant="ghost" onClick={onClose}>
-          <ChevronLeftIcon size={14} aria-hidden />
-          Back
-        </Button>
-        <span>{routine ? routine.name : "New routine"}</span>
-      </div>
       {error && (
         <>
           <p role="alert">{error}</p>
@@ -575,7 +583,6 @@ function RoutineEditor({
           </Button>
         </>
       )}
-      {pending && <p role="status">Saving…</p>}
       <div className="settings-group routine-fields">
         <label className="settings-row">
           Name
@@ -1081,75 +1088,14 @@ function RoutineEditor({
 function RunDetails({
   run,
   connected,
-  onClose,
 }: {
   run: RoutineRun;
   connected: boolean;
-  onClose(): void;
 }) {
-  const [conversation, setConversation] = useState<Conversation>();
   const [error, setError] = useState<string | null>(null);
-  const [text, setText] = useState("");
-  const [pending, setPending] = useState(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let active = true;
-    let timer: ReturnType<typeof setTimeout>;
-
-    async function refresh() {
-      try {
-        const next = await loadRoutineConversation(run.id, controller.signal);
-
-        if (active) setConversation(next);
-      } catch (cause) {
-        if (active) setError(String(cause));
-      } finally {
-        if (active) timer = setTimeout(() => void refresh(), 1000);
-      }
-    }
-
-    void refresh();
-
-    return () => {
-      active = false;
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [run.id]);
-
-  async function respond(
-    reply?: NonNullable<Parameters<typeof respondToRoutine>[1]["reply"]>,
-  ) {
-    if (!run.selection) return false;
-
-    setPending(true);
-
-    try {
-      await respondToRoutine(run.id, {
-        requestId: crypto.randomUUID(),
-        selection: run.selection,
-        text: reply ? "" : text,
-        ...(reply ? { reply } : {}),
-        mode: "queue",
-      });
-      setText("");
-      setError(null);
-
-      return true;
-    } catch (cause) {
-      setError(String(cause));
-      return false;
-    } finally {
-      setPending(false);
-    }
-  }
 
   return (
     <div>
-      <Button variant="ghost" onClick={onClose}>
-        Back
-      </Button>
       <p>
         {run.status} · {new Date(run.createdAt).toLocaleString()}
       </p>
@@ -1191,51 +1137,7 @@ function RunDetails({
           </Button>
         )}
       </div>
-      <ChatHistory
-        conversation={conversation}
-        busy={pending || !connected || run.status === "running"}
-        error={error}
-        onReply={respond}
-      />
-      {["waiting", "succeeded", "failed"].includes(run.status) && (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void respond();
-          }}
-        >
-          <label>
-            Message
-            <Textarea
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              maxLength={32000}
-            />
-          </label>
-          <Button
-            type="submit"
-            disabled={!connected || pending || !text.trim()}
-          >
-            Send
-          </Button>
-        </form>
-      )}
-      {run.definition && (
-        <details>
-          <summary>Execution configuration</summary>
-          <pre>
-            {JSON.stringify(
-              {
-                routine: run.definition,
-                selection: run.selection,
-                context: run.context,
-              },
-              null,
-              2,
-            )}
-          </pre>
-        </details>
-      )}
+      {error && <p role="alert">{error}</p>}
     </div>
   );
 }

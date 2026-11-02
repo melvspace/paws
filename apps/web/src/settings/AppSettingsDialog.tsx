@@ -1,4 +1,3 @@
-import { RoutinesSettings } from "./RoutinesSettings.tsx";
 import { TeamsSettings } from "../TeamsSettings.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Button } from "../components/ui/button.tsx";
@@ -26,11 +25,9 @@ import { ChatSettings } from "./ChatSettings.tsx";
 export function AppSettingsDialog({
   onDismiss,
   initialPage = "Appearance",
-  initialRoutine,
 }: {
   onDismiss: () => void;
-  initialRoutine?: { agentId: string; runId: string } | undefined;
-  initialPage?: "Appearance" | "Chat" | "Providers" | "Teams" | "Routines";
+  initialPage?: "Appearance" | "Chat" | "Providers" | "Teams";
 }) {
   const [page, setPage] = useState(initialPage);
   const beforeClose = useRef<(() => Promise<void>) | null>(null);
@@ -60,11 +57,6 @@ export function AppSettingsDialog({
       keywords:
         "teams members skills memories files tools mcp shared authentication",
       Icon: UsersIcon,
-    },
-    {
-      name: "Routines" as const,
-      keywords: "routines schedules cron webhook triggers automation history",
-      Icon: MessageSquareIcon,
     },
   ].filter((item) => item.keywords.includes(query.trim().toLowerCase()));
 
@@ -162,11 +154,6 @@ export function AppSettingsDialog({
                 </section>
               ) : page === "Chat" ? (
                 <ChatSettings />
-              ) : page === "Routines" ? (
-                <RoutinesSettings
-                  beforeClose={beforeClose}
-                  initialRoutine={initialRoutine}
-                />
               ) : page === "Teams" ? (
                 <TeamsSettings beforeClose={beforeClose} />
               ) : (

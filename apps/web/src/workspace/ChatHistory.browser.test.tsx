@@ -893,7 +893,7 @@ it("shows routine provenance separately from output and preserves distinct messa
   );
   expect(
     message.querySelector(".chat-routine-origin")?.getAttribute("href"),
-  ).toBe("#routine/agent/run");
+  ).toBeNull();
 });
 
 it("cleans up earlier inline routine prefixes for display without rewriting history", async () => {
