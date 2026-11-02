@@ -42,6 +42,7 @@ function validateMemory(memory: string) {
 export function makeAgentService(
   root: string,
   isIdle: (id: string) => boolean = () => true,
+  closeExecution: (id: string) => Promise<void> = async () => {},
 ) {
   Fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(Path.join(root, "state.sqlite"));
@@ -297,6 +298,8 @@ export function makeAgentService(
         if (changing) transitions.add(id);
 
         try {
+          if (changing) await closeExecution(id);
+
           if (changing && existing.sandbox)
             await stopEnvironment(root, id, "agent");
 
@@ -331,6 +334,8 @@ export function makeAgentService(
         pendingTeams.set(id, teamId);
 
         try {
+          await closeExecution(id);
+
           if (!agent.teamId && agent.sandbox)
             await stopEnvironment(root, id, "agent");
 
@@ -369,6 +374,7 @@ export function makeAgentService(
 
         try {
           await cleanup();
+          await closeExecution(id);
           await stopEnvironment(root, id, "agent");
 
           return (

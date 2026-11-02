@@ -48,12 +48,16 @@ export function createServer(
   const agents = makeAgentService(
     root,
     (id) => !chat.busy(id) && !routines?.busy(id),
+    async (id) => {
+      await managedChat.closeAgent(id);
+    },
   );
   const providers = makeProviderService(root, options.discoverProviders, () => {
     void broadcast().catch(() => {});
   });
   let routines: ReturnType<typeof makeRoutineService>;
-  const runChat = options.runChat ?? makeChatRunner(root, providers);
+  const managedChat = makeChatRunner(root, providers);
+  const runChat = options.runChat ?? managedChat;
   const execute = serializeAgentExecution(async (turn) => {
     if (agents.changing(turn.agentId))
       throw new ChatExecutionError(
@@ -487,6 +491,7 @@ export function createServer(
       webhookServer.close();
       await routines.close();
       await chat.close();
+      await managedChat.close();
       await closeNativeMcpLogins(root);
       await providers.close();
       agents.close();

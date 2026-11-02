@@ -13,6 +13,7 @@ import {
   RpcRejectedError,
   withJsonRpc,
   type ProbeLaunch,
+  type JsonRpc,
 } from "@paws/provider-core/process";
 
 const UsageNotification = Schema.Struct({
@@ -237,11 +238,30 @@ export interface ChatCredentials {
   chatgptPlanType: string | null;
 }
 
-export async function runCodexTurn(
+export function runCodexTurn(
   launch: ProbeLaunch,
   turn: ChatTurn,
   credentials: () => Promise<ChatCredentials>,
   deliverSecret?: (reference: string) => Promise<string>,
+) {
+  return runCodexTurnWithConnection(launch, turn, credentials, deliverSecret);
+}
+
+interface LiveConnection {
+  rpc: JsonRpc;
+  initialized: boolean;
+  threadId?: string;
+  onRequest?:
+    | ((method: string, params: unknown) => Promise<unknown>)
+    | undefined;
+}
+
+async function runCodexTurnWithConnection(
+  launch: ProbeLaunch,
+  turn: ChatTurn,
+  credentials: () => Promise<ChatCredentials>,
+  deliverSecret?: (reference: string) => Promise<string>,
+  connection?: LiveConnection,
 ) {
   let threadId = turn.nativeThreadId;
   const text = new Map<string, string>();
@@ -265,14 +285,30 @@ export async function runCodexTurn(
       resolveCompletion();
   }
 
-  await withJsonRpc(
+  const withConnection: typeof withJsonRpc = connection
+    ? async (_launch, use, _protocol, onRequest) => {
+        connection.onRequest = onRequest;
+
+        try {
+          return await use(connection.rpc);
+        } finally {
+          connection.onRequest = undefined;
+        }
+      }
+    : withJsonRpc;
+
+  await withConnection(
     { ...launch, maxFrameBytes: 32 * 1024 * 1024 },
     async (rpc) => {
-      await rpc.request("initialize", {
-        clientInfo: { name: "paws", title: "Paws", version: "0.1.0" },
-        capabilities: { experimentalApi: true },
-      });
-      rpc.notify("initialized");
+      if (!connection?.initialized) {
+        await rpc.request("initialize", {
+          clientInfo: { name: "paws", title: "Paws", version: "0.1.0" },
+          capabilities: { experimentalApi: true },
+        });
+        rpc.notify("initialized");
+
+        if (connection) connection.initialized = true;
+      }
       // External tokens are held by the harness in memory, never mounted or passed in env/argv.
       await rpc.request("account/login/start", {
         type: "chatgptAuthTokens",
@@ -291,35 +327,41 @@ export async function runCodexTurn(
           "features.in_app_chat": false,
         },
       };
-      const started = Schema.decodeUnknownSync(ThreadResponse)(
-        await rpc
-          .request(threadId ? "thread/resume" : "thread/start", {
-            ...runtime,
-            ...(threadId
-              ? { threadId }
-              : {
-                  dynamicTools: [
-                    messageTool,
-                    secretTool,
-                    readAttachmentTool,
-                    teamTool,
-                    memoryTool,
-                    routineTool,
-                    finishTurnTool,
-                  ],
-                }),
-          })
-          .catch((error) => {
-            if (threadId && error instanceof RpcRejectedError)
-              throw new ChatSessionUnavailableError(
-                "The native thread could not be resumed.",
-              );
+      const started =
+        connection?.threadId && connection.threadId === threadId
+          ? { thread: { id: threadId } }
+          : Schema.decodeUnknownSync(ThreadResponse)(
+              await rpc
+                .request(threadId ? "thread/resume" : "thread/start", {
+                  ...runtime,
+                  ...(threadId
+                    ? { threadId }
+                    : {
+                        dynamicTools: [
+                          messageTool,
+                          secretTool,
+                          readAttachmentTool,
+                          teamTool,
+                          memoryTool,
+                          routineTool,
+                          finishTurnTool,
+                        ],
+                      }),
+                })
+                .catch((error) => {
+                  if (threadId && error instanceof RpcRejectedError)
+                    throw new ChatSessionUnavailableError(
+                      "The native thread could not be resumed.",
+                    );
 
-            throw error;
-          }),
-      );
+                  throw error;
+                }),
+            );
       threadId = started.thread.id;
       turn.onThread(threadId);
+
+      if (connection) connection.threadId = threadId;
+
       const unsubscribe = rpc.onNotification((method, params) => {
         try {
           if (method === "turn/started") {
@@ -730,4 +772,92 @@ export async function runCodexTurn(
       }
     },
   );
+}
+
+// The owner explicitly closes this process; completing a turn does not own its lifetime.
+export function createCodexChatSession(launch: ProbeLaunch) {
+  const controller = new AbortController();
+  const signal = AbortSignal.any([launch.signal, controller.signal]);
+  let connection: LiveConnection | undefined;
+  let resolveReady: (value: LiveConnection) => void = () => {};
+  let rejectReady: (error: unknown) => void = () => {};
+  const ready = new Promise<LiveConnection>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  void ready.catch(() => {});
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let ended = false;
+  const failures = new Set<(error: unknown) => void>();
+  const lifetime = withJsonRpc(
+    { ...launch, signal, maxFrameBytes: 32 * 1024 * 1024 },
+    async (rpc) => {
+      connection = { rpc, initialized: false };
+      resolveReady(connection);
+      await held;
+    },
+    "jsonrpc",
+    async (method, params) => {
+      if (!connection?.onRequest) throw new Error("No active turn.");
+
+      return connection.onRequest(method, params);
+    },
+  ).finally(() => {
+    ended = true;
+  });
+  const end = (error: unknown) => {
+    rejectReady(error);
+
+    for (const fail of failures) fail(error);
+  };
+  void lifetime.then(() => end(new Error("Provider session ended.")), end);
+
+  return {
+    get closed() {
+      return ended || signal.aborted;
+    },
+    async run(
+      turn: ChatTurn,
+      credentials: () => Promise<ChatCredentials>,
+      deliverSecret?: (reference: string) => Promise<string>,
+    ) {
+      const abort = () => controller.abort(turn.signal.reason);
+      turn.signal.throwIfAborted();
+      turn.signal.addEventListener("abort", abort, { once: true });
+      let fail: (error: unknown) => void = () => {};
+      const failure = new Promise<never>((_resolve, reject) => {
+        fail = reject;
+      });
+      void failure.catch(() => {});
+      failures.add(fail);
+
+      try {
+        const live = await ready;
+
+        if (ended || signal.aborted) throw new Error("Provider session ended.");
+
+        await Promise.race([
+          runCodexTurnWithConnection(
+            launch,
+            turn,
+            credentials,
+            deliverSecret,
+            live,
+          ),
+          failure,
+        ]);
+      } finally {
+        failures.delete(fail);
+        turn.signal.removeEventListener("abort", abort);
+      }
+    },
+    async close() {
+      release();
+      controller.abort();
+      await lifetime.catch(() => {});
+    },
+  };
 }

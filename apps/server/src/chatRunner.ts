@@ -7,6 +7,11 @@ import { ChatExecutionError, type RunChatTurn } from "@paws/provider-core";
 import type { makeProviderService } from "./ProviderService.ts";
 import { makeCodexChatRunner } from "./codexChatRunner.ts";
 
+type ManagedChatRunner = RunChatTurn & {
+  closeAgent?(agentId: string): Promise<void>;
+  close?(): Promise<void>;
+};
+
 // Register execution adapters independently of discovery and orchestration.
 export function makeChatRunner(
   root: string,
@@ -14,7 +19,7 @@ export function makeChatRunner(
     ReturnType<typeof makeProviderService>,
     "list" | "environment"
   >,
-  runners: Partial<Record<ProviderDriver, RunChatTurn>> = {
+  runners: Partial<Record<ProviderDriver, ManagedChatRunner>> = {
     codex: makeCodexChatRunner(root, providers),
     claudeAgent: makeNativeChatRunner(root, providers, "claudeAgent"),
     cursor: makeNativeChatRunner(root, providers, "cursor"),
@@ -26,8 +31,8 @@ export function makeChatRunner(
     antigravity: makeNativeChatRunner(root, providers, "antigravity"),
     acpRegistry: makeNativeChatRunner(root, providers, "acpRegistry"),
   },
-): RunChatTurn {
-  return async (turn) => {
+) {
+  const execute: RunChatTurn = async (turn) => {
     const provider = providers
       .list()
       .find((item) => item.config.id === turn.selection.providerId);
@@ -75,4 +80,17 @@ export function makeChatRunner(
       privateInputs.clear();
     }
   };
+
+  return Object.assign(execute, {
+    async closeAgent(agentId: string) {
+      await Promise.all(
+        Object.values(runners).map((runner) => runner.closeAgent?.(agentId)),
+      );
+    },
+    async close() {
+      await Promise.all(
+        Object.values(runners).map((runner) => runner.close?.()),
+      );
+    },
+  });
 }

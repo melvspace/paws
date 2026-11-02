@@ -113,7 +113,12 @@ it("runs standalone agents on the host by default, scopes their cwd/home, and re
     ).toBe(lease.home);
     const secret = await lease.deliverSecret(randomUUID(), "private-input");
     expect(await readFile(secret, "utf8")).toBe("private-input");
+    await lease.cleanupSecrets();
+    await expect(readFile(secret)).rejects.toThrow();
+    const nextSecret = await lease.deliverSecret(randomUUID(), "next-turn");
+    expect(await readFile(nextSecret, "utf8")).toBe("next-turn");
     await lease.dispose();
+    await expect(readFile(nextSecret)).rejects.toThrow();
     await expect(readFile(secret)).rejects.toThrow();
     expect(await lease.execute("pwd", new AbortController().signal)).toContain(
       `/standalone/${agentId}/workspace`,

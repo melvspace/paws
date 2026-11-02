@@ -279,6 +279,16 @@ export async function leaseToolRuntime(
   const secrets: string[] = [];
   const processes: string[] = [];
 
+  async function cleanupSecrets() {
+    for (const path of secrets.splice(0)) {
+      if (name)
+        await exec("docker", ["exec", name, "rm", "-f", "--", path], {
+          timeout: 10_000,
+        }).catch(() => {});
+      else await rm(path, { force: true });
+    }
+  }
+
   return {
     agentId,
     isolation: isolated ? "container" : "host",
@@ -400,6 +410,7 @@ export async function leaseToolRuntime(
         }
       }
     },
+    cleanupSecrets,
     async dispose() {
       for (const marker of processes) {
         await exec(
@@ -417,13 +428,7 @@ export async function leaseToolRuntime(
         ).catch(() => {});
       }
 
-      for (const path of secrets) {
-        if (name)
-          await exec("docker", ["exec", name, "rm", "-f", "--", path], {
-            timeout: 10_000,
-          }).catch(() => {});
-        else await rm(path, { force: true });
-      }
+      await cleanupSecrets();
 
       if (name && environment.ephemeral)
         await exec("docker", ["rm", "--force", name], { timeout: 30_000 });

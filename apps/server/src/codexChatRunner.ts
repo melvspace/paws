@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Schema } from "effect";
-import { runCodexTurn } from "@paws/provider-codex";
+import { createCodexChatSession } from "@paws/provider-codex";
 import { ChatExecutionError, type RunChatTurn } from "@paws/provider-core";
 import { withJsonRpc } from "@paws/provider-core/process";
 import { leaseCodexRuntime } from "@paws/runtime";
@@ -22,7 +22,28 @@ export function makeCodexChatRunner(
     ReturnType<typeof makeProviderService>,
     "list" | "environment"
   >,
-): RunChatTurn {
+) {
+  const sessions = new Map<
+    string,
+    {
+      agentId: string;
+      signature: string;
+      threadId: string | null;
+      session: ReturnType<typeof createCodexChatSession>;
+      lease: Awaited<ReturnType<typeof leaseCodexRuntime>>;
+    }
+  >();
+
+  async function closeSession(key: string) {
+    const entry = sessions.get(key);
+
+    if (!entry) return;
+
+    sessions.delete(key);
+    await entry.session.close();
+    await entry.lease.dispose();
+  }
+
   const run: RunChatTurn = async (turn) => {
     const provider = providers
       .list()
@@ -77,44 +98,107 @@ export function makeCodexChatRunner(
         );
       }
     };
-    const lease = await leaseCodexRuntime(
-      root,
+    const context = agentContext(root, turn.agentId);
+    const key = JSON.stringify([
       turn.agentId,
-      provider.config.binaryPath,
-      agentContext(root, turn.agentId),
-    );
+      turn.conversationId ?? turn.agentId,
+    ]);
+    const signature = JSON.stringify([
+      provider.config,
+      environment,
+      home,
+      context.teamId,
+      context.sandbox,
+      context.template,
+    ]);
+    let entry = sessions.get(key);
+
+    if (
+      entry &&
+      (entry.session.closed ||
+        entry.signature !== signature ||
+        entry.threadId !== turn.nativeThreadId)
+    ) {
+      await closeSession(key);
+      entry = undefined;
+    }
+
+    if (!entry) {
+      const lease = await leaseCodexRuntime(
+        root,
+        turn.agentId,
+        provider.config.binaryPath,
+        context,
+      );
+      const session = createCodexChatSession({
+        command: lease.command,
+        args: lease.args,
+        cwd: lease.isolation === "container" ? root : lease.workspace,
+        signal: new AbortController().signal,
+        env: {
+          PATH: process.env.PATH,
+          HOME: lease.home,
+          CODEX_HOME: `${lease.home}/.codex`,
+        },
+      });
+      entry = {
+        agentId: turn.agentId,
+        signature,
+        threadId: turn.nativeThreadId,
+        session,
+        lease,
+      };
+      sessions.set(key, entry);
+    }
+
+    const active = entry;
+    let waiting = false;
 
     try {
-      await runCodexTurn(
+      await active.session.run(
         {
-          command: lease.command,
-          args: lease.args,
-          cwd:
-            lease.workspace.startsWith("/team/") ||
-            lease.isolation === "container"
-              ? root
-              : lease.workspace,
-          signal: turn.signal,
-          env: {
-            PATH: process.env.PATH,
-            HOME: lease.home,
-            CODEX_HOME: `${lease.home}/.codex`,
+          ...turn,
+          workspace: active.lease.workspace,
+          home: active.lease.home,
+          async onMessage(id, card, attachments) {
+            await turn.onMessage(id, card, attachments);
+            waiting ||= Boolean(
+              card.secretRequest || card.actions.length || card.fields.length,
+            );
+          },
+          onThread(id) {
+            active.threadId = id;
+            turn.onThread(id);
           },
         },
-        { ...turn, workspace: lease.workspace, home: lease.home },
         credentials,
         async (reference) => {
           if (!turn.consumeSecret) throw new Error("Secret is unavailable.");
 
-          return lease.deliverSecret(reference, turn.consumeSecret(reference));
+          return active.lease.deliverSecret(
+            reference,
+            turn.consumeSecret(reference),
+          );
         },
       );
+
+      // Completed routine runs have no next turn; retain only those awaiting input.
+      if (
+        turn.conversationId &&
+        turn.conversationId !== turn.agentId &&
+        !waiting
+      )
+        await closeSession(key);
+    } catch (error) {
+      await closeSession(key);
+
+      throw error;
     } finally {
-      await lease.dispose();
+      await active.lease.cleanupSecrets();
     }
   };
 
-  return async (turn) => {
+  const execute: RunChatTurn = async (turn) => {
     try {
       await run(turn);
     } catch (error) {
@@ -129,4 +213,15 @@ export function makeCodexChatRunner(
       throw error;
     }
   };
+
+  return Object.assign(execute, {
+    async closeAgent(agentId: string) {
+      for (const [key, entry] of sessions) {
+        if (entry.agentId === agentId) await closeSession(key);
+      }
+    },
+    async close() {
+      await Promise.all([...sessions.keys()].map(closeSession));
+    },
+  });
 }
