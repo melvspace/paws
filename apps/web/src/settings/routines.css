@@ -1,0 +1,315 @@
+/* Compact section actions and divided rows follow T3 Code ScheduledTasksSettings (MIT). */
+.routines-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 720px;
+  margin-inline: auto;
+  min-width: 0;
+  font-size: 13px;
+}
+.routines-settings label {
+  margin: 0;
+  font-weight: 500;
+}
+.routines-settings p {
+  margin: 0;
+}
+.routines-settings select {
+  height: 34px;
+  min-width: 0;
+  color: inherit;
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.routines-settings .ui-button {
+  min-height: 30px;
+  padding: 6px 10px;
+  gap: 6px;
+  font-size: 12px;
+}
+.routine-agent-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+.routine-new {
+  align-self: flex-start;
+  width: auto;
+}
+.routine-empty {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 48px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--muted-foreground);
+}
+.routines-settings .settings-group {
+  border-radius: 8px;
+  background: transparent;
+}
+.routines-settings .settings-row {
+  margin: 0;
+  padding: 14px 16px;
+  gap: 16px;
+}
+.routines-settings .settings-row + .settings-row {
+  border-top: 1px solid var(--border);
+}
+.routine-card {
+  position: relative;
+}
+.routine-card:hover {
+  background: var(--accent);
+}
+.routine-list-title::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+.routine-list-title:focus-visible::after {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+.routine-card-switch {
+  position: relative;
+  z-index: 1;
+}
+.routine-list-copy {
+  flex: 1;
+  min-width: 0;
+}
+.routine-list-title.ui-button {
+  position: static;
+  display: block;
+  padding: 0;
+  min-height: 22px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+  max-width: 100%;
+  white-space: normal;
+}
+.routine-list-instruction {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.routine-list-schedule {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.6;
+  padding-top: 5px;
+}
+.routine-list-schedule svg {
+  flex-shrink: 0;
+}
+.routine-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.routine-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+.routine-breadcrumb h2 {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.routine-breadcrumb .routine-breadcrumb-parent {
+  flex-shrink: 0;
+  min-height: 28px;
+  padding: 2px 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.routine-breadcrumb-parent:hover {
+  color: var(--foreground);
+}
+.routine-breadcrumb > span {
+  opacity: 0.5;
+}
+.routine-fields .settings-row {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  font-size: 12px;
+  line-height: 34px;
+  padding: 12px 16px;
+}
+.routine-fields .settings-row > input,
+.routine-fields .settings-row > textarea,
+.routine-fields .settings-row > select {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+.routine-fields .settings-row > input {
+  height: 34px;
+  padding: 6px 10px;
+}
+.routine-fields textarea {
+  min-height: 96px;
+  padding: 8px 10px;
+}
+.routine-fields .routine-enabled-row {
+  align-items: center;
+  line-height: 22px;
+}
+.routine-enabled-row .ui-switch {
+  justify-self: end;
+}
+.routine-advanced > summary,
+.routine-upcoming > summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.routine-advanced[open] > summary {
+  margin-bottom: 12px;
+}
+.routine-upcoming ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.routine-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.routine-run-feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.routine-delete {
+  color: light-dark(#c10007, #ff6467);
+  margin-left: auto;
+}
+.routine-section-title {
+  margin: 4px 0 -10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.routine-run-row > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.routine-status {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+.routine-status[data-status="failed"],
+.routine-status[data-status="interrupted"] {
+  color: light-dark(#c10007, #ff6467);
+}
+.routine-secret {
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  overflow-wrap: anywhere;
+}
+.routine-secret label {
+  display: grid;
+  gap: 6px;
+}
+.routine-secret p {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.routines-settings pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 400px;
+  overflow: auto;
+}
+.routines-settings .chat-history {
+  max-height: 500px;
+}
+@media (max-width: 640px) {
+  .routines-settings .settings-row {
+    flex-direction: row;
+    align-items: center;
+  }
+  .routine-fields .settings-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    line-height: 22px;
+  }
+  .routine-fields .routine-enabled-row {
+    grid-template-columns: 1fr auto;
+  }
+}
+
+.routine-filter-list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.routine-filter-list > .ui-button {
+  justify-self: start;
+}
+.routine-filter {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  align-items: end;
+  line-height: 20px;
+}
+.routine-filter label {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.routine-filter label:first-child {
+  grid-column: 1 / -1;
+}
+.routine-filter input {
+  height: 34px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.routine-filter + .routine-filter {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}

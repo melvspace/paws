@@ -42,3 +42,5 @@ export * from "./skills.ts";
 export * from "./avatars.ts";
 
 export * from "./teams.ts";
+
+export * from "./routines.ts";

@@ -699,3 +699,24 @@
   min-height: 28px;
   font-size: 11px;
 }
+
+.chat-routine-origin {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: 5px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 16px;
+  text-decoration: none;
+}
+.chat-routine-origin span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-routine-origin svg {
+  flex-shrink: 0;
+}

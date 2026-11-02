@@ -1,3 +1,10 @@
+import {
+  makeRoutineService,
+  configuredRoutineLimits,
+  routineLimits,
+} from "./RoutineService.ts";
+import { routineHttp } from "./routineHttp.ts";
+import { serializeAgentExecution } from "./agentExecution.ts";
 import { isDeepStrictEqual } from "node:util";
 import {
   nativeMcpAuthHttp,
@@ -35,6 +42,7 @@ export function createServer(
   root: string,
   options: {
     runChat?: RunChatTurn;
+    routineLimits?: typeof routineLimits;
     discoverProviders?: Parameters<typeof makeProviderService>[1];
   } = {},
 ) {
@@ -42,13 +50,32 @@ export function createServer(
   const providers = makeProviderService(root, options.discoverProviders, () => {
     void broadcast().catch(() => {});
   });
-  const chat = makeChatService(
+  let routines: ReturnType<typeof makeRoutineService>;
+  const execute = serializeAgentExecution(
+    options.runChat ?? makeChatRunner(root, providers),
+  );
+  const run: RunChatTurn = (turn) =>
+    execute({
+      ...turn,
+      routineTool: (input) =>
+        routines.tool(
+          turn.agentId,
+          input,
+          turn.conversationId !== turn.agentId
+            ? turn.conversationId
+            : undefined,
+        ),
+    });
+  const chat = makeChatService(root, providers.list, run, () => {
+    void broadcast().catch(() => {});
+  });
+  routines = makeRoutineService(
     root,
     providers.list,
-    options.runChat ?? makeChatRunner(root, providers),
-    () => {
-      void broadcast().catch(() => {});
-    },
+    run,
+    chat,
+    () => {},
+    options.routineLimits ?? routineLimits,
   );
   const snapshot = () =>
     Effect.runPromise(agents.list()).then(async (items) => ({
@@ -107,6 +134,8 @@ export function createServer(
     }
 
     try {
+      if (await routineHttp(request, response, routines)) return;
+
       const credentials =
         /^\/api\/teams\/([^/]+)\/integrations\/([^/]+)\/credentials$/.exec(
           request.url ?? "",
@@ -222,7 +251,10 @@ export function createServer(
           (agent) => agent.id === agentId,
         );
 
-        if (exists) await chat.remove(agentId);
+        if (exists) {
+          await routines.removeAgent(agentId);
+          await chat.remove(agentId);
+        }
 
         const removed = await Effect.runPromise(agents.remove(agentId));
 
@@ -357,6 +389,21 @@ export function createServer(
       );
     }
   });
+  // An ingress proxy can forward this dedicated listener without exposing APIs.
+  const webhookServer = Http.createServer(async (request, response) => {
+    response.setHeader("Content-Type", "application/json");
+
+    try {
+      if (!(await routineHttp(request, response, routines, true)))
+        response.writeHead(404).end();
+    } catch {
+      if (response.headersSent) response.destroy();
+      else
+        response
+          .writeHead(400)
+          .end(JSON.stringify({ error: "Unable to process webhook request." }));
+    }
+  });
   const sockets = new WebSocketServer({ server, path: "/ws" });
 
   async function broadcast() {
@@ -387,8 +434,10 @@ export function createServer(
 
   return {
     server,
+    webhookServer,
     providers,
     chat,
+    routines,
     close: async () => {
       for (const client of sockets.clients) {
         client.terminate();
@@ -396,6 +445,8 @@ export function createServer(
 
       sockets.close();
       server.close();
+      webhookServer.close();
+      await routines.close();
       await chat.close();
       await closeNativeMcpLogins(root);
       await closeTeamCommands(root);
@@ -410,10 +461,21 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   const root = process.env.PAWS_HOME ?? Path.join(homedir(), ".paws");
-  const app = createServer(root);
+  const app = createServer(root, {
+    routineLimits: configuredRoutineLimits(process.env.PAWS_ROUTINE_LIMITS),
+  });
   app.server.listen(4310, "127.0.0.1", () =>
     console.log("Paws server: http://127.0.0.1:4310"),
   );
+  if (process.env.PAWS_WEBHOOK_PORT) {
+    const port = Number(process.env.PAWS_WEBHOOK_PORT);
+
+    if (!Number.isInteger(port) || port < 1 || port > 65535)
+      throw new Error("Invalid PAWS_WEBHOOK_PORT.");
+
+    app.webhookServer.listen(port, "127.0.0.1");
+  }
+
   for (const provider of app.providers.list()) {
     if (
       provider.config.enabled &&

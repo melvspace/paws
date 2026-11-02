@@ -411,6 +411,23 @@ export function ChatHistory({
         aria-relevant="additions"
       >
         {messages.map((message, index) => {
+          // Earlier routine deliveries included this harness-owned prefix in text.
+          // Present those records cleanly without changing their stored history.
+          const legacyOrigin =
+            message.role === "assistant" && !message.routine
+              ? /^([^\n]{1,80}) · \[Open run\]\(#routine\/([a-f0-9-]{36})\/([a-f0-9-]{36})\)\n/.exec(
+                  message.text,
+                )
+              : null;
+          const legacy =
+            legacyOrigin?.[2] === conversation?.agentId ? legacyOrigin : null;
+          const origin =
+            message.routine ??
+            (legacy ? { name: legacy[1]!, runId: legacy[3]! } : undefined);
+          const messageText = legacy
+            ? message.text.slice(legacy[0].length)
+            : message.text;
+
           const time = times[index];
           const startsDay = time && time.day !== times[index - 1]?.day;
           const sending = outgoing[message.id] === "sending";
@@ -487,8 +504,14 @@ export function ChatHistory({
                       : undefined
                   }
                 >
+                  {origin && (
+                    <span className="chat-routine-origin">
+                      <ClockIcon aria-hidden size={12} />
+                      <span>{origin.name}</span>
+                    </span>
+                  )}
                   {message.role === "assistant" ? (
-                    <MessageMarkdown text={message.text} />
+                    <MessageMarkdown text={messageText} />
                   ) : message.text ? (
                     <p>{message.text}</p>
                   ) : null}

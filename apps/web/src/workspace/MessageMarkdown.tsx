@@ -10,6 +10,7 @@ export function MessageMarkdown({ text }: { text: string }) {
         remarkPlugins={[remarkGfm]}
         components={{
           a: ({ href, children, node }) =>
+            href?.startsWith("#routine/") ||
             node?.children.some(
               (child) => child.type === "element" && child.tagName === "img",
             ) ? (

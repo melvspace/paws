@@ -182,3 +182,5 @@ export async function getTeam(id: string) {
 
   return team ?? null;
 }
+
+export * from "./routines.ts";

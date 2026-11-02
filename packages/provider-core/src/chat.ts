@@ -25,8 +25,11 @@ export interface ChatAttachmentFile {
 }
 
 export interface ChatTurn {
+  routineTool?(input: unknown): Promise<unknown>;
   memoryTool?(input: unknown): Promise<unknown>;
   teamTool?(input: unknown): Promise<unknown>;
+  conversationId?: string;
+  onExecutionStart?(): void;
   agentId: string;
   agentName: string;
   nativeThreadId: string | null;

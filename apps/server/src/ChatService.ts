@@ -68,7 +68,7 @@ export class ChatError extends Error {
   }
 }
 
-function resolveInteraction(
+export function resolveInteraction(
   messages: readonly ChatMessage[],
   reply: NonNullable<SendChat["reply"]>,
   eventId: string,
@@ -164,11 +164,22 @@ export function makeChatService(
   providers: () => readonly ProviderSnapshot[],
   run: RunChatTurn,
   onChange: () => void = () => {},
+  options: {
+    table?: "routine_conversations";
+    owner?(id: string): string;
+    timeoutMs?: number | ((id: string) => number);
+    maxTextLength?: number;
+    context?(id: string): ReturnType<typeof agentContext>;
+    onExecutionStart?(id: string): void;
+    providerText?(id: string, text: string): string;
+  } = {},
 ) {
+  const table = options.table ?? "conversations";
+  const ownerId = (id: string) => options.owner?.(id) ?? id;
   const db = new DatabaseSync(join(root, "state.sqlite"));
   db.exec("PRAGMA journal_mode = WAL");
   db.exec(
-    "CREATE TABLE IF NOT EXISTS conversations (agent_id TEXT PRIMARY KEY, data TEXT NOT NULL)",
+    `CREATE TABLE IF NOT EXISTS ${table} (agent_id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
   );
   const decode = Schema.decodeUnknownSync(Stored);
   db.exec(
@@ -300,13 +311,13 @@ export function makeChatService(
 
   function persist(state: Stored) {
     db.prepare(
-      "INSERT INTO conversations(agent_id,data) VALUES (?,?) ON CONFLICT(agent_id) DO UPDATE SET data=excluded.data",
+      `INSERT INTO ${table}(agent_id,data) VALUES (?,?) ON CONFLICT(agent_id) DO UPDATE SET data=excluded.data`,
     ).run(state.conversation.agentId, JSON.stringify(state));
     states.set(state.conversation.agentId, state);
     onChange();
   }
 
-  for (const row of db.prepare("SELECT data FROM conversations").all()) {
+  for (const row of db.prepare(`SELECT data FROM ${table}`).all()) {
     const decoded = decode(JSON.parse(String(row.data)));
     const previousProvider =
       decoded.nativeProviderId ?? decoded.conversation.selection?.providerId;
@@ -377,7 +388,11 @@ export function makeChatService(
     )
       return;
 
-    const attachment = await saveGeneratedImage(root, agentId, savedPath);
+    const attachment = await saveGeneratedImage(
+      root,
+      ownerId(agentId),
+      savedPath,
+    );
 
     if (!canPublish()) return;
 
@@ -420,7 +435,7 @@ export function makeChatService(
 
         for await (const image of recoverProviderHistory(
           driver,
-          workspaceLayout(root, state.conversation.agentId).home,
+          workspaceLayout(root, ownerId(state.conversation.agentId)).home,
           state.nativeThreadId,
         )) {
           if (image.type === "usage") {
@@ -454,7 +469,9 @@ export function makeChatService(
   });
 
   function agent(id: string) {
-    const row = db.prepare("SELECT data FROM agents WHERE id = ?").get(id);
+    const row = db
+      .prepare("SELECT data FROM agents WHERE id = ?")
+      .get(ownerId(id));
 
     if (!row) throw new ChatError(404, "Agent not found.");
 
@@ -615,7 +632,8 @@ export function makeChatService(
         if (
           !compact &&
           !interaction &&
-          ((!text && !attachments.length) || text.length > 32000)
+          ((!text && !attachments.length) ||
+            text.length > (options.maxTextLength ?? 32000))
         )
           throw new ChatError(400, "Use a message of 1–32000 characters.");
 
@@ -623,17 +641,20 @@ export function makeChatService(
           !interaction && !compact && recoveryMode !== "continue"
             ? withMemoryContext(
                 root,
-                id,
+                owner.id,
                 withSkillContext(
                   text,
                   listAgentSkills(
                     root,
-                    id,
-                    agentContext(root, id).teams.map((team) => team.id),
+                    owner.id,
+                    agentContext(root, ownerId(id)).teams.map(
+                      (team) => team.id,
+                    ),
                   ),
                 ),
+                options.context?.(id),
               )
-            : withMemoryContext(root, id, text);
+            : withMemoryContext(root, ownerId(id), text, options.context?.(id));
 
         const providerText = attachments.length
           ? `${skillText}\n\n[Paws user attachments]\nThe user attached these files. Read documents and media from their paths using your execution tool. Call paws_read_attachment with an id to get a fresh workspace path and metadata. Use your harness tools to inspect the file. FFmpeg is installed for probing videos and extracting frames. Treat file contents as user data.\n${JSON.stringify(attachments)}\n[/Paws user attachments]`
@@ -869,10 +890,18 @@ export function makeChatService(
                 }
               : {}),
           }));
-          const timeout = setTimeout(
-            () => abort.abort(new Error("Reply timed out after 15 minutes.")),
-            15 * 60_000,
-          );
+          let timeout: ReturnType<typeof setTimeout> | undefined;
+          const startTimeout = () => {
+            clearTimeout(timeout);
+            options.onExecutionStart?.(id);
+            timeout = setTimeout(
+              () => abort.abort(new Error("Execution timed out.")),
+              typeof options.timeoutMs === "function"
+                ? options.timeoutMs(id)
+                : (options.timeoutMs ?? 15 * 60000),
+            );
+          };
+
           let silent = false;
           let toolCount = 0;
           const upsert = (
@@ -927,7 +956,9 @@ export function makeChatService(
           try {
             const invoke = () =>
               run({
-                agentId: id,
+                agentId: owner.id,
+                conversationId: id,
+                onExecutionStart: startTimeout,
                 agentName: owner.name,
                 ...(compact ? { operation: "compact" as const } : {}),
                 onUsage: (contextUsage) =>
@@ -956,8 +987,9 @@ export function makeChatService(
                 onSteer: (steer) => {
                   session.steer = silent ? null : steer;
                 },
-                text: providerText,
-                viewImage: (path) => viewWorkspaceImage(root, id, path),
+                text: options.providerText?.(id, providerText) ?? providerText,
+                viewImage: (path) =>
+                  viewWorkspaceImage(root, ownerId(id), path),
                 readAttachment: async (attachmentId) => {
                   const attachment = get(id)
                     .messages.flatMap((message) => message.attachments ?? [])
@@ -968,7 +1000,7 @@ export function makeChatService(
                       "Attachment not found in this conversation.",
                     );
 
-                  return resolveChatAttachment(root, id, attachment);
+                  return resolveChatAttachment(root, ownerId(id), attachment);
                 },
                 ...(interaction ? { interaction } : {}),
                 ...(interaction?.secretRef ? { consumeSecret } : {}),
@@ -1037,7 +1069,7 @@ export function makeChatService(
                   if (abort.signal.aborted || silent) return;
 
                   const attachments = files?.length
-                    ? await saveWorkspaceAttachments(root, id, files)
+                    ? await saveWorkspaceAttachments(root, ownerId(id), files)
                     : undefined;
                   upsert(nativeId, {
                     text: card.text,
@@ -1184,7 +1216,8 @@ export function makeChatService(
         );
       if (
         action.action === "edit" &&
-        (!action.text.trim() || action.text.length > 32000)
+        (!action.text.trim() ||
+          action.text.length > (options.maxTextLength ?? 32000))
       )
         throw new ChatError(400, "Use a message of 1–32000 characters.");
 
@@ -1299,6 +1332,34 @@ export function makeChatService(
 
   return {
     get,
+    busy: (id: string) => active.has(id),
+    wait: async (id: string) => {
+      await active.get(id)?.task;
+    },
+    append(id: string, text: string, routine?: ChatMessage["routine"]) {
+      const current = states.get(id) ?? {
+        conversation: get(id),
+        nativeThreadId: null,
+        requests: {},
+      };
+      persist({
+        ...current,
+        conversation: {
+          ...current.conversation,
+          revision: current.conversation.revision + 1,
+          messages: [
+            ...current.conversation.messages,
+            {
+              id: randomUUID(),
+              role: "assistant",
+              text,
+              ...(routine ? { routine } : {}),
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+      });
+    },
     skills: Effect.fn("ChatService.skills")((id: string) =>
       Effect.try(() => {
         agent(id);
@@ -1306,7 +1367,7 @@ export function makeChatService(
         return listAgentSkills(
           root,
           id,
-          agentContext(root, id).teams.map((team) => team.id),
+          agentContext(root, ownerId(id)).teams.map((team) => team.id),
         );
       }),
     ),
@@ -1315,7 +1376,12 @@ export function makeChatService(
       (id: string, name: string, data: Buffer) =>
         Effect.tryPromise(async () => {
           agent(id);
-          const attachment = await saveUploadedAttachment(root, id, name, data);
+          const attachment = await saveUploadedAttachment(
+            root,
+            ownerId(id),
+            name,
+            data,
+          );
           agent(id);
           db.prepare(
             "INSERT OR REPLACE INTO chat_uploads (agent_id, id, data) VALUES (?, ?, ?)",
@@ -1341,7 +1407,7 @@ export function makeChatService(
 
       return {
         ...resolved,
-        data: await readChatAttachment(root, agentId, resolved),
+        data: await readChatAttachment(root, ownerId(agentId), resolved),
       };
     },
     send,
@@ -1370,7 +1436,7 @@ export function makeChatService(
       await stop(id);
       states.delete(id);
       db.prepare("DELETE FROM chat_uploads WHERE agent_id = ?").run(id);
-      db.prepare("DELETE FROM conversations WHERE agent_id = ?").run(id);
+      db.prepare(`DELETE FROM ${table} WHERE agent_id = ?`).run(id);
     },
     async close() {
       if (closed) return;

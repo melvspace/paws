@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { appAtomRegistry } from "./lib/atomRegistry.ts";
 import { Button } from "./components/ui/button.tsx";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Bot, MenuIcon } from "lucide-react";
 import { Dialog, DialogPopup, DialogTrigger } from "./components/ui/dialog.tsx";
 import { useMobileLayout } from "./lib/useMobileLayout.ts";
@@ -23,20 +23,77 @@ function subscribeToSelection(onChange: () => void) {
   };
 }
 
-function selectionSnapshot() {
-  return window.location.hash;
-}
-
 export function Dashboard() {
   const mobile = useMobileLayout();
   const [navigationOpen, setNavigationOpen] = useState(false);
   const { snapshot, connected, error } = useAtomValue(agentsAtom);
   const [dialog, setDialog] = useState<{ agent: Agent | null } | null>(null);
+  const [settingsAgentId, setSettingsAgentId] = useState<string | null>(null);
+  const beforeLeave = useRef<(() => Promise<void>) | null>(null);
+  const navigating = useRef(false);
+  const pendingNavigation = useRef<(() => void) | null>(null);
   const [settingsOpen, setSettingsOpen] = useState<
     "Appearance" | "Providers" | "Teams" | null
   >(null);
-  const hash = useSyncExternalStore(subscribeToSelection, selectionSnapshot);
+  const [hash, setHash] = useState(() => window.location.hash);
+  const acceptedHash = useRef(hash);
   const agent = selectedAgent(snapshot.agents, hash);
+
+  async function navigate(action: () => void) {
+    if (navigating.current) {
+      pendingNavigation.current = action;
+
+      return;
+    }
+
+    navigating.current = true;
+
+    try {
+      if (document.activeElement instanceof HTMLElement)
+        document.activeElement.blur();
+
+      await beforeLeave.current?.();
+      setNavigationOpen(false);
+      action();
+      acceptedHash.current = window.location.hash;
+      setHash(acceptedHash.current);
+    } catch {
+      // Settings retain failed edits and explain how to recover.
+    } finally {
+      navigating.current = false;
+      const pending = pendingNavigation.current;
+      pendingNavigation.current = null;
+
+      if (pending) void navigate(pending);
+    }
+  }
+
+  useEffect(() =>
+    subscribeToSelection(() => {
+      const requested = window.location.hash;
+
+      if (requested === acceptedHash.current) return;
+
+      const path = window.location.pathname + window.location.search;
+      // Keep the URL on the active editor until its pending work is saved.
+      history.replaceState(null, "", path + acceptedHash.current);
+      void navigate(() => {
+        history.replaceState(null, "", path + requested);
+        setSettingsAgentId(null);
+      });
+    }),
+  );
+
+  function closeAgentSettings() {
+    setSettingsAgentId(null);
+  }
+
+  function openAgentSettings(target: Agent) {
+    void navigate(() => {
+      history.pushState(null, "", `#agent-${target.id}`);
+      setSettingsAgentId(target.id);
+    });
+  }
 
   // The WebSocket is an external resource owned by this mounted view.
   useEffect(() => {
@@ -52,18 +109,19 @@ export function Dashboard() {
       selectedId={agent?.id ?? null}
       connected={connected}
       onCreate={() => {
-        setNavigationOpen(false);
-        setDialog({ agent: null });
+        void navigate(() => setDialog({ agent: null }));
       }}
-      onSettings={(target) => {
-        setNavigationOpen(false);
-        setDialog({ agent: target });
-      }}
+      onSettings={openAgentSettings}
       onAppSettings={() => {
         setNavigationOpen(false);
         setSettingsOpen("Appearance");
       }}
-      onNavigate={() => setNavigationOpen(false)}
+      onNavigate={(target) => {
+        void navigate(() => {
+          closeAgentSettings();
+          history.pushState(null, "", `#agent-${target.id}`);
+        });
+      }}
       onClose={mobile ? () => setNavigationOpen(false) : undefined}
     />
   );
@@ -98,7 +156,10 @@ export function Dashboard() {
               key={agent.id}
               agent={agent}
               navigation={navigation}
-              onSettings={() => setDialog({ agent })}
+              onSettings={() => openAgentSettings(agent)}
+              settingsOpen={settingsAgentId === agent.id}
+              beforeLeave={beforeLeave}
+              onSettingsClosed={closeAgentSettings}
               onProviderSettings={() => setSettingsOpen("Providers")}
             />
           ) : (
@@ -125,7 +186,9 @@ export function Dashboard() {
         {settingsOpen && (
           <AppSettingsDialog
             initialPage={settingsOpen}
-            onDismiss={() => setSettingsOpen(null)}
+            onDismiss={() => {
+              setSettingsOpen(null);
+            }}
           />
         )}
         {dialog && (
