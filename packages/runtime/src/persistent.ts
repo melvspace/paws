@@ -300,7 +300,11 @@ export async function leaseToolRuntime(
 
       return path;
     },
-    launch(command: string, args: string[]) {
+    launch(
+      command: string,
+      args: string[],
+      context: { workspace: string; home: string } = paths,
+    ) {
       if (!name) return { command, args };
 
       const marker = `/tmp/paws-runtime-${randomUUID()}`;
@@ -314,11 +318,11 @@ export async function leaseToolRuntime(
           identity(),
           "--interactive",
           "--workdir",
-          paths.workspace,
+          context.workspace,
           "--env",
-          `HOME=${paths.home}`,
+          `HOME=${context.home}`,
           "--env",
-          `CODEX_HOME=${paths.home}/.codex`,
+          `CODEX_HOME=${context.home}/.codex`,
           name,
           "setsid",
           "--wait",

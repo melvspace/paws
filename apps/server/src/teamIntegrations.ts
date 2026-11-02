@@ -7,9 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Schema } from "effect";
 import { Team, TeamToolRequest, type TeamIntegration } from "@paws/contracts";
 import { assertAgentId } from "@paws/shared";
-import { leaseToolRuntime } from "@paws/runtime";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { localTeamMcp } from "./localTeamMcp.ts";
 import { remoteTeamMcp } from "./teamMcp.ts";
 import { agentContext } from "./teamContext.ts";
 const integrationIdPattern = /^[a-z][a-z0-9-]{0,63}$/;
@@ -258,71 +256,15 @@ export async function teamTool(
     );
   }
 
-  const lease = await leaseToolRuntime(root, agentId, {
-    teamId: team.id,
-    template: team.template,
-  });
-  const timeout = AbortSignal.any([signal, AbortSignal.timeout(180000)]);
-  const launch = lease.launch("/usr/bin/timeout", [
-    "--kill-after=5",
-    "180",
-    integration.command!,
-    ...(integration.args ?? []),
-  ]);
-  const args = launch.args;
-  args.splice(
-    args.indexOf(lease.container!),
-    0,
-    ...Object.keys(secrets).flatMap((name) => ["--env", name]),
+  return redact(
+    await localTeamMcp(
+      root,
+      agentId,
+      team,
+      integration,
+      input,
+      secrets,
+      signal,
+    ),
   );
-
-  try {
-    const transport = new StdioClientTransport({
-      command: "docker",
-      args,
-      env: { PATH: process.env.PATH ?? "", ...secrets },
-      stderr: "ignore",
-    });
-    const client = new Client({ name: "paws", version: "0.1.0" });
-    const abort = () => {
-      void client.close();
-    };
-    timeout.addEventListener("abort", abort, { once: true });
-
-    try {
-      timeout.throwIfAborted();
-      await client.connect(transport);
-
-      if (input.action === "tools")
-        return redact(await client.listTools({}, { signal: timeout }));
-      if (input.action !== "call" || !input.tool)
-        throw new Error("Choose a tool returned by tools.");
-
-      return redact(
-        await client.callTool(
-          { name: input.tool, arguments: input.arguments ?? {} },
-          undefined,
-          { signal: timeout },
-        ),
-      );
-    } finally {
-      timeout.removeEventListener("abort", abort);
-      await client.close();
-    }
-  } catch (error) {
-    const detail =
-      typeof error === "object" &&
-      error !== null &&
-      "stderr" in error &&
-      typeof error.stderr === "string"
-        ? String(redact(error.stderr)).slice(-4000).trim()
-        : "";
-
-    throw new ChatToolError(
-      detail ||
-        "MCP operation failed. Check the connection and team environment.",
-    );
-  } finally {
-    await lease.dispose();
-  }
 }
