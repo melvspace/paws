@@ -48,6 +48,56 @@ function attachmentSnapshots(files: readonly ChatAttachment[]) {
   return unique.map(({ path: _path, ...file }) => file);
 }
 
+function taskEventApplicable(event: TeamEvent, task: TeamTask | undefined) {
+  return (
+    event.delivery !== "cancelled" &&
+    (!event.taskId ||
+      Boolean(
+        task &&
+        !terminal(task) &&
+        task.revision === event.taskRevision &&
+        (task.status === "review" ? task.reviewerId : task.ownerId) ===
+          event.toAgentId,
+      ))
+  );
+}
+
+function replyRecovery(
+  event: TeamEvent,
+  {
+    retried,
+    available,
+    active,
+  }: { retried: boolean; available: boolean; active: boolean },
+): PeerMessageRecovery | undefined {
+  if (!["failed", "interrupted", "skipped"].includes(event.delivery)) return;
+
+  const kind = event.kind === "reply" ? "reply" : "request";
+  const reason = retried
+    ? "This attempt has already been retried. See the newer message."
+    : !available
+      ? "An agent in this exchange is no longer available."
+      : !active
+        ? "This request is no longer active."
+        : event.delivery === "interrupted"
+          ? kind === "reply"
+            ? "Paws restarted before the reply was delivered."
+            : "Paws restarted before this request finished. No reply was received."
+          : (event.error ?? "The agent could not finish this request.");
+
+  return {
+    eventId: event.id,
+    kind,
+    reason,
+    canRetry:
+      !retried &&
+      available &&
+      active &&
+      ["failed", "interrupted"].includes(event.delivery),
+    retried,
+  };
+}
+
 export function makeTeamworkService(
   root: string,
   providers: () => readonly ProviderSnapshot[],
@@ -148,54 +198,21 @@ export function makeTeamworkService(
       : "Former agent";
   }
 
-  function latestAttempt(event: TeamEvent) {
-    const messages = events();
-    let latest = event;
-    let retry = messages.find((item) => item.retryOf === latest.id);
-
-    while (retry) {
-      latest = retry;
-      retry = messages.find((item) => item.retryOf === latest.id);
-    }
-
-    return latest;
-  }
-
   function recovery(event: TeamEvent): PeerMessageRecovery | undefined {
     if (!["failed", "interrupted", "skipped"].includes(event.delivery)) return;
 
-    const retried = latestAttempt(event).id !== event.id;
-    const available = Boolean(
-      event.fromAgentId &&
-      event.toAgentId &&
-      db.prepare("SELECT id FROM agents WHERE id = ?").get(event.fromAgentId) &&
-      db.prepare("SELECT id FROM agents WHERE id = ?").get(event.toAgentId),
-    );
-    const active = applicable(event);
-    const kind = event.kind === "reply" ? "reply" : "request";
-    const reason = retried
-      ? "This attempt has already been retried. See the newer message."
-      : !available
-        ? "An agent in this exchange is no longer available."
-        : !active
-          ? "This request is no longer active."
-          : event.delivery === "interrupted"
-            ? kind === "reply"
-              ? "Paws restarted before the reply was delivered."
-              : "Paws restarted before this request finished. No reply was received."
-            : (event.error ?? "The agent could not finish this request.");
-
-    return {
-      eventId: event.id,
-      kind,
-      reason,
-      canRetry:
-        !retried &&
-        available &&
-        active &&
-        ["failed", "interrupted"].includes(event.delivery),
-      retried,
-    };
+    return replyRecovery(event, {
+      retried: events().some((item) => item.retryOf === event.id),
+      available: Boolean(
+        event.fromAgentId &&
+        event.toAgentId &&
+        db
+          .prepare("SELECT id FROM agents WHERE id = ?")
+          .get(event.fromAgentId) &&
+        db.prepare("SELECT id FROM agents WHERE id = ?").get(event.toAgentId),
+      ),
+      active: applicable(event),
+    });
   }
 
   const origin = (
@@ -265,21 +282,8 @@ export function makeTeamworkService(
 
   const currentTask = (event: TeamEvent) =>
     event.taskId ? tasks().find((task) => task.id === event.taskId) : undefined;
-  const applicable = (event: TeamEvent) => {
-    const task = currentTask(event);
-
-    return (
-      event.delivery !== "cancelled" &&
-      (!event.taskId ||
-        Boolean(
-          task &&
-          !terminal(task) &&
-          task.revision === event.taskRevision &&
-          (task.status === "review" ? task.reviewerId : task.ownerId) ===
-            event.toAgentId,
-        ))
-    );
-  };
+  const applicable = (event: TeamEvent) =>
+    taskEventApplicable(event, currentTask(event));
 
   function inputApplicable(event: TeamEvent) {
     if (applicable(event)) return true;
@@ -374,8 +378,8 @@ export function makeTeamworkService(
   // External side effects may already have happened; interrupted work needs an explicit retry.
   for (const event of events()) {
     if (
-      replyReceived(event) &&
-      !["delivered", "cancelled"].includes(event.delivery)
+      !["delivered", "cancelled"].includes(event.delivery) &&
+      replyReceived(event)
     ) {
       writeEvent({ ...event, delivery: "delivered", error: undefined });
       trace(findEvent(event.id));
@@ -1135,38 +1139,127 @@ export function makeTeamworkService(
 
   function replyWaits(): AgentReplyWait[] {
     const messages = events();
+    const taskById = new Map(tasks().map((task) => [task.id, task]));
+    const agentById = new Map(
+      db
+        .prepare("SELECT data FROM agents")
+        .all()
+        .map((row) => {
+          const agent = Schema.decodeUnknownSync(Agent)(
+            JSON.parse(String(row.data)),
+          );
+
+          return [agent.id, agent] as const;
+        }),
+    );
+    const eventById = new Map(messages.map((event) => [event.id, event]));
+    const retries = new Map<string, TeamEvent>();
+    const replies = new Map<string, TeamEvent>();
+    const stages = new Map<string, TeamEvent>();
+    const latest = new Map<string, TeamEvent>();
+    const receivedByService = new Map<
+      ReturnType<typeof makeChatService>,
+      Map<string, Map<string, string>>
+    >();
+    const targetByConversation = new Map<
+      string,
+      ReturnType<typeof makeChatService>
+    >();
+
+    for (const event of messages) {
+      if (event.retryOf && !retries.has(event.retryOf))
+        retries.set(event.retryOf, event);
+      if (event.replyToMessageId && !replies.has(event.replyToMessageId))
+        replies.set(event.replyToMessageId, event);
+    }
+
+    for (const event of messages) {
+      if (
+        event.taskId &&
+        ["submitted", "handoff", "changes_requested"].includes(event.kind) &&
+        !retries.has(event.id) &&
+        taskEventApplicable(event, taskById.get(event.taskId))
+      )
+        stages.set(event.taskId, event);
+    }
+
+    function latestReply(event: TeamEvent) {
+      const path = new Set<string>();
+      let tail = event;
+
+      while (!latest.has(tail.id) && !path.has(tail.id)) {
+        path.add(tail.id);
+        const next = retries.get(tail.id);
+
+        if (!next) break;
+
+        tail = next;
+      }
+
+      tail = latest.get(tail.id) ?? tail;
+
+      for (const id of path) latest.set(id, tail);
+
+      return tail;
+    }
+
+    function received(event: TeamEvent) {
+      const id = event.returnToConversationId;
+
+      if (!event.replyToMessageId || !id) return false;
+
+      let target = targetByConversation.get(id);
+
+      if (!target) {
+        target = eventById.has(id)
+          ? conversations
+          : (returnService(id) ?? main);
+        targetByConversation.set(id, target);
+      }
+
+      let receipts = receivedByService.get(target);
+
+      if (!receipts) {
+        receipts = new Map();
+
+        for (const conversation of target.list()) {
+          const items = new Map<string, string>();
+
+          for (const message of conversation.messages) {
+            if (message.peer && message.id === message.peer.eventId)
+              items.set(message.id, message.peer.toAgentId);
+          }
+
+          receipts.set(conversation.agentId, items);
+        }
+
+        receivedByService.set(target, receipts);
+      }
+
+      return receipts.get(id)?.get(event.id) === event.toAgentId;
+    }
+
     const waits: AgentReplyWait[] = [];
 
     for (const request of messages) {
+      const task = request.taskId ? taskById.get(request.taskId) : undefined;
+
       if (
         !request.fromAgentId ||
         !request.toAgentId ||
         request.expectsReply === false ||
         request.delivery === "cancelled" ||
-        currentTask(request)?.status === "cancelled" ||
+        task?.status === "cancelled" ||
         !["message", "delegated"].includes(request.kind) ||
-        messages.some((event) => event.retryOf === request.id)
+        retries.has(request.id)
       )
         continue;
 
-      const stage = request.taskId
-        ? messages.findLast(
-            (item) =>
-              item.taskId === request.taskId &&
-              ["submitted", "handoff", "changes_requested"].includes(
-                item.kind,
-              ) &&
-              applicable(item) &&
-              !messages.some((attempt) => attempt.retryOf === item.id),
-          )
-        : undefined;
-      const pending = stage ?? request;
-      const response = messages.find(
-        (event) => event.replyToMessageId === request.id,
-      );
-      const reply = response && latestAttempt(response);
+      const pending = (request.taskId && stages.get(request.taskId)) || request;
+      const response = replies.get(request.id);
+      const reply = response && latestReply(response);
       const status =
-        reply && (reply.delivery === "delivered" || replyReceived(reply))
+        reply && (reply.delivery === "delivered" || received(reply))
           ? "done"
           : pending.delivery === "failed" ||
               pending.delivery === "skipped" ||
@@ -1180,19 +1273,32 @@ export function makeTeamworkService(
                 : pending.delivery === "running"
                   ? "working"
                   : "waiting";
+      const recovering =
+        reply && ["failed", "interrupted"].includes(reply.delivery)
+          ? reply
+          : pending;
+      const targetId = pending.toAgentId ?? request.toAgentId;
       waits.push({
         agentId: request.fromAgentId,
         requestId: request.id,
-        toAgentId: pending.toAgentId ?? request.toAgentId,
-        toName: agentName(pending.toAgentId ?? request.toAgentId),
+        toAgentId: targetId,
+        toName: agentById.get(targetId)?.name ?? "Former agent",
         batchId:
           request.originRequestId ?? request.originConversationId ?? request.id,
         status,
-        recovery: recovery(
-          reply && ["failed", "interrupted"].includes(reply.delivery)
-            ? reply
-            : pending,
-        ),
+        recovery: replyRecovery(recovering, {
+          retried: retries.has(recovering.id),
+          available: Boolean(
+            recovering.fromAgentId &&
+            recovering.toAgentId &&
+            agentById.has(recovering.fromAgentId) &&
+            agentById.has(recovering.toAgentId),
+          ),
+          active: taskEventApplicable(
+            recovering,
+            taskById.get(recovering.taskId ?? ""),
+          ),
+        }),
       });
     }
 

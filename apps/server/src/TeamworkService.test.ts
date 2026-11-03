@@ -9,8 +9,13 @@ import {
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { expect, it } from "vite-plus/test";
-import type { ProviderSnapshot, TeamworkRequest } from "@paws/contracts";
+import { expect, it, vi } from "vite-plus/test";
+import type {
+  ProviderSnapshot,
+  TeamworkRequest,
+  TeamEvent,
+  TeamTask,
+} from "@paws/contracts";
 import { ChatExecutionError, type RunChatTurn } from "@paws/provider-core";
 import { resolveWorkspaceDirectory } from "@paws/runtime";
 import { agentExecutionPaths } from "./teamContext.ts";
@@ -2548,3 +2553,132 @@ it.each([false, true])(
     ).toHaveLength(1);
   },
 );
+
+it("bounds reply-wait database reads with settled history, retries, stages, and open batches", async () => {
+  await using fixture = await setup();
+  const { requester, worker, reviewer } = fixture;
+  const db = new DatabaseSync(join(fixture.root, "state.sqlite"));
+  const insert = db.prepare("INSERT INTO team_events VALUES (?, ?)");
+  const createdAt = new Date().toISOString();
+  const event = (id: string, fields: Partial<TeamEvent> = {}): TeamEvent => ({
+    id,
+    kind: "message",
+    fromAgentId: requester.id,
+    toAgentId: worker.id,
+    text: "Check the result.",
+    expectsReply: true,
+    delivery: "delivered",
+    createdAt,
+    ...fields,
+  });
+  const add = (item: TeamEvent) => insert.run(item.id, JSON.stringify(item));
+  db.exec("BEGIN");
+
+  for (let index = 0; index < 1000; index++) {
+    add(event(`settled-${index}`));
+    add(
+      event(`reply-${index}`, {
+        kind: "reply",
+        fromAgentId: worker.id,
+        toAgentId: requester.id,
+        expectsReply: false,
+        replyToMessageId: `settled-${index}`,
+      }),
+    );
+  }
+
+  add(event("batch-done", { originRequestId: "open-batch" }));
+  add(
+    event("batch-reply", {
+      kind: "reply",
+      expectsReply: false,
+      replyToMessageId: "batch-done",
+    }),
+  );
+  add(
+    event("batch-pending", {
+      originRequestId: "open-batch",
+      delivery: "interrupted",
+    }),
+  );
+  add(event("retried-reply-request"));
+  add(
+    event("failed-reply", {
+      kind: "reply",
+      expectsReply: false,
+      replyToMessageId: "retried-reply-request",
+      delivery: "failed",
+    }),
+  );
+  add(
+    event("reply-retry", {
+      kind: "reply",
+      expectsReply: false,
+      replyToMessageId: "retried-reply-request",
+      retryOf: "failed-reply",
+    }),
+  );
+  add(event("retried-request", { delivery: "failed" }));
+  add(
+    event("request-retry", { retryOf: "retried-request", delivery: "queued" }),
+  );
+  const task: TeamTask = {
+    id: "review-task",
+    title: "Review",
+    description: "Check the implementation.",
+    ownerId: worker.id,
+    reviewerId: reviewer.id,
+    createdBy: requester.id,
+    status: "review",
+    revision: 2,
+    summary: "Review pending.",
+    createdAt,
+    updatedAt: createdAt,
+  };
+  db.prepare("INSERT INTO team_tasks VALUES (?, ?)").run(
+    task.id,
+    JSON.stringify(task),
+  );
+  add(
+    event("review-request", {
+      kind: "delegated",
+      taskId: task.id,
+      taskRevision: 1,
+    }),
+  );
+  add(
+    event("failed-review", {
+      kind: "submitted",
+      fromAgentId: worker.id,
+      toAgentId: reviewer.id,
+      taskId: task.id,
+      taskRevision: 2,
+      expectsReply: false,
+      delivery: "failed",
+    }),
+  );
+  db.exec("COMMIT");
+  db.close();
+  const reads = vi.spyOn(DatabaseSync.prototype, "prepare");
+
+  try {
+    const waits = fixture.service.replyWaits();
+    expect(
+      reads.mock.calls.filter(([sql]) => /^SELECT\b/i.test(sql)).length,
+    ).toBeLessThanOrEqual(5);
+    expect(waits.map(({ requestId, status }) => [requestId, status])).toEqual([
+      ["batch-done", "done"],
+      ["batch-pending", "interrupted"],
+      ["request-retry", "queued"],
+      ["review-request", "failed"],
+    ]);
+    expect(
+      waits.find((wait) => wait.requestId === "review-request")?.recovery,
+    ).toMatchObject({ eventId: "failed-review", canRetry: true });
+    expect(
+      waits.find((wait) => wait.requestId === "batch-pending")?.recovery,
+    ).toMatchObject({ eventId: "batch-pending", canRetry: true });
+  } finally {
+    reads.mockRestore();
+  }
+});
