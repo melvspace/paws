@@ -604,3 +604,95 @@ it("returns page dialogs to sequential agent key actions before they are answere
     await f.close();
   }
 }, 30000);
+
+it.each(["release", "takeover", "disconnect"] as const)(
+  "hands off a human keyboard dialog through %s and resumes interaction",
+  async (handoff) => {
+    const f = await fixture();
+    const events: BrowserServerMessage[] = [];
+
+    try {
+      const viewer = await f.browsers.attach(
+        f.agent.id,
+        (event) => events.push(event),
+        () => {},
+      );
+      const tabId = latestState(events).tabs[0]!.id;
+      await f.tool({ action: "navigate", tabId, url: f.url });
+      const runtime = await f.launch.mock.results[0]!.value;
+      const page = runtime.context.pages()[0]!;
+      await page.getByRole("button", { name: "Confirm" }).focus();
+      await viewer.input({ type: "takeControl", tabId });
+      const generation = latestState(events).tabs[0]!.generation;
+      const pressed = viewer.input({
+        type: "key",
+        tabId,
+        generation,
+        key: "Enter",
+        phase: "down",
+      });
+      await vi.waitFor(() =>
+        expect(latestState(events).tabs[0]!.dialog).not.toBeNull(),
+      );
+      const other =
+        handoff === "takeover"
+          ? await f.browsers.attach(
+              f.agent.id,
+              (event) => events.push(event),
+              () => {},
+            )
+          : undefined;
+      const transfer = other
+        ? other.input({ type: "takeControl", tabId })
+        : handoff === "release"
+          ? viewer.input({ type: "releaseControl", tabId })
+          : viewer.detach();
+      let returned = false;
+      void Promise.all([pressed, transfer]).then(
+        () => {
+          returned = true;
+        },
+        () => {},
+      );
+      await vi.waitFor(() => expect(returned).toBe(true));
+      expect(JSON.stringify(await f.tool({ action: "list" }))).toContain(
+        "Continue?",
+      );
+
+      if (other) {
+        await other.input({
+          type: "action",
+          generation: latestState(events).tabs[0]!.generation,
+          input: { action: "dialog", tabId, accept: false },
+        });
+        await other.input({ type: "releaseControl", tabId });
+        await other.detach();
+      } else {
+        expect(
+          (await f.tool({ action: "dialog", tabId, accept: false })).isError,
+        ).toBeUndefined();
+      }
+
+      if (handoff === "disconnect") {
+        const reconnected = await f.browsers.attach(
+          f.agent.id,
+          () => {},
+          () => {},
+        );
+        await reconnected.detach();
+      }
+
+      await f.tool({
+        action: "fill",
+        tabId,
+        selector: "#name",
+        text: "Resumed",
+      });
+      expect(await page.locator("#name").inputValue()).toBe("Resumed");
+      await viewer.detach();
+    } finally {
+      await f.close();
+    }
+  },
+  30000,
+);

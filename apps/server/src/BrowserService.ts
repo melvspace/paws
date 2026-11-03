@@ -117,6 +117,9 @@ export function makeBrowserService(
   }
 
   async function resetInput(tab: Tab) {
+    // CDP key/button releases can block while a page dialog is open.
+    if (tab.dialog) return;
+
     for (const key of tab.keys) await tab.page.keyboard.up(key).catch(() => {});
 
     for (const button of tab.buttons)
@@ -126,7 +129,27 @@ export function makeBrowserService(
     tab.buttons.clear();
   }
 
+  async function untilDialog<T>(
+    tab: Tab,
+    operation: () => Promise<T>,
+    interrupted: () => T,
+  ) {
+    let reportDialog = () => {};
+    const dialog = new Promise<T>((resolve) => {
+      reportDialog = () => resolve(interrupted());
+    });
+    tab.page.on("dialog", reportDialog);
+
+    try {
+      return await Promise.race([operation(), dialog]);
+    } finally {
+      tab.page.off("dialog", reportDialog);
+    }
+  }
+
   async function fitViewport(session: Session, tab: Tab) {
+    if (tab.dialog) return;
+
     const viewer = [...session.viewers].find(
       (item) => item.tabId === tab.id && (!tab.owner || item.id === tab.owner),
     );
@@ -149,7 +172,7 @@ export function makeBrowserService(
   }
 
   async function stream(session: Session, tab: Tab) {
-    if (session.closed || tab.page.isClosed()) return;
+    if (session.closed || tab.page.isClosed() || tab.dialog) return;
 
     const watched = [...session.viewers].some(
       (viewer) => viewer.tabId === tab.id,
@@ -458,6 +481,10 @@ export function makeBrowserService(
 
       if (input.accept) await dialog.accept(input.text);
       else await dialog.dismiss();
+
+      await resetInput(tab);
+      await fitViewport(session, tab);
+      await stream(session, tab);
     }
 
     publish(session);
@@ -489,21 +516,12 @@ export function makeBrowserService(
 
             if (!tab) return action(session, input, undefined, generation);
 
-            let reportDialog = () => {};
-            const dialog = new Promise<BrowserToolResult>((resolve) => {
-              reportDialog = () => resolve(textResult(state(session)));
-            });
-            tab.page.on("dialog", reportDialog);
-
-            try {
-              // Return the dialog to sequential tool callers while CDP input waits.
-              return await Promise.race([
-                action(session, input, undefined, generation),
-                dialog,
-              ]);
-            } finally {
-              tab.page.off("dialog", reportDialog);
-            }
+            // Return the dialog to sequential tool callers while CDP input waits.
+            return untilDialog(
+              tab,
+              () => action(session, input, undefined, generation),
+              () => textResult(state(session)),
+            );
           });
         } catch (error) {
           return {
@@ -643,44 +661,68 @@ export function makeBrowserService(
             await resetInput(tab);
             await fitViewport(session, tab);
           } else if (message.type === "action") {
-            await action(session, message.input, viewer, message.generation);
+            const perform = () =>
+              action(session, message.input, viewer, message.generation);
+
+            if (message.input.tabId)
+              await untilDialog(
+                getTab(session, message.input.tabId),
+                perform,
+                () => textResult(state(session, viewer)),
+              );
+            else await perform();
           } else {
             const tab = getTab(session, message.tabId);
             authorize(tab, viewer, message.generation);
             const page = tab.page;
 
-            if (message.type === "resetInput") await resetInput(tab);
-            else if (message.type === "pointer") {
-              await page.mouse.move(message.x, message.y);
+            if (tab.dialog) return;
 
-              if (message.phase === "down") {
-                tab.buttons.add(message.button);
-                await page.mouse.down({ button: message.button });
-              } else if (message.phase === "up") {
-                tab.buttons.delete(message.button);
-                await page.mouse.up({ button: message.button });
-              }
-            } else if (message.type === "key") {
-              const printableUnicode =
-                [...message.key].length === 1 &&
-                (message.key.codePointAt(0) ?? 0) > 127;
+            await untilDialog(
+              tab,
+              async () => {
+                if (message.type === "resetInput") await resetInput(tab);
+                else if (message.type === "pointer") {
+                  await page.mouse.move(message.x, message.y);
+                  authorize(tab, viewer, message.generation);
 
-              if (printableUnicode) {
-                if (message.phase === "down")
-                  await page.keyboard.insertText(message.key);
-              } else if (message.phase === "down") {
-                tab.keys.add(message.key);
-                await page.keyboard.down(message.key);
-              } else {
-                tab.keys.delete(message.key);
-                await page.keyboard.up(message.key);
-              }
-            } else if (message.type === "text")
-              await page.keyboard.insertText(message.text);
-            else if (message.type === "wheel") {
-              await page.mouse.move(message.x, message.y);
-              await page.mouse.wheel(message.deltaX, message.deltaY);
-            }
+                  if (tab.dialog) return;
+
+                  if (message.phase === "down") {
+                    tab.buttons.add(message.button);
+                    await page.mouse.down({ button: message.button });
+                  } else if (message.phase === "up") {
+                    tab.buttons.delete(message.button);
+                    await page.mouse.up({ button: message.button });
+                  }
+                } else if (message.type === "key") {
+                  const printableUnicode =
+                    [...message.key].length === 1 &&
+                    (message.key.codePointAt(0) ?? 0) > 127;
+
+                  if (printableUnicode) {
+                    if (message.phase === "down")
+                      await page.keyboard.insertText(message.key);
+                  } else if (message.phase === "down") {
+                    tab.keys.add(message.key);
+                    await page.keyboard.down(message.key);
+                  } else {
+                    tab.keys.delete(message.key);
+                    await page.keyboard.up(message.key);
+                  }
+                } else if (message.type === "text")
+                  await page.keyboard.insertText(message.text);
+                else if (message.type === "wheel") {
+                  await page.mouse.move(message.x, message.y);
+                  authorize(tab, viewer, message.generation);
+
+                  if (tab.dialog) return;
+
+                  await page.mouse.wheel(message.deltaX, message.deltaY);
+                }
+              },
+              () => {},
+            );
           }
 
           publish(session);
