@@ -19,8 +19,8 @@ import {
   PlusIcon,
   XIcon,
 } from "lucide-react";
-import { defaultAgentAvatar, type Agent, type Team } from "@paws/contracts";
-import { AgentAvatar } from "./AgentAvatar.tsx";
+import type { Agent, Team } from "@paws/contracts";
+import { AgentSidebarSummary } from "./AgentSidebarSummary.tsx";
 
 interface AgentSidebarProps {
   agents: readonly Agent[];
@@ -312,18 +312,18 @@ export function AgentSidebar({
                             }
                           }}
                           title={agent.name}
+                          aria-label={agent.name}
                           aria-current={
                             agent.id === selectedId ? "page" : undefined
                           }
                         >
-                          <AgentAvatar
-                            avatar={
-                              agent.avatar ?? defaultAgentAvatar(agent.id)
-                            }
+                          <AgentSidebarSummary
+                            agent={agent}
+                            conversation={conversations.find(
+                              (item) => item.agentId === agent.id,
+                            )}
                             animated={connected && !collapsed}
-                            activity={activities.get(agent.id) ?? "idle"}
                           />
-                          <span>{agent.name}</span>
                         </a>
                         <Button
                           type="button"

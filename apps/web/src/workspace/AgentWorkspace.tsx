@@ -28,6 +28,7 @@ import { ModelPicker } from "./ModelPicker.tsx";
 import "./workspace.css";
 import { ChatHistory } from "./ChatHistory.tsx";
 import { useConversation } from "./useConversation.ts";
+import { useMarkConversationRead } from "./conversationReadState.ts";
 import { useChatPreferences } from "../settings/chatPreferences.ts";
 import { AgentSettingsPanel } from "../settings/AgentSettingsPanel.tsx";
 
@@ -51,6 +52,7 @@ export function AgentWorkspace({
   onSettingsClosed,
 }: AgentWorkspaceProps) {
   const chat = useConversation(agent.id);
+  useMarkConversationRead(chat.conversation);
   const { connected } = useAtomValue(agentsAtom);
   const { followUpMode } = useChatPreferences();
   const [alternateHeld, setAlternateHeld] = useState(false);
