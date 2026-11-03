@@ -69,7 +69,7 @@ export const messageTool = {
   type: "function",
   name: "paws_send_message",
   description:
-    "Send a short messenger message to the user. Optionally attach media/documents from /workspace, include action buttons or a form. Controls do not execute code. Clicks and submissions arrive later as structured paws_interaction tool results from the Paws harness, not user-authored chat messages. Use distinct short messages, avoid repeating them in your final answer. Stop and wait after asking the user a question. Supply empty arrays when no controls are needed. Forms without actions get a Submit button.",
+    "Send a short messenger message to the user. Optionally attach media/documents from /workspace, include action buttons or a form. Controls do not execute code. Clicks and submissions arrive later as structured paws_interaction tool results from the Paws harness, not user-authored chat messages. Use distinct short messages, avoid repeating them in your final answer. End the turn when requesting a chat reply or Paws control response. For external interaction with a running command, send progress and keep watching its output. Supply empty arrays when no controls are needed. Forms without actions get a Submit button.",
   inputSchema: {
     type: "object",
     additionalProperties: false,

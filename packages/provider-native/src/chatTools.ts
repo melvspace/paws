@@ -198,7 +198,7 @@ export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
     {
       name: "paws_send_message",
       description:
-        "Send a short chat message, attach media/documents from /workspace, add action buttons, or a form. End the turn after asking for input.",
+        "Send a short chat message, attach media/documents from /workspace, add action buttons, or a form. End the turn when requesting a chat reply or Paws control response. For external interaction with a running command, send progress and keep watching its output.",
       schema: z.object({
         text: z.string(),
         attachments: z
