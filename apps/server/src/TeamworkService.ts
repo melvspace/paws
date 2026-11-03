@@ -356,6 +356,8 @@ export function makeTeamworkService(
   for (const event of events()) {
     if (["failed", "interrupted"].includes(event.delivery))
       notifyStageFailure(event);
+
+    reconcileTaskTransition(event);
   }
 
   async function deliver(event: TeamEvent) {
@@ -508,6 +510,15 @@ export function makeTeamworkService(
 
   function failDelivery(event: TeamEvent, error: unknown) {
     if (findEvent(event.id).delivery === "cancelled") return;
+    const task = currentTask(event);
+
+    if (task && terminal(task)) {
+      for (const transition of events().filter(
+        (item) => item.taskId === task.id,
+      )) {
+        reconcileTaskTransition(transition, true);
+      }
+    }
 
     if (replyReceived(event)) {
       writeEvent({
@@ -546,32 +557,54 @@ export function makeTeamworkService(
       );
   }
 
+  function taskRequest(taskId: string | undefined) {
+    return taskId
+      ? events().findLast(
+          (item) => item.taskId === taskId && item.kind === "delegated",
+        )
+      : undefined;
+  }
+
   function notifyStageFailure(event: TeamEvent) {
     if (
       !["submitted", "handoff", "changes_requested"].includes(event.kind) ||
-      !applicable(event)
+      !applicable(event) ||
+      events().some((item) => item.retryOf === event.id)
     )
       return;
 
-    const request = events().findLast(
-      (item) => item.taskId === event.taskId && item.kind === "delegated",
+    notifyRequester(
+      event,
+      event.toAgentId,
+      `I could not complete ${event.kind === "submitted" ? "the review" : "this step"}. ${event.error ?? "Execution was interrupted."} Retry the failed step to continue.`,
+      "failure",
     );
-    const id = `${event.id}-failure`;
+  }
+
+  function notifyRequester(
+    event: TeamEvent,
+    senderId: string | null,
+    text: string,
+    suffix: string,
+  ) {
+    const request = taskRequest(event.taskId);
+    const id = `${event.id}-${suffix}`;
 
     if (
+      !senderId ||
       !request?.fromAgentId ||
       request.expectsReply === false ||
       request.delivery === "cancelled" ||
-      events().some((item) => item.id === id || item.retryOf === event.id)
+      events().some((item) => item.id === id)
     )
       return;
 
     const notice: TeamEvent = {
       id,
       kind: "message",
-      fromAgentId: event.toAgentId,
+      fromAgentId: senderId,
       toAgentId: request.fromAgentId,
-      text: `I could not complete ${event.kind === "submitted" ? "the review" : "this step"}. ${event.error ?? "Execution was interrupted."} Retry the failed step to continue.`,
+      text,
       expectsReply: false,
       returnToConversationId:
         request.originConversationId ?? request.fromAgentId,
@@ -582,6 +615,70 @@ export function makeTeamworkService(
     };
     writeEvent(notice);
     trace(notice);
+  }
+
+  function reconcileTaskTransition(event: TeamEvent, settled = false) {
+    const task = currentTask(event);
+
+    if (!task || task.revision !== event.taskRevision || !event.fromAgentId)
+      return;
+
+    if (event.kind === "blocked" && task.status === "blocked") {
+      notifyRequester(event, event.fromAgentId, event.text, "blocked");
+
+      return;
+    }
+
+    if (
+      !terminal(task) ||
+      !["submitted", "approved", "cancelled"].includes(event.kind)
+    )
+      return;
+
+    const source = event.originConversationId
+      ? events().find((item) => item.id === event.originConversationId)
+      : undefined;
+
+    if (!settled && source?.taskId === task.id && conversations.busy(source.id))
+      return;
+
+    const output = conversations
+      .list()
+      .find(
+        (conversation) => conversation.agentId === event.originConversationId,
+      )
+      ?.messages.filter(
+        (message) =>
+          message.role === "assistant" &&
+          event.originRequestId !== undefined &&
+          (message.id.startsWith(`${event.originRequestId}:`) ||
+            message.requestId === event.originRequestId),
+      );
+    const files = output?.flatMap((message) => message.attachments ?? []) ?? [];
+    const request = taskRequest(task.id);
+    const submitted = events().findLast(
+      (item) => item.taskId === task.id && item.kind === "submitted",
+    );
+
+    const useSubmittedFiles =
+      !event.attachments?.length &&
+      !files.length &&
+      submitted?.attachments?.length;
+    const senderId = useSubmittedFiles
+      ? (submitted.fromAgentId ?? event.fromAgentId)
+      : event.fromAgentId;
+
+    if (request)
+      queueReply(
+        request,
+        senderId,
+        task.summary,
+        event.attachments?.length
+          ? event.attachments
+          : files.length
+            ? files
+            : submitted?.attachments,
+      );
   }
 
   async function respond(agentId: string, input: SendChat) {
@@ -714,9 +811,7 @@ export function makeTeamworkService(
 
     const updated = currentTask(event);
     const request = updated
-      ? events().findLast(
-          (item) => item.taskId === updated.id && item.kind === "delegated",
-        )
+      ? taskRequest(updated.id)
       : (events().find((item) => item.id === event.returnToConversationId) ??
         event);
 
@@ -1434,6 +1529,7 @@ export function makeTeamworkService(
           for (const event of events()) {
             if (!previousIds.has(event.id)) {
               trace(event);
+              reconcileTaskTransition(event);
 
               if (event.retryOf) trace(findEvent(event.retryOf));
             }

@@ -1850,3 +1850,285 @@ it.each(["submitted", "handoff", "changes_requested"] as const)(
     ).toBe(true);
   },
 );
+
+it.each([false, true])(
+  "returns blockers to a nested origin: %s and completes after input in the owner's main chat",
+  async (nested) => {
+    await using fixture = await setup();
+    const { requester, worker, other } = fixture;
+    const owner = nested ? other : worker;
+    let notified = false;
+    fixture.handle(async (turn) => {
+      if (turn.agentId === owner.id) {
+        const task = fixture.service.list(owner.id).tasks[0]!;
+        await turn.teamworkTool!({
+          action: turn.conversationId === owner.id ? "submit" : "block",
+          taskId: task.id,
+          revision: task.revision,
+          text:
+            turn.conversationId === owner.id
+              ? "Finished after input."
+              : "Missing required input.",
+        });
+
+        return;
+      }
+
+      if (
+        nested &&
+        turn.agentId === worker.id &&
+        turn.text.includes("[Paws peer message")
+      ) {
+        await turn.teamworkTool!({
+          action: "delegate",
+          toAgentId: other.id,
+          title: "Check",
+          text: "Complete the check.",
+        });
+
+        return;
+      }
+
+      if (turn.text.includes("Missing required input.")) {
+        notified = true;
+
+        return;
+      }
+
+      // prettier-ignore
+      turn.onText(
+        "result",
+        "Combined result after input.",
+        true,
+      );
+    });
+    await fixture.command(requester.id, {
+      action: nested ? "message" : "delegate",
+      toAgentId: worker.id,
+      title: "Work",
+      text: "Complete the work.",
+    });
+    await expect.poll(() => notified).toBe(true);
+    const creatorId = nested ? worker.id : requester.id;
+    expect(fixture.service.list(creatorId).tasks[0]?.status).toBe("blocked");
+    await expect.poll(() => fixture.service.busy(creatorId)).toBe(false);
+    await fixture.reopen();
+    await Effect.runPromise(
+      fixture.main.send(owner.id, {
+        requestId: "required-input",
+        text: "The input is now available. Complete the work.",
+        selection,
+      }),
+    );
+    await expect
+      .poll(() => fixture.service.list(creatorId).tasks[0]?.status)
+      .toBe("done");
+    await expect
+      .poll(() =>
+        fixture.main
+          .get(requester.id)
+          .messages.some(
+            (message) =>
+              message.peer?.kind === "reply" &&
+              message.text.includes(
+                nested ? "Combined result" : "Finished after input",
+              ),
+          ),
+      )
+      .toBe(true);
+    await expect.poll(() => fixture.service.replyWaits()).toEqual([]);
+    expect(
+      fixture.service
+        .list(owner.id)
+        .events.filter((event) => event.kind === "blocked"),
+    ).toHaveLength(1);
+  },
+);
+
+it.each(["submit", "approve", "cancel"] as const)(
+  "returns an out-of-conversation %s transition with artifacts and without duplicate replies",
+  async (action) => {
+    await using fixture = await setup();
+    const { requester, worker, reviewer } = fixture;
+    fixture.handle(async () => {});
+    await fixture.command(requester.id, {
+      action: "delegate",
+      toAgentId: worker.id,
+      ...(action === "approve" ? { reviewerId: reviewer.id } : {}),
+      title: "Work",
+      text: "Complete the artifact.",
+    });
+    await expect.poll(() => fixture.service.busy(worker.id)).toBe(false);
+    // The empty worker turn leaves the assignment open for completion elsewhere.
+    let task = fixture.service.list(requester.id).tasks[0]!;
+    await writeFile(
+      join(
+        resolveWorkspaceDirectory(fixture.root, worker.id, "workspace"),
+        "result.txt",
+      ),
+      "Completed artifact",
+    );
+
+    if (action === "approve") {
+      fixture.providersAvailable(false);
+      await fixture.command(worker.id, {
+        action: "submit",
+        taskId: task.id,
+        revision: task.revision,
+        text: "Implementation ready.",
+        attachments: [{ path: "result.txt" }],
+      });
+      await expect.poll(() => fixture.service.busy(reviewer.id)).toBe(false);
+      fixture.providersAvailable(true);
+      task = fixture.service.list(requester.id).tasks[0]!;
+    }
+
+    // No provider turn is active in the task's original peer conversation.
+    const actor = action === "approve" ? reviewer : worker;
+    await fixture.command(actor.id, {
+      action: action === "approve" ? "review" : action,
+      taskId: task.id,
+      revision: task.revision,
+      ...(action === "approve" ? { verdict: "approve" } : {}),
+      text: "Final task result.",
+      ...(action === "approve"
+        ? {}
+        : { attachments: [{ path: "result.txt" }] }),
+    });
+
+    await expect
+      .poll(
+        () =>
+          fixture.service
+            .list(requester.id)
+            .events.find((event) => event.kind === "reply")?.delivery,
+      )
+      .toBe("delivered");
+    const reply = fixture.service
+      .list(requester.id)
+      .events.find((event) => event.kind === "reply")!;
+    expect(reply.text).toBe("Final task result.");
+    expect(reply.attachments).toHaveLength(1);
+    expect(
+      (
+        await fixture.main.attachment(requester.id, reply.attachments![0]!.id)
+      ).data.toString(),
+    ).toBe("Completed artifact");
+    await fixture.reopen();
+    expect(
+      fixture.service
+        .list(requester.id)
+        .events.filter((event) => event.kind === "reply"),
+    ).toHaveLength(1);
+    expect(fixture.service.replyWaits()).toEqual([]);
+  },
+);
+
+it("collects the complete peer turn's files after an explicit task submission", async () => {
+  await using fixture = await setup();
+  const { requester, worker } = fixture;
+  fixture.handle(async (turn) => {
+    if (turn.agentId !== worker.id) return;
+
+    const task = fixture.service.list(worker.id).tasks[0]!;
+    await turn.teamworkTool!({
+      action: "submit",
+      taskId: task.id,
+      revision: task.revision,
+      text: "Completed artifact.",
+    });
+    await writeFile(
+      join(
+        resolveWorkspaceDirectory(fixture.root, worker.id, "workspace"),
+        "result.txt",
+      ),
+      "Final artifact",
+    );
+    await turn.onMessage(
+      "file",
+      { text: "Final artifact.", actions: [], fields: [] },
+      [{ path: "result.txt" }],
+    );
+  });
+  await fixture.command(requester.id, {
+    action: "delegate",
+    toAgentId: worker.id,
+    title: "Work",
+    text: "Produce the artifact.",
+  });
+  await expect
+    .poll(
+      () =>
+        fixture.service
+          .list(requester.id)
+          .events.find((event) => event.kind === "reply")?.delivery,
+    )
+    .toBe("delivered");
+  const reply = fixture.service
+    .list(requester.id)
+    .events.find((event) => event.kind === "reply")!;
+  expect(reply.attachments).toHaveLength(1);
+  expect(
+    (
+      await fixture.main.attachment(requester.id, reply.attachments![0]!.id)
+    ).data.toString(),
+  ).toBe("Final artifact");
+});
+
+it("recovers a committed terminal transition that had not yet queued its result before restart", async () => {
+  await using fixture = await setup();
+  const { requester, worker } = fixture;
+  const state = await fixture.command(requester.id, {
+    action: "delegate",
+    toAgentId: worker.id,
+    title: "Work",
+    text: "Complete the work.",
+  });
+  await expect.poll(() => fixture.service.busy(worker.id)).toBe(false);
+  await fixture.service.close();
+  const db = new DatabaseSync(join(fixture.root, "state.sqlite"));
+  const task = {
+    ...state.tasks[0]!,
+    status: "done",
+    revision: 2,
+    summary: "Durably completed result.",
+  };
+  db.prepare("UPDATE team_tasks SET data = ? WHERE id = ?").run(
+    JSON.stringify(task),
+    task.id,
+  );
+  db.prepare("INSERT INTO team_events VALUES (?, ?)").run(
+    "committed-submission",
+    JSON.stringify({
+      id: "committed-submission",
+      taskId: task.id,
+      taskRevision: task.revision,
+      kind: "submitted",
+      fromAgentId: worker.id,
+      toAgentId: null,
+      text: task.summary,
+      expectsReply: false,
+      delivery: "delivered",
+      createdAt: new Date().toISOString(),
+    }),
+  );
+  db.close();
+  await fixture.reopen();
+  await expect
+    .poll(() =>
+      fixture.main
+        .get(requester.id)
+        .messages.some(
+          (message) =>
+            message.peer?.kind === "reply" && message.text === task.summary,
+        ),
+    )
+    .toBe(true);
+  await expect.poll(() => fixture.service.busy(requester.id)).toBe(false);
+  await fixture.reopen();
+  expect(
+    fixture.service
+      .list(requester.id)
+      .events.filter((event) => event.kind === "reply"),
+  ).toHaveLength(1);
+});
