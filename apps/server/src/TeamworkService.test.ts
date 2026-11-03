@@ -2383,3 +2383,168 @@ it.each([
     ).toHaveLength(1);
   },
 );
+
+it.each(["handoff", "cancel", "block"] as const)(
+  "rechecks suspended input after %s while waiting for the execution lock",
+  async (action) => {
+    await using fixture = await setup();
+    const { requester, worker, other } = fixture;
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered = false;
+    let resumed = false;
+    fixture.handle(async (turn) => {
+      if (turn.agentId !== worker.id) return;
+
+      if (turn.requestId === "hold-main") {
+        entered = true;
+        await held;
+
+        return;
+      }
+
+      if (turn.interaction) {
+        resumed = true;
+
+        return;
+      }
+
+      const task = fixture.service.list(worker.id).tasks[0]!;
+      await turn.teamworkTool!({
+        action: "block",
+        taskId: task.id,
+        revision: task.revision,
+        text: "Need input.",
+      });
+      await turn.onMessage("input", {
+        text: "Confirm?",
+        actions: [{ id: "yes", label: "Yes" }],
+        fields: [],
+      });
+    });
+    try {
+      await fixture.command(requester.id, {
+        action: "delegate",
+        toAgentId: worker.id,
+        title: "Work",
+        text: "Complete the work.",
+      });
+      await expect
+        .poll(() =>
+          fixture.main.get(worker.id).messages.some((message) => message.card),
+        )
+        .toBe(true);
+      await expect.poll(() => fixture.service.busy(worker.id)).toBe(false);
+      await Effect.runPromise(
+        fixture.main.send(worker.id, {
+          requestId: "hold-main",
+          text: "Other work.",
+          selection,
+        }),
+      );
+      await expect.poll(() => entered).toBe(true);
+      const card = fixture.main
+        .get(worker.id)
+        .messages.find((message) => message.card)!;
+      await fixture.service.respond(worker.id, {
+        requestId: "input-response",
+        text: "",
+        selection,
+        reply: { messageId: card.id, actionId: "yes", values: {} },
+      });
+      const task = fixture.service.list(worker.id).tasks[0]!;
+      await fixture.command(worker.id, {
+        action,
+        taskId: task.id,
+        revision: task.revision,
+        toAgentId: other.id,
+        text: "Assignment changed.",
+      });
+      release();
+      await expect.poll(() => fixture.service.busy(worker.id)).toBe(false);
+      expect(resumed).toBe(action === "block");
+    } finally {
+      release();
+    }
+  },
+);
+
+it.each([false, true])(
+  "settles deletion of an ordinary message recipient with nested origin: %s",
+  async (nested) => {
+    await using fixture = await setup();
+    const { requester, worker, other } = fixture;
+    const recipient = nested ? other : worker;
+    fixture.handle(async (turn) => {
+      if (turn.agentId === recipient.id) {
+        await turn.onMessage("input", {
+          text: "Confirm?",
+          actions: [{ id: "yes", label: "Yes" }],
+          fields: [],
+        });
+
+        return;
+      }
+
+      if (
+        nested &&
+        turn.agentId === worker.id &&
+        turn.text.includes("[Paws peer message")
+      ) {
+        await turn.teamworkTool!({
+          action: "message",
+          toAgentId: other.id,
+          text: "Complete after input.",
+        });
+
+        return;
+      }
+
+      // prettier-ignore
+      turn.onText(
+        "result",
+        "The receiving agent was deleted.",
+        true,
+      );
+    });
+    await fixture.command(requester.id, {
+      action: "message",
+      toAgentId: worker.id,
+      text: "Complete after input.",
+    });
+    await expect
+      .poll(() =>
+        fixture.main.get(recipient.id).messages.some((message) => message.card),
+      )
+      .toBe(true);
+    await expect.poll(() => fixture.service.busy(recipient.id)).toBe(false);
+    await Effect.runPromise(
+      fixture.agents.remove(recipient.id, async () => {
+        await fixture.service.removeAgent(recipient.id);
+        await fixture.main.remove(recipient.id);
+      }),
+    );
+    await expect.poll(() => fixture.service.replyWaits()).toEqual([]);
+    await expect
+      .poll(() =>
+        fixture.main
+          .get(requester.id)
+          .messages.some(
+            (message) =>
+              message.peer?.kind === "reply" &&
+              message.text === "The receiving agent was deleted.",
+          ),
+      )
+      .toBe(true);
+    await expect.poll(() => fixture.service.busy(requester.id)).toBe(false);
+    await fixture.reopen();
+    expect(fixture.service.replyWaits()).toEqual([]);
+    expect(
+      fixture.service
+        .list(requester.id)
+        .events.filter((event) => event.kind === "reply"),
+    ).toHaveLength(1);
+  },
+);

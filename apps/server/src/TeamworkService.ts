@@ -1650,7 +1650,9 @@ export function makeTeamworkService(
     isConversation: (id: string | undefined) =>
       Boolean(id && events().some((event) => event.id === id)),
     validateExecution(id: string | undefined, agentId: string) {
-      const event = id && events().find((item) => item.id === id);
+      const continuation = continuations.get(id ?? "");
+      const eventId = continuation ?? id;
+      const event = eventId && events().find((item) => item.id === eventId);
 
       if (!event) return;
 
@@ -1658,7 +1660,7 @@ export function makeTeamworkService(
 
       if (event.toAgentId !== agentId)
         throw new ChatToolError("This message belongs to another recipient.");
-      if (!applicable(event))
+      if (!(continuation ? inputApplicable(event) : applicable(event)))
         throw new ChatToolError("This task assignment has been superseded.");
     },
     invalidateEnvironment(agentId: string) {
@@ -1707,6 +1709,41 @@ export function makeTeamworkService(
           writeEvent(event);
           reconcileTaskTransition(event);
         }
+      }
+
+      for (const event of events()) {
+        if (
+          event.toAgentId !== id ||
+          event.taskId ||
+          event.expectsReply === false ||
+          event.kind !== "message" ||
+          ["cancelled", "skipped"].includes(event.delivery) ||
+          events().some(
+            (reply) =>
+              reply.replyToMessageId === event.id &&
+              (reply.delivery === "delivered" || replyReceived(reply)),
+          )
+        )
+          continue;
+
+        changed = true;
+        // prettier-ignore
+        queueReply(
+          event,
+          id,
+          "The receiving agent was deleted.",
+        );
+        writeEvent({
+          ...event,
+          delivery: "cancelled",
+          error: "The receiving agent was deleted.",
+        });
+        trace(findEvent(event.id));
+
+        if (event.delivery === "running")
+          await deliveryService(event).stop(
+            event.returnToConversationId ?? event.id,
+          );
       }
 
       for (const event of events()) {
