@@ -140,6 +140,11 @@ export function makeBrowserService(
         for (const button of buttons) {
           if (interrupted || tab.dialog) return;
 
+          // Releasing on the original target would complete an abandoned click.
+          await tab.page.mouse.move(-1, -1).catch(() => {});
+
+          if (interrupted || tab.dialog) return;
+
           tab.buttons.delete(button);
           await tab.page.mouse.up({ button }).catch(() => {});
         }
@@ -481,20 +486,105 @@ export function makeBrowserService(
 
       await page.goto(browserUrl(input.url), { waitUntil: "domcontentloaded" });
     } else if (input.action === "click") {
-      if (input.selector)
-        await page.locator(input.selector).click({ noWaitAfter: true });
+      if (input.selector) await page.locator(input.selector).hover();
       else if (input.x !== undefined && input.y !== undefined)
-        await page.mouse.click(input.x, input.y);
+        await page.mouse.move(input.x, input.y);
       else throw new ChatToolError("click requires selector or x and y.");
+
+      // A hover can open a dialog. Recheck the lease before each input step
+      // instead of letting Playwright's composite click resume after takeover.
+      authorize(tab, viewer, generation);
+      tab.buttons.add("left");
+      await page.mouse.down();
+      authorize(tab, viewer, generation);
+      tab.buttons.delete("left");
+      await page.mouse.up();
     } else if (input.action === "fill") {
       if (!input.selector || input.text === undefined)
         throw new ChatToolError("fill requires selector and text.");
 
-      await page.locator(input.selector).fill(input.text);
+      const locator = page
+        .locator(input.selector)
+        .and(page.locator(":not(:disabled):not([readonly])"));
+      await locator.selectText();
+      authorize(tab, viewer, generation);
+      const type = await locator.evaluate((element) => {
+        if (element instanceof HTMLInputElement) return element.type;
+
+        if (
+          element instanceof HTMLTextAreaElement ||
+          (element instanceof HTMLElement && element.isContentEditable)
+        )
+          return "text";
+
+        throw new Error("Target is not editable.");
+      });
+      authorize(tab, viewer, generation);
+
+      if (
+        ["date", "time", "datetime-local", "month", "range", "week"].includes(
+          type,
+        )
+      ) {
+        // These native controls use a value assignment rather than text input.
+        await locator.evaluate((element, text) => {
+          if (!(element instanceof HTMLInputElement)) return;
+
+          element.value = text.trim();
+
+          if (element.value !== text.trim())
+            throw new Error("Invalid input value.");
+
+          element.dispatchEvent(
+            new Event("input", { bubbles: true, composed: true }),
+          );
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+        }, input.text);
+      } else {
+        if (
+          ![
+            "text",
+            "email",
+            "number",
+            "password",
+            "search",
+            "tel",
+            "url",
+          ].includes(type)
+        )
+          throw new ChatToolError("This input type cannot be filled.");
+        if (
+          type === "number" &&
+          input.text &&
+          !Number.isFinite(Number(input.text))
+        )
+          throw new ChatToolError("Use a numeric value for this input.");
+
+        if (input.text) await page.keyboard.insertText(input.text);
+        else {
+          tab.keys.add("Delete");
+          await page.keyboard.down("Delete");
+          authorize(tab, viewer, generation);
+          tab.keys.delete("Delete");
+          await page.keyboard.up("Delete");
+        }
+      }
     } else if (input.action === "press") {
       if (!input.key) throw new ChatToolError("press requires key.");
 
-      await page.keyboard.press(input.key);
+      const keys = input.key.split(/\+(?!$)/);
+
+      for (const key of keys) {
+        authorize(tab, viewer, generation);
+        tab.keys.add(key);
+        await page.keyboard.down(key);
+      }
+
+      for (const key of keys.toReversed()) {
+        authorize(tab, viewer, generation);
+        tab.keys.delete(key);
+        await page.keyboard.up(key);
+      }
     } else if (input.action === "scroll")
       await page.mouse.wheel(0, input.deltaY ?? 600);
     else if (input.action === "back")
