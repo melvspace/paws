@@ -1628,3 +1628,93 @@ it.each([false, true])(
     ).toBe("image/png");
   },
 );
+
+it.each(["message", "delegate"] as const)(
+  "reports a failed nested %s continuation to the original requester",
+  async (action) => {
+    await using fixture = await setup();
+    const { requester, worker, other } = fixture;
+    let childRuns = 0;
+    fixture.handle(async (turn) => {
+      if (turn.agentId === worker.id) {
+        if (turn.text.includes("[Paws peer message")) {
+          await turn.teamworkTool!({
+            action: "message",
+            toAgentId: other.id,
+            text: "Check the dependency.",
+          });
+
+          return;
+        }
+
+        throw new ChatExecutionError(
+          "Could not resume after the child result.",
+        );
+      }
+
+      if (turn.agentId === other.id) {
+        childRuns++;
+        // prettier-ignore
+        turn.onText(
+          "result",
+          "Dependency checked.",
+          true,
+        );
+      }
+    });
+    const state = await fixture.command(requester.id, {
+      action,
+      toAgentId: worker.id,
+      title: "Verify",
+      text: "Verify the result with the dependency.",
+    });
+    const request = state.events[0]!;
+    await expect
+      .poll(
+        () =>
+          fixture.service
+            .list(requester.id)
+            .events.find((event) => event.id === request.id)?.delivery,
+      )
+      .toBe("failed");
+    await expect
+      .poll(() =>
+        fixture.main
+          .get(requester.id)
+          .messages.some(
+            (message) =>
+              message.peer?.kind === "reply" &&
+              message.text.includes("I could not complete this request."),
+          ),
+      )
+      .toBe(true);
+    await expect.poll(() => fixture.service.busy(requester.id)).toBe(false);
+    const childReply = fixture.service
+      .list(worker.id)
+      .events.find(
+        (event) => event.kind === "reply" && event.fromAgentId === other.id,
+      )!;
+    expect(childReply.delivery).toBe("delivered");
+    expect(childReply.error).toBeUndefined();
+    expect(fixture.service.replyWaits()).toEqual([]);
+    expect(
+      fixture.main
+        .get(requester.id)
+        .messages.find((message) => message.peer?.eventId === request.id)?.peer
+        ?.recovery,
+    ).toMatchObject({ canRetry: true, kind: "request" });
+    expect(childRuns).toBe(1);
+    await fixture.reopen();
+    expect(
+      fixture.service
+        .list(requester.id)
+        .events.find((event) => event.id === request.id)?.delivery,
+    ).toBe("failed");
+    expect(
+      fixture.service
+        .list(worker.id)
+        .events.find((event) => event.id === childReply.id)?.delivery,
+    ).toBe("delivered");
+    expect(childRuns).toBe(1);
+  },
+);

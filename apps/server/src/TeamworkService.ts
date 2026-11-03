@@ -502,6 +502,14 @@ export function makeTeamworkService(
         delivery: "delivered",
         error: undefined,
       });
+      const parent = events().find(
+        (item) => item.id === event.returnToConversationId,
+      );
+
+      if (parent && deliveryService(event) === conversations) {
+        failDelivery(parent, error);
+        trace(findEvent(parent.id));
+      }
 
       return;
     }
