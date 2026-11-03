@@ -395,12 +395,14 @@ it.each([
     return Response.json([]);
   });
   await using _screen = await render(<Dashboard />);
+
   if (teamId === null) {
     await page.getByRole("button", { name: "Create new", exact: true }).click();
     await page
       .getByRole("menuitem", { name: "New Agent", exact: true })
       .click();
   } else {
+    await page.getByRole("button", { name: "Project", exact: true }).hover();
     await page.getByRole("button", { name: button, exact: true }).click();
   }
 

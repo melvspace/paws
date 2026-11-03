@@ -29,6 +29,7 @@ interface AgentSidebarProps {
   connected: boolean;
   onCreate: (teamId?: string) => void;
   onCreateTeam: () => void;
+  onTeamSettings: (teamId: string) => void;
   onSettings: (agent: Agent) => void;
   onAppSettings: () => void;
   onNavigate?: (agent: Agent) => void;
@@ -42,6 +43,7 @@ export function AgentSidebar({
   connected,
   onCreate,
   onCreateTeam,
+  onTeamSettings,
   onSettings,
   onAppSettings,
   onNavigate,
@@ -236,22 +238,30 @@ export function AgentSidebar({
               >
                 <div className="sidebar-team-header">
                   <Collapsible.Trigger className="sidebar-team-heading">
-                    {group.name}{" "}
-                    {group.agents.length > 0 && (
-                      <span>{group.agents.length}</span>
-                    )}
+                    {group.name}
                   </Collapsible.Trigger>
                   {group.id !== "unassigned" && (
-                    <Button
-                      type="button"
-                      className="sidebar-icon-button"
-                      aria-label={`New agent in ${group.name}`}
-                      title={`New agent in ${group.name}`}
-                      disabled={!connected}
-                      onClick={() => onCreate(group.id)}
-                    >
-                      <PlusIcon aria-hidden />
-                    </Button>
+                    <div className="sidebar-team-controls">
+                      <Button
+                        type="button"
+                        className="sidebar-icon-button"
+                        aria-label={`Settings for ${group.name}`}
+                        title={`Settings for ${group.name}`}
+                        onClick={() => onTeamSettings(group.id)}
+                      >
+                        <SettingsIcon aria-hidden />
+                      </Button>
+                      <Button
+                        type="button"
+                        className="sidebar-icon-button"
+                        aria-label={`New agent in ${group.name}`}
+                        title={`New agent in ${group.name}`}
+                        disabled={!connected}
+                        onClick={() => onCreate(group.id)}
+                      >
+                        <PlusIcon aria-hidden />
+                      </Button>
+                    </div>
                   )}
                 </div>
                 <Collapsible.Panel>

@@ -47,6 +47,7 @@ it("shows every team, including empty teams, and collapses its agents independen
   await using _screen = await render(
     <AgentSidebar
       onCreateTeam={() => {}}
+      onTeamSettings={() => {}}
       agents={agents}
       teams={teams}
       selectedId="ada"
@@ -57,7 +58,7 @@ it("shows every team, including empty teams, and collapses its agents independen
     />,
   );
   await expect
-    .element(page.getByRole("button", { name: "Project A 1" }))
+    .element(page.getByRole("button", { name: "Project A" }))
     .toBeVisible();
   await expect
     .element(page.getByRole("button", { name: "Project B" }))
@@ -65,14 +66,14 @@ it("shows every team, including empty teams, and collapses its agents independen
   await expect
     .element(page.getByRole("link", { name: "Ada", exact: true }))
     .toBeVisible();
-  await page.getByRole("button", { name: "Project A 1" }).click();
+  await page.getByRole("button", { name: "Project A" }).click();
   await expect
     .element(page.getByRole("link", { name: "Ada", exact: true }))
     .not.toBeInTheDocument();
   await expect
     .element(page.getByRole("link", { name: "Grace", exact: true }))
     .toBeVisible();
-  await page.getByRole("button", { name: "Project A 1" }).click();
+  await page.getByRole("button", { name: "Project A" }).click();
   await expect
     .element(page.getByRole("link", { name: "Ada", exact: true }))
     .toBeVisible();
@@ -141,6 +142,7 @@ it("moves an idle agent into a collapsed team and reports failed drops", async (
   await using _screen = await render(
     <AgentSidebar
       onCreateTeam={() => {}}
+      onTeamSettings={() => {}}
       agents={agents}
       teams={teams}
       selectedId="ada"
@@ -215,6 +217,7 @@ it("prevents dragging an agent that is working", async () => {
     await using _screen = await render(
       <AgentSidebar
         onCreateTeam={() => {}}
+        onTeamSettings={() => {}}
         agents={agents}
         teams={teams}
         selectedId="ada"
@@ -245,6 +248,7 @@ it("hides empty Unassigned and keeps real empty teams without repeated empty cop
   await using _screen = await render(
     <AgentSidebar
       onCreateTeam={() => {}}
+      onTeamSettings={() => {}}
       agents={[agents[0]!]}
       teams={teams}
       selectedId="ada"

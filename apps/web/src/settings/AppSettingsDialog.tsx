@@ -6,7 +6,6 @@ import { Fragment, useRef, useState } from "react";
 import {
   PaintbrushIcon,
   PlugIcon,
-  UsersIcon,
   SearchIcon,
   XIcon,
   MessageSquareIcon,
@@ -25,8 +24,10 @@ import { ChatSettings } from "./ChatSettings.tsx";
 export function AppSettingsDialog({
   onDismiss,
   initialPage = "Appearance",
+  initialTeamId = null,
 }: {
   onDismiss: () => void;
+  initialTeamId?: string | null;
   initialPage?: "Appearance" | "Chat" | "Providers" | "Teams";
 }) {
   const [page, setPage] = useState(initialPage);
@@ -51,12 +52,6 @@ export function AppSettingsDialog({
       keywords:
         "providers models codex claude cursor grok fx opencode antigravity muse pi acp authentication",
       Icon: PlugIcon,
-    },
-    {
-      name: "Teams" as const,
-      keywords:
-        "teams members skills memories files tools mcp shared authentication",
-      Icon: UsersIcon,
     },
   ].filter((item) => item.keywords.includes(query.trim().toLowerCase()));
 
@@ -155,7 +150,10 @@ export function AppSettingsDialog({
               ) : page === "Chat" ? (
                 <ChatSettings />
               ) : page === "Teams" ? (
-                <TeamsSettings beforeClose={beforeClose} />
+                <TeamsSettings
+                  beforeClose={beforeClose}
+                  initialTeamId={initialTeamId}
+                />
               ) : (
                 <ProviderSettings />
               )}

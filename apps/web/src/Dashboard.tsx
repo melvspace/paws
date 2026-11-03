@@ -33,6 +33,7 @@ export function Dashboard() {
     teamId: string | null;
   } | null>(null);
   const [creatingTeam, setCreatingTeam] = useState(false);
+  const [settingsTeamId, setSettingsTeamId] = useState<string | null>(null);
   const [settingsAgentId, setSettingsAgentId] = useState<string | null>(null);
   const beforeLeave = useRef<(() => Promise<void>) | null>(null);
   const navigating = useRef(false);
@@ -119,9 +120,15 @@ export function Dashboard() {
       onCreateTeam={() => {
         void navigate(() => setCreatingTeam(true));
       }}
+      onTeamSettings={(teamId) => {
+        setNavigationOpen(false);
+        setSettingsTeamId(teamId);
+        setSettingsOpen("Teams");
+      }}
       onSettings={openAgentSettings}
       onAppSettings={() => {
         setNavigationOpen(false);
+        setSettingsTeamId(null);
         setSettingsOpen("Appearance");
       }}
       onNavigate={(target) => {
@@ -194,8 +201,10 @@ export function Dashboard() {
         {settingsOpen && (
           <AppSettingsDialog
             initialPage={settingsOpen}
+            initialTeamId={settingsTeamId}
             onDismiss={() => {
               setSettingsOpen(null);
+              setSettingsTeamId(null);
             }}
           />
         )}

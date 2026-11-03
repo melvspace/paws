@@ -610,10 +610,6 @@ select {
   cursor: pointer;
 }
 
-.sidebar-team-heading span {
-  opacity: 0.6;
-}
-
 .agent-settings-dialog .dialog-heading {
   justify-content: flex-end;
 }
@@ -709,8 +705,22 @@ select {
   flex: 1;
   min-width: 0;
 }
-.sidebar-team-header > .sidebar-icon-button {
+.sidebar-team-controls {
+  display: flex;
   flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.sidebar-team-header:hover .sidebar-team-controls,
+.sidebar-team-header:focus-within .sidebar-team-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .sidebar-team-controls {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .agent-create-dialog .avatar-picker {

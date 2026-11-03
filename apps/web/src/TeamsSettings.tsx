@@ -44,11 +44,15 @@ const tabs = [
 
 export function TeamsSettings({
   beforeClose,
+  initialTeamId = null,
 }: {
+  initialTeamId?: string | null;
   beforeClose?: RefObject<(() => Promise<void>) | null>;
 }) {
   const { snapshot, connected } = useAtomValue(agentsAtom);
-  const [selected, setSelected] = useState<Team | null>(null);
+  const [selected, setSelected] = useState<Team | null>(
+    () => snapshot.teams?.find((team) => team.id === initialTeamId) ?? null,
+  );
   const [creating, setCreating] = useState(false);
 
   if (selected)
