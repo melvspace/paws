@@ -198,6 +198,214 @@ it("revokes an agent click waiting for an element before granting control", asyn
   }
 }, 30000);
 
+it("cancels a selector click waiting for an element without dispatching input", async () => {
+  const f = await fixture();
+  const events: BrowserServerMessage[] = [];
+
+  try {
+    const viewer = await f.browsers.attach(
+      f.agent.id,
+      (event) => events.push(event),
+      () => {},
+    );
+    const tabId = latestState(events).tabs[0]!.id;
+    await f.tool({ action: "navigate", tabId, url: f.url });
+    const runtime = await f.launch.mock.results[0]!.value;
+    const page = runtime.context.pages()[0]!;
+    const locator = vi.spyOn(page, "locator");
+    const controller = new AbortController();
+    const clicking = f.browsers.tool(
+      f.agent.id,
+      { action: "click", tabId, selector: "#late" },
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(locator).toHaveBeenCalledWith("#late"));
+    controller.abort();
+    await page.evaluate(() => {
+      const button = document.createElement("button");
+      button.id = "late";
+      button.textContent = "Untouched";
+      button.onclick = () => {
+        button.textContent = "Clicked";
+      };
+      document.body.append(button);
+    });
+    expect((await clicking).isError).toBe(true);
+    expect(await page.locator("#late").textContent()).toBe("Untouched");
+    locator.mockRestore();
+    await viewer.detach();
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
+it.each(["click", "fill", "press"] as const)(
+  "cancels dialog-interrupted %s input and clears held modifiers",
+  async (action) => {
+    const f = await fixture();
+    const events: BrowserServerMessage[] = [];
+
+    try {
+      const viewer = await f.browsers.attach(
+        f.agent.id,
+        (event) => events.push(event),
+        () => {},
+      );
+      const tabId = latestState(events).tabs[0]!.id;
+      await f.tool({ action: "navigate", tabId, url: f.url });
+      const runtime = await f.launch.mock.results[0]!.value;
+      const page = runtime.context.pages()[0]!;
+      await page.setContent(
+        action === "click"
+          ? "<button onmouseover=\"alert('Interrupted?')\" onclick=\"this.textContent='Clicked'\">Untouched</button><input>"
+          : action === "fill"
+            ? "<input onfocus=\"alert('Interrupted?')\">"
+            : "<input onkeydown=\"if(event.key==='Control') alert('Interrupted?')\">",
+      );
+
+      if (action === "press") await page.locator("input").focus();
+
+      const controller = new AbortController();
+      const result = await f.browsers.tool(
+        f.agent.id,
+        {
+          action,
+          tabId,
+          selector: action === "click" ? "button" : "input",
+          text: "Agent",
+          key: "Control+Shift+a",
+        },
+        controller.signal,
+      );
+      expect(JSON.stringify(result)).toContain("Interrupted?");
+      controller.abort();
+      await f.tool({ action: "dialog", tabId, accept: false });
+      await page.locator("input").evaluate((element: Element) => {
+        element.removeAttribute("onfocus");
+        element.removeAttribute("onkeydown");
+      });
+      await page.locator("input").focus();
+      await f.tool({ action: "press", tabId, key: "a" });
+      expect(await page.locator("input").inputValue()).toBe("a");
+
+      if (action === "click")
+        expect(await page.locator("button").textContent()).toBe("Untouched");
+
+      await viewer.detach();
+    } finally {
+      await f.close();
+    }
+  },
+  30000,
+);
+
+it("waits for enabled selector click targets and rejects permanently disabled buttons", async () => {
+  const f = await fixture();
+  const events: BrowserServerMessage[] = [];
+
+  try {
+    const viewer = await f.browsers.attach(
+      f.agent.id,
+      (event) => events.push(event),
+      () => {},
+    );
+    const tabId = latestState(events).tabs[0]!.id;
+    await f.tool({ action: "navigate", tabId, url: f.url });
+    const runtime = await f.launch.mock.results[0]!.value;
+    const page = runtime.context.pages()[0]!;
+    await page.setContent(
+      "<button disabled onclick=\"this.textContent='Clicked'\">Untouched</button>",
+    );
+    expect(
+      (await f.tool({ action: "click", tabId, selector: "button" })).isError,
+    ).toBe(true);
+    expect(await page.locator("button").textContent()).toBe("Untouched");
+    const clicking = f.tool({ action: "click", tabId, selector: "button" });
+    await page
+      .locator("button")
+      .evaluate((element: Element) => element.removeAttribute("disabled"));
+    expect((await clicking).isError).toBeUndefined();
+    expect(await page.locator("button").textContent()).toBe("Clicked");
+    await viewer.detach();
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
+it("fills associated label controls and waits for editable controls", async () => {
+  const f = await fixture();
+  const events: BrowserServerMessage[] = [];
+
+  try {
+    const viewer = await f.browsers.attach(
+      f.agent.id,
+      (event) => events.push(event),
+      () => {},
+    );
+    const tabId = latestState(events).tabs[0]!.id;
+    await f.tool({ action: "navigate", tabId, url: f.url });
+    const runtime = await f.launch.mock.results[0]!.value;
+    const page = runtime.context.pages()[0]!;
+    await page.setContent(
+      '<label for="name">Name</label><input id="name"><label>Wrapped<input id="wrapped"></label>',
+    );
+
+    for (const [selector, target] of [
+      ["text=Name", "#name"],
+      ["text=Wrapped", "#wrapped"],
+    ]) {
+      expect(
+        (await f.tool({ action: "fill", tabId, selector, text: "Ada" }))
+          .isError,
+      ).toBeUndefined();
+      expect(await page.locator(target!).inputValue()).toBe("Ada");
+    }
+
+    for (const attribute of ["disabled", "readonly"]) {
+      await f.tool({
+        action: "fill",
+        tabId,
+        selector: "text=Name",
+        text: "Ada",
+      });
+      await page
+        .locator("#name")
+        .evaluate(
+          (element: Element, attr: string) => element.setAttribute(attr, ""),
+          attribute,
+        );
+      expect(
+        (
+          await f.tool({
+            action: "fill",
+            tabId,
+            selector: "text=Name",
+            text: "Changed",
+          })
+        ).isError,
+      ).toBe(true);
+      expect(await page.locator("#name").inputValue()).toBe("Ada");
+      const filling = f.tool({
+        action: "fill",
+        tabId,
+        selector: "text=Name",
+        text: "Changed",
+      });
+      await page
+        .locator("#name")
+        .evaluate(
+          (element: Element, attr: string) => element.removeAttribute(attr),
+          attribute,
+        );
+      expect((await filling).isError).toBeUndefined();
+    }
+
+    await viewer.detach();
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
 it.each(["fill", "press"] as const)(
   "prevents interrupted %s input after takeover",
   async (action) => {

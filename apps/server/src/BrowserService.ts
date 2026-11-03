@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { Effect, Schema } from "effect";
 import type { BrowserContext, CDPSession, Dialog, Page } from "playwright";
 import {
@@ -417,12 +418,25 @@ export function makeBrowserService(
       );
   }
 
-  async function action(
-    session: Session,
-    input: BrowserAction,
-    viewer?: Viewer,
-    generation?: number,
-  ): Promise<BrowserToolResult> {
+  async function action({
+    session,
+    input,
+    viewer,
+    generation,
+    signal,
+  }: {
+    session: Session;
+    input: BrowserAction;
+    viewer?: Viewer;
+    generation?: number | undefined;
+    signal?: AbortSignal;
+  }): Promise<BrowserToolResult> {
+    function checkCancellation() {
+      if (signal?.aborted) throw new ChatToolError("Browser action cancelled.");
+    }
+
+    checkCancellation();
+
     if (input.action === "list") return textResult(state(session, viewer));
 
     if (input.action === "open") {
@@ -434,6 +448,11 @@ export function makeBrowserService(
       const url = browserUrl(input.url ?? browserHomeUrl);
       const tab = await adopt(session, await session.context.newPage());
       tab.owner = viewer?.id ?? null;
+
+      if (signal?.aborted) {
+        await tab.page.close();
+        checkCancellation();
+      }
 
       if (viewer) {
         viewer.tabId = tab.id;
@@ -453,7 +472,11 @@ export function makeBrowserService(
     }
 
     const tab = getTab(session, input.tabId);
-    authorize(tab, viewer, generation);
+    const checkInput = () => {
+      checkCancellation();
+      authorize(tab, viewer, generation);
+    };
+    checkInput();
     const page = tab.page;
 
     if (tab.dialog && !["dialog", "close"].includes(input.action))
@@ -484,90 +507,138 @@ export function makeBrowserService(
     if (input.action === "navigate") {
       if (!input.url) throw new ChatToolError("navigate requires url.");
 
-      await page.goto(browserUrl(input.url), { waitUntil: "domcontentloaded" });
+      await page.goto(browserUrl(input.url), {
+        waitUntil: "domcontentloaded",
+      });
     } else if (input.action === "click") {
-      if (input.selector) await page.locator(input.selector).hover();
-      else if (input.x !== undefined && input.y !== undefined)
+      if (input.selector) {
+        const locator = page.locator(input.selector);
+        const deadline = Date.now() + 3000;
+
+        while (true) {
+          checkInput();
+          const enabled = await locator.isEnabled();
+          checkInput();
+
+          if (enabled) {
+            await locator.hover();
+            checkInput();
+
+            if (await locator.isEnabled()) break;
+          }
+
+          if (Date.now() >= deadline)
+            throw new ChatToolError(
+              "The target is disabled. Wait for it to become enabled, then retry.",
+            );
+
+          await delay(50, undefined, { signal });
+        }
+      } else if (input.x !== undefined && input.y !== undefined)
         await page.mouse.move(input.x, input.y);
       else throw new ChatToolError("click requires selector or x and y.");
 
       // A hover can open a dialog. Recheck the lease before each input step
       // instead of letting Playwright's composite click resume after takeover.
-      authorize(tab, viewer, generation);
+      checkInput();
       tab.buttons.add("left");
       await page.mouse.down();
-      authorize(tab, viewer, generation);
+      checkInput();
       tab.buttons.delete("left");
       await page.mouse.up();
     } else if (input.action === "fill") {
       if (!input.selector || input.text === undefined)
         throw new ChatToolError("fill requires selector and text.");
 
-      const locator = page
+      const resolved = await page
         .locator(input.selector)
-        .and(page.locator(":not(:disabled):not([readonly])"));
-      await locator.selectText();
-      authorize(tab, viewer, generation);
-      const type = await locator.evaluate((element) => {
-        if (element instanceof HTMLInputElement) return element.type;
+        .evaluateHandle((element): Element => {
+          if (
+            element instanceof HTMLInputElement ||
+            element instanceof HTMLTextAreaElement ||
+            (element instanceof HTMLElement && element.isContentEditable)
+          )
+            return element;
+
+          return element.closest("label")?.control ?? element;
+        });
+      const locator = resolved.asElement();
+
+      if (!locator) {
+        await resolved.dispose();
+
+        throw new ChatToolError("Target is not editable.");
+      }
+
+      try {
+        checkInput();
+        await locator.waitForElementState("editable");
+        checkInput();
+        await locator.selectText();
+        checkInput();
+        const type = await locator.evaluate((element) => {
+          if (element instanceof HTMLInputElement) return element.type;
+
+          if (
+            element instanceof HTMLTextAreaElement ||
+            (element instanceof HTMLElement && element.isContentEditable)
+          )
+            return "text";
+
+          throw new Error("Target is not editable.");
+        });
+        checkInput();
 
         if (
-          element instanceof HTMLTextAreaElement ||
-          (element instanceof HTMLElement && element.isContentEditable)
-        )
-          return "text";
+          ["date", "time", "datetime-local", "month", "range", "week"].includes(
+            type,
+          )
+        ) {
+          // These native controls use a value assignment rather than text input.
+          await locator.evaluate((element, text) => {
+            if (!(element instanceof HTMLInputElement)) return;
 
-        throw new Error("Target is not editable.");
-      });
-      authorize(tab, viewer, generation);
+            element.value = text.trim();
 
-      if (
-        ["date", "time", "datetime-local", "month", "range", "week"].includes(
-          type,
-        )
-      ) {
-        // These native controls use a value assignment rather than text input.
-        await locator.evaluate((element, text) => {
-          if (!(element instanceof HTMLInputElement)) return;
+            if (element.value !== text.trim())
+              throw new Error("Invalid input value.");
 
-          element.value = text.trim();
+            element.dispatchEvent(
+              new Event("input", { bubbles: true, composed: true }),
+            );
+            element.dispatchEvent(new Event("change", { bubbles: true }));
+          }, input.text);
+        } else {
+          if (
+            ![
+              "text",
+              "email",
+              "number",
+              "password",
+              "search",
+              "tel",
+              "url",
+            ].includes(type)
+          )
+            throw new ChatToolError("This input type cannot be filled.");
+          if (
+            type === "number" &&
+            input.text &&
+            !Number.isFinite(Number(input.text))
+          )
+            throw new ChatToolError("Use a numeric value for this input.");
 
-          if (element.value !== text.trim())
-            throw new Error("Invalid input value.");
-
-          element.dispatchEvent(
-            new Event("input", { bubbles: true, composed: true }),
-          );
-          element.dispatchEvent(new Event("change", { bubbles: true }));
-        }, input.text);
-      } else {
-        if (
-          ![
-            "text",
-            "email",
-            "number",
-            "password",
-            "search",
-            "tel",
-            "url",
-          ].includes(type)
-        )
-          throw new ChatToolError("This input type cannot be filled.");
-        if (
-          type === "number" &&
-          input.text &&
-          !Number.isFinite(Number(input.text))
-        )
-          throw new ChatToolError("Use a numeric value for this input.");
-
-        if (input.text) await page.keyboard.insertText(input.text);
-        else {
-          tab.keys.add("Delete");
-          await page.keyboard.down("Delete");
-          authorize(tab, viewer, generation);
-          tab.keys.delete("Delete");
-          await page.keyboard.up("Delete");
+          if (input.text) await page.keyboard.insertText(input.text);
+          else {
+            tab.keys.add("Delete");
+            await page.keyboard.down("Delete");
+            checkInput();
+            tab.keys.delete("Delete");
+            await page.keyboard.up("Delete");
+          }
         }
+      } finally {
+        await resolved.dispose();
       }
     } else if (input.action === "press") {
       if (!input.key) throw new ChatToolError("press requires key.");
@@ -575,13 +646,13 @@ export function makeBrowserService(
       const keys = input.key.split(/\+(?!$)/);
 
       for (const key of keys) {
-        authorize(tab, viewer, generation);
+        checkInput();
         tab.keys.add(key);
         await page.keyboard.down(key);
       }
 
       for (const key of keys.toReversed()) {
-        authorize(tab, viewer, generation);
+        checkInput();
         tab.keys.delete(key);
         await page.keyboard.up(key);
       }
@@ -609,6 +680,7 @@ export function makeBrowserService(
       await stream(session, tab);
     }
 
+    checkCancellation();
     publish(session);
 
     return textResult(state(session, viewer));
@@ -629,21 +701,30 @@ export function makeBrowserService(
 
           // Dialogs unblock in-flight input, so they cannot wait behind it.
           if (input.action === "dialog")
-            return await action(session, input, undefined, generation);
+            return await action({ session, input, generation, signal });
 
           return await enqueue(session, async () => {
             signal.throwIfAborted();
 
             const tab = input.tabId ? getTab(session, input.tabId) : undefined;
 
-            if (!tab) return action(session, input, undefined, generation);
+            const perform = async () => {
+              try {
+                return await action({ session, input, generation, signal });
+              } finally {
+                if (
+                  signal.aborted &&
+                  tab?.owner === null &&
+                  tab.generation === generation
+                )
+                  await resetInput(tab);
+              }
+            };
+
+            if (!tab) return perform();
 
             // Return the dialog to sequential tool callers while CDP input waits.
-            return untilDialog(
-              tab,
-              () => action(session, input, undefined, generation),
-              () => textResult(state(session)),
-            );
+            return untilDialog(tab, perform, () => textResult(state(session)));
           });
         } catch (error) {
           return {
@@ -720,7 +801,12 @@ export function makeBrowserService(
 
         // A page dialog can block the queued input that opened it.
         if (message.type === "action" && message.input.action === "dialog") {
-          await action(session, message.input, viewer, message.generation);
+          await action({
+            session,
+            input: message.input,
+            viewer,
+            generation: message.generation,
+          });
 
           return;
         }
@@ -784,7 +870,12 @@ export function makeBrowserService(
             await fitViewport(session, tab);
           } else if (message.type === "action") {
             const perform = () =>
-              action(session, message.input, viewer, message.generation);
+              action({
+                session,
+                input: message.input,
+                viewer,
+                generation: message.generation,
+              });
 
             if (message.input.tabId)
               await untilDialog(
