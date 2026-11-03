@@ -1,5 +1,10 @@
 import { Schema } from "effect";
-import { ChatAttachment, ChatFileInput, ChatSelection } from "./chat.ts";
+import {
+  ChatAttachment,
+  ChatFileInput,
+  ChatSelection,
+  PeerMessageRecovery,
+} from "./chat.ts";
 
 export const TeamTaskStatus = Schema.Literals([
   "assigned",
@@ -120,6 +125,7 @@ export const AgentReplyWait = Schema.Struct({
   toAgentId: Schema.String,
   toName: Schema.String,
   batchId: Schema.String,
+  recovery: Schema.optional(PeerMessageRecovery),
   status: Schema.Literals([
     "queued",
     "working",
@@ -130,3 +136,6 @@ export const AgentReplyWait = Schema.Struct({
   ]),
 });
 export type AgentReplyWait = typeof AgentReplyWait.Type;
+
+export const PeerRetryResult = Schema.Struct({ requestId: Schema.String });
+export type PeerRetryResult = typeof PeerRetryResult.Type;

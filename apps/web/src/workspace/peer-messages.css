@@ -117,13 +117,19 @@ details[open] > summary > .peer-chevron {
   margin: 14px 0 0;
   padding: 0;
   list-style: none;
+  max-height: min(36vh, 320px);
+  overflow-y: auto;
 }
 .peer-reply-waits li {
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+}
+.peer-reply-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  font-size: 12px;
 }
 .peer-reply-waits a {
   min-width: 0;
@@ -136,6 +142,38 @@ details[open] > summary > .peer-chevron {
   align-items: center;
   gap: 8px;
   color: var(--muted-foreground);
+}
+.peer-reply-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.peer-recovery {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: min(360px, 65vw);
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.peer-recovery-info {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  color: var(--muted-foreground);
+}
+.peer-recovery-error {
+  flex-basis: 100%;
+}
+.peer-retry-button {
+  flex-shrink: 0;
+  gap: 6px;
+  padding: 5px 9px;
+  min-height: 30px;
+  font-size: 12px;
 }
 @media (max-width: 640px) {
   .chat-peer-summary {

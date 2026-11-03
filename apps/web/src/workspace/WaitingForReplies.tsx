@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { agentsAtom } from "@paws/client-runtime";
+import { agentsAtom, peerRetriesAtom } from "@paws/client-runtime";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -7,6 +7,7 @@ import {
   CircleAlertIcon,
 } from "lucide-react";
 import { PeerIdentity } from "./PeerMessage.tsx";
+import { PeerRecoveryNotice } from "./PeerRecoveryNotice.tsx";
 
 const labels = {
   queued: "Queued",
@@ -14,11 +15,12 @@ const labels = {
   waiting: "Waiting",
   done: "Replied",
   failed: "Failed",
-  interrupted: "Interrupted",
+  interrupted: "Stopped",
 };
 
 export function WaitingForReplies({ agentId }: { agentId: string }) {
   const { snapshot, connected } = useAtomValue(agentsAtom);
+  const retries = useAtomValue(peerRetriesAtom);
   const waits = (snapshot.peerWaits ?? []).filter(
     (wait) => wait.agentId === agentId,
   );
@@ -27,8 +29,13 @@ export function WaitingForReplies({ agentId }: { agentId: string }) {
     return null;
 
   const completed = waits.filter((wait) => wait.status === "done").length;
-  const waiting = waits.some((wait) =>
-    ["queued", "working", "waiting"].includes(wait.status),
+  const waiting = waits.some(
+    (wait) =>
+      ["queued", "working", "waiting"].includes(wait.status) ||
+      (wait.recovery &&
+        ["retrying", "retried"].includes(
+          retries[wait.recovery.eventId]?.status ?? "",
+        )),
   );
 
   return (
@@ -51,21 +58,46 @@ export function WaitingForReplies({ agentId }: { agentId: string }) {
         <ChevronDownIcon size={14} className="peer-chevron" aria-hidden />
       </summary>
       <ul aria-label="Agent replies">
-        {waits.map((wait) => (
-          <li key={wait.requestId}>
-            <PeerIdentity id={wait.toAgentId} name={wait.toName} size={20} />
-            <span className="peer-reply-state" role="status">
-              {connected ? labels[wait.status] : "Disconnected"}
-              {wait.status === "done" ? (
-                <CheckIcon size={14} aria-hidden />
-              ) : wait.status === "failed" || wait.status === "interrupted" ? (
-                <CircleAlertIcon size={14} aria-hidden />
-              ) : (
-                <CircleDashedIcon size={14} aria-hidden />
-              )}
-            </span>
-          </li>
-        ))}
+        {waits.map((wait) => {
+          const retry = wait.recovery && retries[wait.recovery.eventId];
+
+          return (
+            <li key={wait.requestId}>
+              <div className="peer-reply-row">
+                <PeerIdentity
+                  id={wait.toAgentId}
+                  name={wait.toName}
+                  size={20}
+                />
+                <div className="peer-reply-actions">
+                  <span className="peer-reply-state" role="status">
+                    {connected
+                      ? retry?.status === "retrying"
+                        ? "Retrying…"
+                        : retry?.status === "retried"
+                          ? "Retry queued"
+                          : labels[wait.status]
+                      : "Disconnected"}
+                    {wait.recovery ? null : wait.status === "done" ? (
+                      <CheckIcon size={14} aria-hidden />
+                    ) : wait.status === "failed" ||
+                      wait.status === "interrupted" ? (
+                      <CircleAlertIcon size={14} aria-hidden />
+                    ) : (
+                      <CircleDashedIcon size={14} aria-hidden />
+                    )}
+                  </span>
+                  {wait.recovery && (
+                    <PeerRecoveryNotice
+                      agentId={agentId}
+                      recovery={wait.recovery}
+                    />
+                  )}
+                </div>
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </details>
   );

@@ -1,4 +1,5 @@
 import { makeTeamworkService } from "./TeamworkService.ts";
+import { peerMessageHttp } from "./peerMessageHttp.ts";
 import { makeAgentManagementService } from "./AgentManagementService.ts";
 import { chatHistoryPage } from "./chatHistoryPaging.ts";
 import { makeMemoryService } from "./MemoryService.ts";
@@ -219,6 +220,8 @@ export function createServer(
       if (await memoryHttp(request, response, makeMemoryService(root))) return;
 
       if (await routineHttp(request, response, routines)) return;
+
+      if (await peerMessageHttp(request, response, teamwork)) return;
 
       const credentials =
         /^\/api\/teams\/([^/]+)\/integrations\/([^/]+)\/credentials$/.exec(

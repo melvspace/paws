@@ -1,8 +1,8 @@
-import { afterEach, expect, it } from "vite-plus/test";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import { render } from "../../test/render.tsx";
 import type { ChatMessage } from "@paws/contracts";
-import { agentsAtom } from "@paws/client-runtime";
+import { agentsAtom, peerRetriesAtom } from "@paws/client-runtime";
 import { appAtomRegistry } from "../lib/atomRegistry.ts";
 import { ChatHistory } from "./ChatHistory.tsx";
 import { WaitingForReplies } from "./WaitingForReplies.tsx";
@@ -71,6 +71,7 @@ function History({
 }
 
 afterEach(() => {
+  appAtomRegistry.set(peerRetriesAtom, {});
   appAtomRegistry.set(agentsAtom, {
     snapshot: { agents: [] },
     connected: false,
@@ -288,5 +289,192 @@ it("renders transferred files inside the expandable exchange using the viewing a
   await expect.element(download).toBeVisible();
   expect(download.element().getAttribute("href")).toBe(
     `/api/agents/ada/chat/attachments/${id}`,
+  );
+});
+
+const stoppedRecovery = {
+  eventId: "stopped-request",
+  kind: "request" as const,
+  reason: "Paws restarted before this request finished. No reply was received.",
+  canRetry: true,
+  retried: false,
+};
+const stoppedWait = {
+  agentId: "ada",
+  requestId: "stopped-request",
+  toAgentId: "joker",
+  toName: "Joker",
+  batchId: "batch",
+  status: "interrupted" as const,
+  recovery: stoppedRecovery,
+};
+
+it("explains stopped work and shares pending/retry state across both chat recovery controls", async () => {
+  appAtomRegistry.set(agentsAtom, {
+    connected: true,
+    error: null,
+    snapshot: { agents: [], peerWaits: [stoppedWait] },
+  });
+  let finish = (_response: Response) => {};
+  const fetchMock = vi.spyOn(window, "fetch").mockReturnValue(
+    new Promise<Response>((resolve) => {
+      finish = resolve;
+    }),
+  );
+
+  try {
+    await using _screen = await render(
+      <>
+        <History
+          messages={[
+            {
+              ...request,
+              peer: {
+                ...request.peer!,
+                eventId: "stopped-request",
+                delivery: "interrupted",
+                recovery: stoppedRecovery,
+              },
+            },
+          ]}
+        />
+        <WaitingForReplies agentId="ada" />
+      </>,
+    );
+    await expect
+      .element(page.getByText(stoppedRecovery.reason))
+      .not.toBeInTheDocument();
+    expect(page.getByText("Stopped", { exact: true }).elements()).toHaveLength(
+      2,
+    );
+    await expect
+      .element(page.getByText("Interrupted", { exact: true }))
+      .not.toBeInTheDocument();
+    const buttons = page.getByRole("button", { name: "Retry request" });
+    expect(buttons.elements()).toHaveLength(2);
+    const row = document
+      .querySelector(".peer-reply-row")!
+      .getBoundingClientRect();
+    const retry = buttons.nth(1).element().getBoundingClientRect();
+    expect(row.height).toBeLessThan(40);
+    expect(
+      Math.abs(row.top + row.height / 2 - retry.top - retry.height / 2),
+    ).toBeLessThan(1);
+    await page.getByRole("button", { name: "Request details" }).nth(0).hover();
+    await expect
+      .element(page.getByText(stoppedRecovery.reason, { exact: false }))
+      .toHaveTextContent(
+        `${stoppedRecovery.reason} Retry sends the original request and files again.`,
+      );
+    await buttons.nth(0).click();
+    expect(
+      document.querySelector(".chat-peer-event details")?.hasAttribute("open"),
+    ).toBe(false);
+    await expect.poll(() => fetchMock.mock.calls.length).toBe(1);
+    await expect.element(buttons.nth(0)).toBeDisabled();
+    await expect.element(buttons.nth(1)).toBeDisabled();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "/api/agents/ada/peer-messages/stopped-request/retry",
+    );
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+    finish(
+      new Response(JSON.stringify({ requestId: "retry-request" }), {
+        status: 202,
+      }),
+    );
+    await expect
+      .element(page.getByText("Retry queued", { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(page.getByText("Waiting for replies", { exact: true }))
+      .toBeVisible();
+    await expect.element(buttons).not.toBeInTheDocument();
+  } finally {
+    finish(
+      new Response(JSON.stringify({ requestId: "retry-request" }), {
+        status: 202,
+      }),
+    );
+    fetchMock.mockRestore();
+  }
+});
+
+it("keeps retry failures actionable and disables retries while disconnected", async () => {
+  appAtomRegistry.set(agentsAtom, {
+    connected: true,
+    error: null,
+    snapshot: { agents: [], peerWaits: [stoppedWait] },
+  });
+  const fetchMock = vi
+    .spyOn(window, "fetch")
+    .mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: "This agent’s communication queue is full." }),
+        { status: 429 },
+      ),
+    );
+
+  try {
+    await using _screen = await render(<WaitingForReplies agentId="ada" />);
+    const retry = page.getByRole("button", { name: "Retry request" });
+    await retry.click();
+    await expect
+      .element(page.getByRole("alert"))
+      .toHaveTextContent("This agent’s communication queue is full.");
+    await expect.element(retry).toBeEnabled();
+    appAtomRegistry.update(agentsAtom, (state) => ({
+      ...state,
+      connected: false,
+    }));
+    await expect.element(retry).toBeDisabled();
+    await expect
+      .element(page.getByText("Disconnected", { exact: true }))
+      .toBeVisible();
+    await page.getByRole("button", { name: "Request details" }).hover();
+    await expect
+      .element(page.getByText(stoppedRecovery.reason, { exact: false }))
+      .toHaveTextContent(
+        `${stoppedRecovery.reason} Retry sends the original request and files again. Reconnect to retry.`,
+      );
+  } finally {
+    fetchMock.mockRestore();
+  }
+});
+
+it("makes failures in grouped exchanges visible and explains when a request cannot be retried", async () => {
+  await using _screen = await render(
+    <History
+      messages={[
+        request,
+        {
+          ...reply,
+          delivery: undefined,
+          peer: {
+            ...reply.peer!,
+            delivery: "interrupted",
+            recovery: {
+              ...stoppedRecovery,
+              eventId: "reply-event",
+              kind: "reply",
+              canRetry: false,
+              reason: "This request is no longer active.",
+            },
+          },
+        },
+      ]}
+    />,
+  );
+  await expect
+    .element(page.getByText("This request is no longer active."))
+    .not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Reply details" }).hover();
+  await expect
+    .element(page.getByText("This request is no longer active."))
+    .toHaveTextContent("This request is no longer active.");
+  await expect
+    .element(page.getByRole("button", { name: "Retry reply" }))
+    .not.toBeInTheDocument();
+  expect(document.querySelector(".chat-peer-group")?.hasAttribute("open")).toBe(
+    true,
   );
 });

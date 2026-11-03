@@ -55,6 +55,8 @@ async function setup() {
   const reviewer = await create("Reviewer", team!.id);
   const other = await create("Other", otherTeam!.id);
   let handle: RunChatTurn = async () => {};
+  let providersAvailable = true;
+  const providers = () => (providersAvailable ? [provider] : []);
   let service: ReturnType<typeof makeTeamworkService>;
   const run = serializeAgentExecution(async (turn) => {
     service?.validateExecution(
@@ -67,14 +69,8 @@ async function setup() {
         service.tool(turn.agentId, input, turn.conversationId, turn.requestId),
     });
   });
-  const main = makeChatService(root, () => [provider], run);
-  service = makeTeamworkService(
-    root,
-    () => [provider],
-    run,
-    main,
-    () => {},
-  );
+  const main = makeChatService(root, providers, run);
+  service = makeTeamworkService(root, providers, run, main, () => {});
   await service.ready;
   const command = async (actor: string, input: TeamworkRequest) => {
     const result = await Effect.runPromise(
@@ -98,18 +94,15 @@ async function setup() {
     get service() {
       return service;
     },
+    providersAvailable(value: boolean) {
+      providersAvailable = value;
+    },
     handle(run: RunChatTurn) {
       handle = run;
     },
     async reopen() {
       await service.close();
-      service = makeTeamworkService(
-        root,
-        () => [provider],
-        run,
-        main,
-        () => {},
-      );
+      service = makeTeamworkService(root, providers, run, main, () => {});
       await service.ready;
     },
     async [Symbol.asyncDispose]() {
@@ -1405,4 +1398,97 @@ it("revokes cancelled peer requests so late tools cannot enqueue more work", asy
     }),
   ).rejects.toThrow("cancelled");
   expect(fixture.service.list(other.id).events).toEqual([]);
+});
+
+it("restores explanations and retry controls for old stopped requests without replaying them", async () => {
+  await using fixture = await setup();
+  const { requester, worker } = fixture;
+  fixture.handle(async (turn) => {
+    await new Promise<void>((resolve) => {
+      turn.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    turn.signal.throwIfAborted();
+  });
+  const state = await fixture.command(requester.id, {
+    action: "message",
+    toAgentId: worker.id,
+    text: "Identify the video",
+  });
+  await expect
+    .poll(() => fixture.service.list(requester.id).events[0]?.delivery)
+    .toBe("running");
+  await fixture.reopen();
+  expect(fixture.service.busy(worker.id)).toBe(false);
+  const eventId = state.events[0]!.id;
+  expect(fixture.service.replyWaits()[0]?.recovery).toMatchObject({
+    eventId,
+    kind: "request",
+    canRetry: true,
+    retried: false,
+    reason:
+      "Paws restarted before this request finished. No reply was received.",
+  });
+  const message = fixture.main
+    .get(requester.id)
+    .messages.find((item) => item.peer?.eventId === eventId)!;
+  expect(message.text).toBe("Identify the video");
+  expect(message.peer?.recovery?.canRetry).toBe(true);
+  fixture.handle(async () => {});
+  await fixture.command(requester.id, { action: "retry", eventId });
+  const old = fixture.main
+    .get(requester.id)
+    .messages.find((item) => item.peer?.eventId === eventId)!;
+  expect(old.peer?.recovery).toMatchObject({ canRetry: false, retried: true });
+  expect(
+    fixture.service.replyWaits().every((wait) => wait.requestId !== eventId),
+  ).toBe(true);
+});
+
+it("retries a failed return delivery without asking the worker to repeat completed work", async () => {
+  await using fixture = await setup();
+  const { requester, worker } = fixture;
+  let workerTurns = 0;
+  fixture.handle(async (turn) => {
+    if (turn.agentId === worker.id) {
+      workerTurns++;
+      fixture.providersAvailable(false);
+      turn.onText("result", "Saved result", true);
+    }
+  });
+  await fixture.command(requester.id, {
+    action: "message",
+    toAgentId: worker.id,
+    text: "Identify this file",
+  });
+  await expect
+    .poll(
+      () =>
+        fixture.service
+          .list(requester.id)
+          .events.find((event) => event.kind === "reply")?.delivery,
+    )
+    .toBe("failed");
+  const failedReply = fixture.service
+    .list(requester.id)
+    .events.find((event) => event.kind === "reply")!;
+  expect(fixture.service.replyWaits()[0]?.recovery).toMatchObject({
+    eventId: failedReply.id,
+    kind: "reply",
+    canRetry: true,
+  });
+  fixture.providersAvailable(true);
+  await fixture.command(requester.id, {
+    action: "retry",
+    eventId: failedReply.id,
+  });
+  await expect.poll(() => fixture.service.replyWaits()).toEqual([]);
+  expect(workerTurns).toBe(1);
+  expect(
+    fixture.main
+      .get(requester.id)
+      .messages.some(
+        (message) =>
+          message.peer?.kind === "reply" && message.text === "Saved result",
+      ),
+  ).toBe(true);
 });

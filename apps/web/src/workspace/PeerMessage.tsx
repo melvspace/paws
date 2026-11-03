@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { agentsAtom } from "@paws/client-runtime";
+import { agentsAtom, peerRetriesAtom } from "@paws/client-runtime";
 import {
   avatarColors,
   defaultAgentAvatar,
@@ -8,6 +8,7 @@ import {
 import { ChevronDownIcon } from "lucide-react";
 import { AgentAvatar } from "../AgentAvatar.tsx";
 import { MessageAttachment } from "./MessageAttachment.tsx";
+import { PeerRecoveryNotice } from "./PeerRecoveryNotice.tsx";
 import { MessageMarkdown } from "./MessageMarkdown.tsx";
 import { messageTime } from "./messageTime.ts";
 import "./peer-messages.css";
@@ -69,6 +70,7 @@ function PeerMessage({
   viewerId: string;
   expanded?: boolean;
 }) {
+  const retries = useAtomValue(peerRetriesAtom);
   const peer = message.peer;
   const counterpart = peerCounterpart(message, viewerId);
 
@@ -83,6 +85,8 @@ function PeerMessage({
       ? "Update from"
       : "Message from";
   const delivery = message.delivery ?? peer.delivery;
+  const retried =
+    peer.recovery?.retried || retries[peer.eventId]?.status === "retried";
   const failed = ["failed", "interrupted", "skipped", "cancelled"].includes(
     delivery,
   );
@@ -98,14 +102,28 @@ function PeerMessage({
           <span>{label}</span>
           <PeerIdentity id={counterpart.id} name={counterpart.name} />
           <PeerTime createdAt={message.createdAt} />
-          {failed && (
-            <span className="chat-peer-failure" role="status">
-              {delivery === "cancelled"
-                ? "Cancelled"
-                : delivery === "interrupted"
-                  ? "Interrupted"
-                  : "Failed"}
+          {(failed || retried) && (
+            <span
+              className={retried ? undefined : "chat-peer-failure"}
+              role="status"
+            >
+              {retried
+                ? "Retried"
+                : delivery === "cancelled"
+                  ? "Cancelled"
+                  : delivery === "interrupted"
+                    ? "Stopped"
+                    : "Failed"}
             </span>
+          )}
+          {peer.recovery && (
+            <PeerRecoveryNotice
+              agentId={viewerId}
+              recovery={peer.recovery}
+              allowRetry={
+                viewerId === peer.fromAgentId || viewerId === peer.toAgentId
+              }
+            />
           )}
           <ChevronDownIcon size={14} className="peer-chevron" aria-hidden />
         </summary>
@@ -149,6 +167,7 @@ export function PeerExchange({
   messages: readonly ChatMessage[];
   viewerId: string;
 }) {
+  const retries = useAtomValue(peerRetriesAtom);
   const first = messages[0];
   const last = messages.at(-1);
   const counterpart = first && peerCounterpart(first, viewerId);
@@ -158,7 +177,15 @@ export function PeerExchange({
     return <PeerMessage message={first} viewerId={viewerId} />;
 
   return (
-    <details className="chat-peer-group">
+    <details
+      className="chat-peer-group"
+      open={messages.some(
+        (message) =>
+          message.peer?.recovery &&
+          !message.peer.recovery.retried &&
+          retries[message.peer.eventId]?.status !== "retried",
+      )}
+    >
       <summary className="chat-peer-summary">
         <span>{messages.length} messages with</span>
         <PeerIdentity id={counterpart.id} name={counterpart.name} />

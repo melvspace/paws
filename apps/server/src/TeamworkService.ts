@@ -12,6 +12,7 @@ import {
   type AgentReplyWait,
   type ChatAttachment,
   type Conversation,
+  type PeerMessageRecovery,
 } from "@paws/contracts";
 import { ChatToolError, type RunChatTurn } from "@paws/provider-core";
 import { ChatError, makeChatService } from "./ChatService.ts";
@@ -136,6 +137,56 @@ export function makeTeamworkService(
       : "Former agent";
   }
 
+  function latestAttempt(event: TeamEvent) {
+    const messages = events();
+    let latest = event;
+    let retry = messages.find((item) => item.retryOf === latest.id);
+
+    while (retry) {
+      latest = retry;
+      retry = messages.find((item) => item.retryOf === latest.id);
+    }
+
+    return latest;
+  }
+
+  function recovery(event: TeamEvent): PeerMessageRecovery | undefined {
+    if (!["failed", "interrupted", "skipped"].includes(event.delivery)) return;
+
+    const retried = latestAttempt(event).id !== event.id;
+    const available = Boolean(
+      event.fromAgentId &&
+      event.toAgentId &&
+      db.prepare("SELECT id FROM agents WHERE id = ?").get(event.fromAgentId) &&
+      db.prepare("SELECT id FROM agents WHERE id = ?").get(event.toAgentId),
+    );
+    const active = applicable(event);
+    const kind = event.kind === "reply" ? "reply" : "request";
+    const reason = retried
+      ? "This attempt has already been retried. See the newer message."
+      : !available
+        ? "An agent in this exchange is no longer available."
+        : !active
+          ? "This request is no longer active."
+          : event.delivery === "interrupted"
+            ? kind === "reply"
+              ? "Paws restarted before the reply was delivered."
+              : "Paws restarted before this request finished. No reply was received."
+            : (event.error ?? "The agent could not finish this request.");
+
+    return {
+      eventId: event.id,
+      kind,
+      reason,
+      canRetry:
+        !retried &&
+        available &&
+        active &&
+        ["failed", "interrupted"].includes(event.delivery),
+      retried,
+    };
+  }
+
   const origin = (
     event: TeamEvent,
     direction: PeerMessageOrigin["direction"],
@@ -158,6 +209,7 @@ export function makeTeamworkService(
     kind: event.kind,
     direction,
     delivery: event.delivery,
+    recovery: recovery(event),
   });
 
   function trace(event: TeamEvent) {
@@ -166,7 +218,7 @@ export function makeTeamworkService(
     try {
       main.append(
         event.fromAgentId,
-        event.error ?? event.text,
+        event.text,
         undefined,
         origin(event, "sent"),
         event.attachments,
@@ -175,7 +227,7 @@ export function makeTeamworkService(
       if (!event.returnToConversationId)
         main.append(
           event.toAgentId,
-          event.error ?? event.text,
+          event.text,
           undefined,
           origin(event, "received"),
           ["running", "delivered"].includes(event.delivery)
@@ -191,7 +243,7 @@ export function makeTeamworkService(
       )
         main.append(
           task.createdBy,
-          event.error ?? event.text,
+          event.text,
           undefined,
           origin(event, "received"),
         );
@@ -271,13 +323,19 @@ export function makeTeamworkService(
     ) {
       writeEvent({ ...event, delivery: "delivered", error: undefined });
       trace(findEvent(event.id));
-    } else if (event.delivery === "running")
+    } else if (event.delivery === "running") {
       writeEvent({
         ...event,
         delivery: "interrupted",
         error:
-          "Server stopped during execution. Inspect the conversation before retrying.",
+          "Paws restarted before this request finished. No reply was received.",
       });
+
+      trace(findEvent(event.id));
+    } else if (["failed", "interrupted", "skipped"].includes(event.delivery)) {
+      // Older conversations need recovery controls too, without replaying any work.
+      trace(event);
+    }
   }
 
   async function deliver(event: TeamEvent) {
@@ -762,9 +820,10 @@ export function makeTeamworkService(
       )
         continue;
 
-      const reply = messages.find(
+      const response = messages.find(
         (event) => event.replyToMessageId === request.id,
       );
+      const reply = response && latestAttempt(response);
       const status =
         reply && (reply.delivery === "delivered" || replyReceived(reply))
           ? "done"
@@ -788,6 +847,11 @@ export function makeTeamworkService(
         batchId:
           request.originRequestId ?? request.originConversationId ?? request.id,
         status,
+        recovery: recovery(
+          reply && ["failed", "interrupted"].includes(reply.delivery)
+            ? reply
+            : request,
+        ),
       });
     }
 
@@ -1174,7 +1238,11 @@ export function makeTeamworkService(
           }
 
           for (const event of events()) {
-            if (!previousIds.has(event.id)) trace(event);
+            if (!previousIds.has(event.id)) {
+              trace(event);
+
+              if (event.retryOf) trace(findEvent(event.retryOf));
+            }
           }
 
           onChange();

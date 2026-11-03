@@ -1428,13 +1428,14 @@ export function makeChatService(
       const previous = current.conversation.messages.find(
         (message) => message.id === messageId,
       );
+      const files = attachments ?? previous?.attachments;
       const message: ChatMessage = {
         id: messageId,
         role: "assistant",
         text,
         ...(routine ? { routine } : {}),
         ...(peer ? { peer } : {}),
-        ...(attachments?.length ? { attachments } : {}),
+        ...(files?.length ? { attachments: files } : {}),
         createdAt: previous?.createdAt ?? new Date().toISOString(),
       };
       persist({

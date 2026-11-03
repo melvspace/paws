@@ -86,6 +86,15 @@ export const ChatHandoff = Schema.Struct({
   status: Schema.Literals(["pending", "completed", "failed"]),
 });
 export type ChatHandoff = typeof ChatHandoff.Type;
+export const PeerMessageRecovery = Schema.Struct({
+  eventId: Schema.String,
+  kind: Schema.Literals(["request", "reply"]),
+  reason: Schema.String,
+  canRetry: Schema.Boolean,
+  retried: Schema.Boolean,
+});
+export type PeerMessageRecovery = typeof PeerMessageRecovery.Type;
+
 export const PeerMessageOrigin = Schema.Struct({
   eventId: Schema.String,
   expectsReply: Schema.optional(Schema.Boolean),
@@ -99,6 +108,7 @@ export const PeerMessageOrigin = Schema.Struct({
   kind: Schema.String,
   direction: Schema.Literals(["sent", "received"]),
   delivery: Schema.String,
+  recovery: Schema.optional(PeerMessageRecovery),
 });
 export type PeerMessageOrigin = typeof PeerMessageOrigin.Type;
 
