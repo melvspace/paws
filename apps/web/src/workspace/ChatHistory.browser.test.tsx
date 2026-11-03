@@ -530,9 +530,9 @@ it("renders saved handoffs between messages and previews provider changes withou
     )
     .toBeVisible();
   const divider = document.querySelector(".chat-handoff")!;
-  expect(divider.previousElementSibling?.textContent).toContain(
-    "Earlier answer",
-  );
+  expect(
+    divider.closest(".chat-message-row")?.previousElementSibling?.textContent,
+  ).toContain("Earlier answer");
   expect(divider.nextElementSibling?.textContent).toContain("Continue");
   expect(document.querySelectorAll("article.chat-message")).toHaveLength(3);
   expect(divider.getBoundingClientRect().width).toBeLessThanOrEqual(360);
@@ -931,3 +931,451 @@ it("cleans up earlier inline routine prefixes for display without rewriting hist
   );
   expect(conversation.messages[0]?.text).toBe(original);
 });
+
+it("loads earlier turns on upward scroll and preserves the visible message in a virtualized history", async () => {
+  const messages = Array.from({ length: 200 }, (_, index) => ({
+    id: `message-${index}`,
+    role: "user" as const,
+    text: `History message ${index}`,
+    createdAt: "2026-01-01T12:00:00Z",
+  }));
+
+  function Harness() {
+    const [loaded, setLoaded] = useState(false);
+    const [loading, setLoading] = useState(false);
+
+    return (
+      <div
+        style={{
+          height: 400,
+          width: 600,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <style>{".chat-history { height: 400px; overflow-y: auto; }"}</style>
+        <ChatHistory
+          conversation={{
+            ...initial,
+            messages: loaded ? messages : messages.slice(100),
+            historyCursor: loaded ? null : "older",
+          }}
+          busy={false}
+          error={null}
+          onReply={async () => true}
+          historyLoading={loading}
+          onLoadEarlier={async () => {
+            setLoading(true);
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            setLoaded(true);
+            setLoading(false);
+          }}
+        />
+      </div>
+    );
+  }
+
+  await using _screen = await render(<Harness />);
+  await expect
+    .element(page.getByText("History message 199", { exact: true }))
+    .toBeVisible();
+  expect(document.querySelectorAll("[data-message-id]").length).toBeLessThan(
+    40,
+  );
+  const element = document.querySelector<HTMLElement>(".chat-history")!;
+  element.scrollTop = 200;
+  element.dispatchEvent(new Event("scroll"));
+  const rowTop = () =>
+    document
+      .querySelector('[data-message-id="message-100"]')
+      ?.getBoundingClientRect().top;
+  await expect.poll(() => rowTop()).toBeDefined();
+  const before = rowTop()! + element.scrollTop;
+  element.scrollTop = 0;
+  element.dispatchEvent(new Event("scroll"));
+  await expect
+    .poll(
+      () =>
+        document.querySelector<HTMLElement>('[data-message-id="message-100"]')
+          ?.dataset.index,
+    )
+    .toBe("101");
+  await expect
+    .element(page.getByText("Loading earlier turns…"))
+    .not.toBeInTheDocument();
+  await expect
+    .poll(() => Math.abs((rowTop() ?? Infinity) - before))
+    .toBeLessThan(3);
+  expect(document.querySelectorAll("[data-message-id]").length).toBeLessThan(
+    40,
+  );
+});
+
+it("avoids duplicate scroll loads and lets the reader retry a failed history request", async () => {
+  let requests = 0;
+  let finish = () => {};
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+
+  function Harness() {
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [cursor, setCursor] = useState<string | null>("older");
+
+    return (
+      <div style={{ height: 400, width: 600 }}>
+        <style>{".chat-history { height: 400px; overflow-y: auto; }"}</style>
+        <ChatHistory
+          conversation={{
+            ...initial,
+            historyCursor: cursor,
+            messages: Array.from({ length: 30 }, (_, index) => ({
+              id: String(index),
+              role: "user",
+              text: `Message ${index}`,
+              createdAt: "2026-01-01",
+            })),
+          }}
+          busy={false}
+          error={null}
+          onReply={async () => true}
+          historyLoading={loading}
+          historyError={error}
+          onLoadEarlier={async () => {
+            requests += 1;
+            setLoading(true);
+            setError(null);
+
+            if (requests === 1) {
+              await pending;
+              setError("Could not load earlier turns.");
+            } else {
+              setCursor(null);
+            }
+
+            setLoading(false);
+          }}
+        />
+      </div>
+    );
+  }
+
+  await using _screen = await render(<Harness />);
+  const element = document.querySelector<HTMLElement>(".chat-history")!;
+  expect(requests).toBe(0);
+  element.scrollTop = 100;
+  element.dispatchEvent(new Event("scroll"));
+  await expect.element(page.getByText("Loading earlier turns…")).toBeVisible();
+  element.scrollTop = 50;
+  element.dispatchEvent(new Event("scroll"));
+  expect(requests).toBe(1);
+  finish();
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("Could not load earlier turns.");
+  element.scrollTop = 0;
+  element.dispatchEvent(new Event("scroll"));
+  expect(requests).toBe(1);
+  await page
+    .getByRole("button", { name: "Retry loading earlier turns" })
+    .click();
+  await expect.poll(() => requests).toBe(2);
+  await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+  element.scrollTop = 100;
+  element.dispatchEvent(new Event("scroll"));
+  element.scrollTop = 0;
+  element.dispatchEvent(new Event("scroll"));
+  expect(requests).toBe(2);
+});
+
+it("keeps the reading position stable while an earlier-history request is pending", async () => {
+  let finish = () => {};
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+
+  function Harness() {
+    const [loading, setLoading] = useState(false);
+
+    return (
+      <div style={{ height: 400, width: 600 }}>
+        <style>{".chat-history { height: 400px; overflow-y: auto; }"}</style>
+        <ChatHistory
+          conversation={{
+            ...initial,
+            historyCursor: "older",
+            messages: Array.from({ length: 30 }, (_, index) => ({
+              id: `stable-${index}`,
+              role: "user",
+              text: `Reading message ${index}`,
+              createdAt: "2026-01-01",
+            })),
+          }}
+          busy={false}
+          error={null}
+          onReply={async () => true}
+          historyLoading={loading}
+          onLoadEarlier={async () => {
+            setLoading(true);
+            await pending;
+            setLoading(false);
+          }}
+        />
+      </div>
+    );
+  }
+
+  await using _screen = await render(<Harness />);
+  const element = document.querySelector<HTMLElement>(".chat-history")!;
+  element.scrollTop = 200;
+  element.dispatchEvent(new Event("scroll"));
+  await expect
+    .poll(() => document.querySelector('[data-message-id="stable-2"]'))
+    .not.toBeNull();
+  element.scrollTop = 100;
+  const row = document.querySelector('[data-message-id="stable-2"]')!;
+  const before = row.getBoundingClientRect().top;
+  element.dispatchEvent(new Event("scroll"));
+
+  try {
+    await expect
+      .element(page.getByText("Loading earlier turns…"))
+      .toBeVisible();
+    expect(Math.abs(row.getBoundingClientRect().top - before)).toBeLessThan(3);
+  } finally {
+    finish();
+  }
+});
+
+it.each([40, 100])(
+  "preserves the latest reading position throughout prepend frames with %i existing rows",
+  async (count) => {
+    let finish = () => {};
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const messages = Array.from({ length: count + 50 }, (_, index) => ({
+      id: `variable-${index}`,
+      role: "user" as const,
+      text: Array.from(
+        { length: (index % 7) + 1 },
+        () => `Message ${index} has variable height.`,
+      ).join("\n"),
+      createdAt: "2026-01-01",
+    }));
+
+    function Harness() {
+      const [loading, setLoading] = useState(false);
+      const [loaded, setLoaded] = useState(false);
+
+      return (
+        <div style={{ height: 400, width: 600 }}>
+          <style>{".chat-history { height: 400px; overflow-y: auto; }"}</style>
+          <ChatHistory
+            conversation={{
+              ...initial,
+              messages: loaded ? messages : messages.slice(50),
+              historyCursor: loaded ? null : "older",
+            }}
+            busy={false}
+            error={null}
+            onReply={async () => true}
+            historyLoading={loading}
+            onLoadEarlier={async () => {
+              setLoading(true);
+              await pending;
+              setLoaded(true);
+              setLoading(false);
+            }}
+          />
+        </div>
+      );
+    }
+
+    await using _screen = await render(<Harness />);
+    const element = document.querySelector<HTMLElement>(".chat-history")!;
+    element.scrollTop = 200;
+    element.dispatchEvent(new Event("scroll"));
+    await expect
+      .poll(() => document.querySelector('[data-message-id="variable-50"]'))
+      .not.toBeNull();
+    element.scrollTop = 100;
+    element.dispatchEvent(new Event("scroll"));
+    await expect
+      .element(page.getByText("Loading earlier turns…"))
+      .toBeVisible();
+    element.scrollTop = 50;
+    element.dispatchEvent(new Event("scroll"));
+    const row = Array.from(
+      element.querySelectorAll<HTMLElement>("[data-message-id]"),
+    ).find(
+      (node) =>
+        node.getBoundingClientRect().bottom >
+        element.getBoundingClientRect().top,
+    )!;
+    const id = row.dataset.messageId!;
+    const before = row.getBoundingClientRect().top;
+    const positions: number[] = [];
+    finish();
+
+    for (let frame = 0; frame < 12; frame += 1) {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+      const current = document.querySelector(`[data-message-id="${id}"]`);
+      positions.push(current ? current.getBoundingClientRect().top : Infinity);
+    }
+
+    expect(
+      Math.max(...positions.map((position) => Math.abs(position - before))),
+    ).toBeLessThan(3);
+  },
+);
+
+it("keeps visible message content fixed when a prepend joins the same calendar day", async () => {
+  let finish = () => {};
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const messages = Array.from({ length: 100 }, (_, index) => ({
+    id: `day-${index}`,
+    role: "user" as const,
+    text: `Message ${index}\n`.repeat(20),
+    createdAt: "2026-01-01T12:00:00Z",
+  }));
+
+  function Harness() {
+    const [loading, setLoading] = useState(false);
+    const [loaded, setLoaded] = useState(false);
+
+    return (
+      <div style={{ height: 400, width: 600 }}>
+        <style>{".chat-history { height: 400px; overflow-y: auto; }"}</style>
+        <ChatHistory
+          conversation={{
+            ...initial,
+            messages: loaded ? messages : messages.slice(50),
+            historyCursor: loaded ? null : "older",
+          }}
+          busy={false}
+          error={null}
+          onReply={async () => true}
+          historyLoading={loading}
+          onLoadEarlier={async () => {
+            setLoading(true);
+            await pending;
+            setLoaded(true);
+            setLoading(false);
+          }}
+        />
+      </div>
+    );
+  }
+
+  await using _screen = await render(<Harness />);
+  const element = document.querySelector<HTMLElement>(".chat-history")!;
+  element.scrollTop = 200;
+  element.dispatchEvent(new Event("scroll"));
+  const bubble = () =>
+    document.querySelector('[data-message-id="day-50"] .chat-message-bubble');
+  await expect.poll(bubble).not.toBeNull();
+  element.scrollTop = 100;
+  element.dispatchEvent(new Event("scroll"));
+  await expect.element(page.getByText("Loading earlier turns…")).toBeVisible();
+  const before = bubble()!.getBoundingClientRect().top;
+  finish();
+  const movement: number[] = [];
+
+  for (let frame = 0; frame < 12; frame += 1) {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+    movement.push(
+      Math.abs((bubble()?.getBoundingClientRect().top ?? Infinity) - before),
+    );
+  }
+
+  expect(Math.max(...movement)).toBeLessThan(1);
+});
+
+it.each([12, 24, 48])(
+  "does not jitter while scrolling through newly loaded rows at %i pixels per frame",
+  async (step) => {
+    const messages = Array.from({ length: 130 }, (_, index) => ({
+      id: `moving-${index}`,
+      role: "user" as const,
+      text: `Content ${index}\n`.repeat((index % 13) + 1),
+      createdAt: "2026-01-01T12:00:00Z",
+    }));
+
+    function Harness() {
+      const [loading, setLoading] = useState(false);
+      const [loaded, setLoaded] = useState(false);
+
+      return (
+        <div style={{ height: 400, width: 600 }}>
+          <style>{".chat-history { height: 400px; overflow-y: auto; }"}</style>
+          <ChatHistory
+            conversation={{
+              ...initial,
+              messages: loaded ? messages : messages.slice(50),
+              historyCursor: loaded ? null : "older",
+            }}
+            busy={false}
+            error={null}
+            onReply={async () => true}
+            historyLoading={loading}
+            onLoadEarlier={async () => {
+              setLoading(true);
+              await new Promise<void>((resolve) =>
+                requestAnimationFrame(() =>
+                  requestAnimationFrame(() => resolve()),
+                ),
+              );
+              setLoaded(true);
+              setLoading(false);
+            }}
+          />
+        </div>
+      );
+    }
+
+    await using _screen = await render(<Harness />);
+    const element = document.querySelector<HTMLElement>(".chat-history")!;
+    element.scrollTop = 300;
+    element.dispatchEvent(new Event("scroll"));
+    await expect
+      .poll(() => document.querySelector('[data-message-id="moving-50"]'))
+      .not.toBeNull();
+    const movements: number[] = [];
+
+    for (let frame = 0; frame < 60; frame += 1) {
+      const row = Array.from(
+        element.querySelectorAll<HTMLElement>("[data-message-id]"),
+      ).find(
+        (node) =>
+          node.getBoundingClientRect().bottom >
+          element.getBoundingClientRect().top,
+      )!;
+      const bubble = row.querySelector(".chat-message-bubble")!;
+      const before = bubble.getBoundingClientRect().top;
+      const previousScroll = element.scrollTop;
+      element.scrollTop -= step;
+      const distance = previousScroll - element.scrollTop;
+      element.dispatchEvent(new Event("scroll"));
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+      const current = document.querySelector(
+        `[data-message-id="${row.dataset.messageId}"] .chat-message-bubble`,
+      );
+      const jitter = Math.abs(
+        (current?.getBoundingClientRect().top ?? Infinity) - before - distance,
+      );
+      movements.push(jitter);
+    }
+
+    expect(Math.max(...movements)).toBeLessThan(1);
+  },
+);

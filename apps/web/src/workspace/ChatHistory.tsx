@@ -1,10 +1,5 @@
-import {
-  Fragment,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react";
+import { elementScroll, useVirtualizer } from "@tanstack/react-virtual";
+import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { Form } from "@base-ui/react/form";
 import { Select } from "@base-ui/react/select";
 import { Bot, CheckIcon, ClockIcon, ChevronDownIcon } from "lucide-react";
@@ -32,6 +27,14 @@ import { ChatRecovery } from "./ChatRecovery.tsx";
 import { SecretRequestForm } from "./SecretRequestForm.tsx";
 
 type Reply = NonNullable<SendChat["reply"]>;
+
+type TimelineRow =
+  | {
+      kind: "day";
+      key: string;
+      time: NonNullable<ReturnType<typeof messageTime>>;
+    }
+  | { kind: "message"; key: string; messageIndex: number };
 
 function toolProgress(activity: NonNullable<Conversation["toolActivity"]>) {
   const labels: Record<string, string> = {
@@ -255,8 +258,14 @@ export function ChatHistory({
   onRestoreDraft,
   providers = [],
   outgoing = {},
+  onLoadEarlier,
+  historyLoading = false,
+  historyError = null,
   onRetryMessage,
 }: {
+  onLoadEarlier?: () => Promise<void>;
+  historyLoading?: boolean;
+  historyError?: string | null;
   outgoing?: Readonly<Record<string, "sending" | "failed">>;
   onRetryMessage?: (id: string) => Promise<boolean>;
   onQueueUpdate?: (action: ChatQueueAction) => Promise<boolean>;
@@ -284,6 +293,121 @@ export function ChatHistory({
       !heldIds.has(message.id),
   );
   const times = messages.map((message) => messageTime(message.createdAt));
+  const rows = messages.flatMap((message, index): TimelineRow[] => {
+    const time = times[index];
+    const row: TimelineRow = {
+      kind: "message",
+      key: `message:${message.id}`,
+      messageIndex: index,
+    };
+
+    if (
+      time &&
+      time.day !== times[index - 1]?.day &&
+      (index > 0 || !conversation?.historyCursor)
+    )
+      return [{ kind: "day", key: `day:${message.id}`, time }, row];
+
+    return [row];
+  });
+
+  const list = useRef<HTMLDivElement>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
+  // Keep paginated chats virtual from their first page; prepends must not switch layouts.
+  const virtual =
+    messages.length > 60 || conversation?.historyCursor !== undefined;
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => history.current,
+    getItemKey: (index) => rows[index]!.key,
+    estimateSize: (index) => (rows[index]?.kind === "day" ? 54 : 160),
+    overscan: 8,
+    enabled: virtual,
+    scrollMargin,
+    anchorTo: "end",
+    scrollToFn: (offset, options, instance) => {
+      // Native scroll events from compensation must not replace the reading anchor.
+      const result = elementScroll(offset, options, instance);
+      scrollTop.current = history.current?.scrollTop ?? 0;
+
+      return result;
+    },
+  });
+
+  const readingAnchor = useRef<string | null>(null);
+
+  // Adjust only rows before the message actually visible in the DOM. An
+  // estimate can put a tall, partially visible message above the virtual range.
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (
+    item,
+    _delta,
+    instance,
+  ) => {
+    const anchorIndex = rows.findIndex(
+      (row) => row.key === readingAnchor.current,
+    );
+
+    return anchorIndex >= 0
+      ? item.index < anchorIndex
+      : item.end <= (instance.scrollOffset ?? 0);
+  };
+
+  function rememberReadingAnchor(element: HTMLDivElement) {
+    const top = element.getBoundingClientRect().top;
+    const row = Array.from(
+      element.querySelectorAll<HTMLElement>("[data-message-id]"),
+    ).find((node) => node.getBoundingClientRect().bottom > top);
+    readingAnchor.current = row ? `message:${row.dataset.messageId}` : null;
+  }
+
+  const loadingEarlier = useRef(false);
+
+  useLayoutEffect(() => {
+    const element = history.current;
+    const content = list.current;
+
+    if (!element || !content) return;
+
+    const updateMargin = () =>
+      setScrollMargin(
+        content.getBoundingClientRect().top -
+          element.getBoundingClientRect().top +
+          element.scrollTop,
+      );
+    const observer = new ResizeObserver(updateMargin);
+    observer.observe(element);
+    updateMargin();
+
+    return () => observer.disconnect();
+  }, [historyLoading, historyError, conversation?.historyCursor]);
+
+  async function loadEarlier() {
+    if (
+      !conversation?.historyCursor ||
+      !onLoadEarlier ||
+      historyLoading ||
+      loadingEarlier.current
+    )
+      return;
+
+    loadingEarlier.current = true;
+
+    if (history.current) rememberReadingAnchor(history.current);
+
+    follow.current = false;
+
+    try {
+      await onLoadEarlier();
+    } finally {
+      loadingEarlier.current = false;
+    }
+  }
+
+  const rendered = virtual
+    ? virtualizer
+        .getVirtualItems()
+        .map((item) => ({ index: item.index, start: item.start }))
+    : rows.map((_, index) => ({ index, start: 0 }));
   const running = conversation?.status === "running";
   const failure = error ?? conversation?.error;
   const handoffs = handoffPresentation(
@@ -386,10 +510,15 @@ export function ChatHistory({
 
         // A delayed programmatic scroll event must not unpin a resized history.
         if (element.scrollTop !== scrollTop.current) {
+          rememberReadingAnchor(element);
+          const scrollingUp = element.scrollTop < scrollTop.current;
           follow.current =
             element.scrollHeight - element.scrollTop - element.clientHeight <
             100;
           scrollTop.current = element.scrollTop;
+
+          if (scrollingUp && element.scrollTop < 160 && !historyError)
+            void loadEarlier();
         }
       }}
     >
@@ -403,6 +532,24 @@ export function ChatHistory({
           <p>No messages</p>
         </div>
       ) : null}
+      {conversation?.historyCursor &&
+        onLoadEarlier &&
+        (historyLoading || historyError) && (
+          <div className="chat-history-controls">
+            <div>
+              {historyLoading ? (
+                <p role="status">Loading earlier turns…</p>
+              ) : (
+                <>
+                  <p role="alert">{historyError}</p>
+                  <Button variant="ghost" onClick={() => void loadEarlier()}>
+                    Retry loading earlier turns
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       <div
         className="chat-message-list"
         role="log"
@@ -410,161 +557,201 @@ export function ChatHistory({
         aria-live="polite"
         aria-relevant="additions"
       >
-        {messages.map((message, index) => {
-          // Earlier routine deliveries included this harness-owned prefix in text.
-          // Present those records cleanly without changing their stored history.
-          const legacyOrigin =
-            message.role === "assistant" && !message.routine
-              ? /^([^\n]{1,80}) · \[Open run\]\(#routine\/([a-f0-9-]{36})\/([a-f0-9-]{36})\)\n/.exec(
-                  message.text,
-                )
-              : null;
-          const legacy =
-            legacyOrigin?.[2] === conversation?.agentId ? legacyOrigin : null;
-          const origin =
-            message.routine ??
-            (legacy ? { name: legacy[1]!, runId: legacy[3]! } : undefined);
-          const messageText = legacy
-            ? message.text.slice(legacy[0].length)
-            : message.text;
+        <div
+          ref={list}
+          className="chat-message-window"
+          style={
+            virtual
+              ? { height: virtualizer.getTotalSize(), position: "relative" }
+              : undefined
+          }
+        >
+          {rendered.map(({ index: rowIndex, start }) => {
+            const row = rows[rowIndex]!;
+            const style: CSSProperties | undefined = virtual
+              ? {
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${start - scrollMargin}px)`,
+                }
+              : undefined;
 
-          const time = times[index];
-          const startsDay = time && time.day !== times[index - 1]?.day;
-          const sending = outgoing[message.id] === "sending";
-          const deliveryLabel = sending
-            ? "Sending"
-            : message.delivery === "queued"
-              ? "Queued"
-              : message.delivery === "steered"
-                ? "Sent to active turn"
-                : message.delivery === "failed"
-                  ? "Delivery could not be confirmed"
-                  : message.delivery === "cancelled"
-                    ? "Cancelled"
-                    : "Sent";
-          const timestamp = time ? (
-            <span className="chat-message-meta">
-              <time
-                className="chat-message-time"
-                dateTime={time.dateTime}
-                title={time.fullLabel}
-                aria-label={time.fullLabel}
-              >
-                {time.label}
-              </time>
-              {message.role === "user" && (
-                <span
-                  className="chat-message-send-state"
-                  role="status"
-                  aria-label={deliveryLabel}
-                  title={deliveryLabel}
-                >
-                  {sending || message.delivery === "queued" ? (
-                    <ClockIcon aria-hidden />
-                  ) : message.delivery === "failed" ||
-                    message.delivery === "cancelled" ? null : (
-                    <CheckIcon aria-hidden />
-                  )}
-                </span>
-              )}
-            </span>
-          ) : null;
-
-          return (
-            <Fragment key={message.id}>
-              {startsDay && (
-                <div className="chat-date-separator">
-                  <time dateTime={time.day}>{time.dayLabel}</time>
-                </div>
-              )}
-              {anchoredHandoffs.get(message.id)?.map((handoff) => (
-                <ContextHandoff
-                  key={handoff.id}
-                  handoff={handoff}
-                  providers={providers}
-                />
-              ))}
-              <article
-                className="chat-message"
-                data-role={message.role}
-                aria-label={message.role === "user" ? "You" : "Agent"}
-              >
+            if (row.kind === "day") {
+              return (
                 <div
-                  className="chat-message-bubble"
-                  data-inline-time={
-                    time && !message.attachments?.length && !message.card
-                      ? ""
-                      : undefined
-                  }
-                  style={
-                    time
-                      ? ({
-                          "--message-time-label": JSON.stringify(time.label),
-                        } as CSSProperties)
-                      : undefined
-                  }
+                  key={row.key}
+                  data-index={rowIndex}
+                  ref={virtual ? virtualizer.measureElement : undefined}
+                  className="chat-date-row"
+                  style={style}
                 >
-                  {origin && (
-                    <span className="chat-routine-origin">
-                      <ClockIcon aria-hidden size={12} />
-                      <span>{origin.name}</span>
-                    </span>
-                  )}
-                  {message.role === "assistant" ? (
-                    <MessageMarkdown text={messageText} />
-                  ) : message.text ? (
-                    <p>{message.text}</p>
-                  ) : null}
-                  {(message.delivery === "failed" ||
-                    message.delivery === "cancelled") && (
-                    <span className="chat-message-delivery" role="status">
-                      {
+                  <div className="chat-date-separator">
+                    <time dateTime={row.time.day}>{row.time.dayLabel}</time>
+                  </div>
+                </div>
+              );
+            }
+
+            const index = row.messageIndex;
+            const message = messages[index]!;
+            // Earlier routine deliveries included this harness-owned prefix in text.
+            // Present those records cleanly without changing their stored history.
+            const legacyOrigin =
+              message.role === "assistant" && !message.routine
+                ? /^([^\n]{1,80}) · \[Open run\]\(#routine\/([a-f0-9-]{36})\/([a-f0-9-]{36})\)\n/.exec(
+                    message.text,
+                  )
+                : null;
+            const legacy =
+              legacyOrigin?.[2] === conversation?.agentId ? legacyOrigin : null;
+            const origin =
+              message.routine ??
+              (legacy ? { name: legacy[1]!, runId: legacy[3]! } : undefined);
+            const messageText = legacy
+              ? message.text.slice(legacy[0].length)
+              : message.text;
+
+            const time = times[index];
+            const sending = outgoing[message.id] === "sending";
+            const deliveryLabel = sending
+              ? "Sending"
+              : message.delivery === "queued"
+                ? "Queued"
+                : message.delivery === "steered"
+                  ? "Sent to active turn"
+                  : message.delivery === "failed"
+                    ? "Delivery could not be confirmed"
+                    : message.delivery === "cancelled"
+                      ? "Cancelled"
+                      : "Sent";
+            const timestamp = time ? (
+              <span className="chat-message-meta">
+                <time
+                  className="chat-message-time"
+                  dateTime={time.dateTime}
+                  title={time.fullLabel}
+                  aria-label={time.fullLabel}
+                >
+                  {time.label}
+                </time>
+                {message.role === "user" && (
+                  <span
+                    className="chat-message-send-state"
+                    role="status"
+                    aria-label={deliveryLabel}
+                    title={deliveryLabel}
+                  >
+                    {sending || message.delivery === "queued" ? (
+                      <ClockIcon aria-hidden />
+                    ) : message.delivery === "failed" ||
+                      message.delivery === "cancelled" ? null : (
+                      <CheckIcon aria-hidden />
+                    )}
+                  </span>
+                )}
+              </span>
+            ) : null;
+
+            return (
+              <div
+                key={row.key}
+                data-index={rowIndex}
+                data-message-id={message.id}
+                ref={virtual ? virtualizer.measureElement : undefined}
+                className="chat-message-row"
+                style={style}
+              >
+                {anchoredHandoffs.get(message.id)?.map((handoff) => (
+                  <ContextHandoff
+                    key={handoff.id}
+                    handoff={handoff}
+                    providers={providers}
+                  />
+                ))}
+                <article
+                  className="chat-message"
+                  data-role={message.role}
+                  aria-label={message.role === "user" ? "You" : "Agent"}
+                >
+                  <div
+                    className="chat-message-bubble"
+                    data-inline-time={
+                      time && !message.attachments?.length && !message.card
+                        ? ""
+                        : undefined
+                    }
+                    style={
+                      time
+                        ? ({
+                            "--message-time-label": JSON.stringify(time.label),
+                          } as CSSProperties)
+                        : undefined
+                    }
+                  >
+                    {origin && (
+                      <span className="chat-routine-origin">
+                        <ClockIcon aria-hidden size={12} />
+                        <span>{origin.name}</span>
+                      </span>
+                    )}
+                    {message.role === "assistant" ? (
+                      <MessageMarkdown text={messageText} />
+                    ) : message.text ? (
+                      <p>{message.text}</p>
+                    ) : null}
+                    {(message.delivery === "failed" ||
+                      message.delivery === "cancelled") && (
+                      <span className="chat-message-delivery" role="status">
                         {
-                          failed: "Delivery could not be confirmed",
-                          cancelled: "Cancelled",
-                        }[message.delivery]
-                      }
-                    </span>
-                  )}
-                  {outgoing[message.id] === "failed" && onRetryMessage && (
-                    <Button
-                      variant="ghost"
-                      className="chat-reuse-message"
-                      disabled={busy}
-                      onClick={() => void onRetryMessage(message.id)}
-                    >
-                      Retry message
-                    </Button>
-                  )}
-                  {message.role === "user" &&
-                    message.delivery === "cancelled" &&
-                    onRestoreDraft && (
+                          {
+                            failed: "Delivery could not be confirmed",
+                            cancelled: "Cancelled",
+                          }[message.delivery]
+                        }
+                      </span>
+                    )}
+                    {outgoing[message.id] === "failed" && onRetryMessage && (
                       <Button
                         variant="ghost"
                         className="chat-reuse-message"
-                        onClick={() => onRestoreDraft(message.text)}
+                        disabled={busy}
+                        onClick={() => void onRetryMessage(message.id)}
                       >
-                        Use as draft
+                        Retry message
                       </Button>
                     )}
-                  {message.attachments?.map((attachment) => (
-                    <MessageAttachment
-                      key={attachment.id}
-                      attachment={attachment}
-                      agentId={conversation!.agentId}
+                    {message.role === "user" &&
+                      message.delivery === "cancelled" &&
+                      onRestoreDraft && (
+                        <Button
+                          variant="ghost"
+                          className="chat-reuse-message"
+                          onClick={() => onRestoreDraft(message.text)}
+                        >
+                          Use as draft
+                        </Button>
+                      )}
+                    {message.attachments?.map((attachment) => (
+                      <MessageAttachment
+                        key={attachment.id}
+                        attachment={attachment}
+                        agentId={conversation!.agentId}
+                      />
+                    ))}
+                    <MessageControls
+                      message={message}
+                      disabled={busy}
+                      onReply={onReply}
                     />
-                  ))}
-                  <MessageControls
-                    message={message}
-                    disabled={busy}
-                    onReply={onReply}
-                  />
-                  {timestamp}
-                </div>
-              </article>
-            </Fragment>
-          );
-        })}
+                    {timestamp}
+                  </div>
+                </article>
+              </div>
+            );
+          })}
+        </div>
         {anchoredHandoffs.get("")?.map((handoff) => (
           <ContextHandoff
             key={handoff.id}

@@ -259,6 +259,9 @@ export function AgentWorkspace({
           )}
           <ChatHistory
             conversation={chat.conversation}
+            onLoadEarlier={chat.loadEarlier}
+            historyLoading={chat.historyLoading}
+            historyError={chat.historyError}
             outgoing={chat.outgoing}
             onRetryMessage={chat.retryMessage}
             providers={providers}

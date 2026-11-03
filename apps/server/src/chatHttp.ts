@@ -1,3 +1,4 @@
+import { chatHistoryPage } from "./chatHistoryPaging.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Effect, Schema } from "effect";
 import { SendChat, ChatQueueAction, MarkChatRead } from "@paws/contracts";
@@ -8,9 +9,10 @@ export async function chatHttp(
   response: ServerResponse,
   chat: ReturnType<typeof makeChatService>,
 ) {
+  const url = new URL(request.url ?? "/", "http://localhost");
   const match =
     /^\/api\/agents\/([^/]+)\/chat(?:\/(stop|compact|continue|queue|read|skills|uploads|attachments\/([a-f0-9]{64})))?$/.exec(
-      request.url ?? "",
+      url.pathname,
     );
 
   if (!match) return false;
@@ -117,7 +119,8 @@ export async function chatHttp(
       if (outcome._tag === "Failure") throw outcome.failure.cause;
 
       result = outcome.success;
-    } else if (request.method === "GET" && !match[2]) result = chat.get(id);
+    } else if (request.method === "GET" && !match[2])
+      result = chat.history(id, url.searchParams.get("before") ?? undefined);
     else if (request.method === "POST" && match[2] === "stop")
       result = await chat.stop(id);
     else if (
@@ -179,7 +182,15 @@ export async function chatHttp(
       throw new ChatError(405, "Method not allowed.");
     }
 
-    response.end(JSON.stringify(result));
+    response.end(
+      JSON.stringify(
+        result &&
+          "messages" in result &&
+          !(request.method === "GET" && !match[2])
+          ? chatHistoryPage(result)
+          : result,
+      ),
+    );
   } catch (error) {
     response.writeHead(error instanceof ChatError ? error.status : 400).end(
       JSON.stringify({

@@ -1,3 +1,5 @@
+import { ChatError } from "./ChatError.ts";
+import { chatHistoryPage } from "./chatHistoryPaging.ts";
 import { agentContext, withMemoryContext } from "./teamContext.ts";
 import { listAgentSkills, withSkillContext } from "./agentSkills.ts";
 import { recoverInterruptedConversation } from "./chatRecovery.ts";
@@ -73,14 +75,7 @@ function withUnreadCount(conversation: Conversation): Conversation {
   };
 }
 
-export class ChatError extends Error {
-  readonly status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
+export { ChatError } from "./ChatError.ts";
 
 export function resolveInteraction(
   messages: readonly ChatMessage[],
@@ -1487,6 +1482,7 @@ export function makeChatService(
       );
     }),
     stop,
+    history: (id: string, cursor?: string) => chatHistoryPage(get(id), cursor),
     list: () =>
       [...states.values()].map((state) => withUnreadCount(state.conversation)),
     async remove(id: string) {

@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   chatRequest,
+  mergeConversation,
+  loadChatHistory,
+  prependChatHistory,
   conversationsAtom,
   outgoingMessagesAtom,
   type OutgoingMessage,
@@ -20,7 +23,10 @@ function receive(next: Conversation) {
 
     if (current && current.revision > next.revision) return items;
 
-    return [...items.filter((item) => item.agentId !== next.agentId), next];
+    return [
+      ...items.filter((item) => item.agentId !== next.agentId),
+      mergeConversation(current, next),
+    ];
   });
 }
 
@@ -81,6 +87,47 @@ export function useConversation(agentId: string) {
       disposed = true;
     };
   }, [agentId]);
+
+  const [historyState, setHistoryState] = useState<{
+    agentId: string;
+    loading: boolean;
+    error: string | null;
+  }>({ agentId, loading: false, error: null });
+  const historyPending = useRef(new Set<string>());
+
+  async function loadEarlier() {
+    const cursor = appAtomRegistry
+      .get(conversationsAtom)
+      .find((item) => item.agentId === agentId)?.historyCursor;
+
+    if (!cursor || historyPending.current.has(agentId)) return;
+
+    historyPending.current.add(agentId);
+    setHistoryState({ agentId, loading: true, error: null });
+
+    try {
+      const page = await loadChatHistory(agentId, cursor);
+      appAtomRegistry.update(conversationsAtom, (items) =>
+        items.map((item) =>
+          item.agentId === agentId
+            ? prependChatHistory(item, page, cursor)
+            : item,
+        ),
+      );
+      setHistoryState({ agentId, loading: false, error: null });
+    } catch (cause) {
+      setHistoryState({
+        agentId,
+        loading: false,
+        error:
+          cause instanceof Error
+            ? cause.message
+            : "Could not load earlier turns. Try again.",
+      });
+    } finally {
+      historyPending.current.delete(agentId);
+    }
+  }
 
   async function send(
     input: Omit<SendChat, "requestId">,
@@ -231,6 +278,9 @@ export function useConversation(agentId: string) {
     outgoing: Object.fromEntries(
       outbox.map((item) => [item.input.requestId, item.status]),
     ),
+    loadEarlier,
+    historyLoading: historyState.agentId === agentId && historyState.loading,
+    historyError: historyState.agentId === agentId ? historyState.error : null,
     retryMessage,
     send,
     stop: () => control("stop"),

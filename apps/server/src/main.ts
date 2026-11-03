@@ -1,3 +1,4 @@
+import { chatHistoryPage } from "./chatHistoryPaging.ts";
 import { makeMemoryService } from "./MemoryService.ts";
 import { memoryHttp } from "./memoryHttp.ts";
 import {
@@ -96,7 +97,9 @@ export function createServer(
       agents: items,
       providers: providers.list(),
       teams: await Effect.runPromise(agents.listTeams()),
-      conversations: chat.list(),
+      conversations: chat
+        .list()
+        .map((conversation) => chatHistoryPage(conversation)),
     }));
   const server = Http.createServer(async (request, response) => {
     response.setHeader("Content-Type", "application/json");

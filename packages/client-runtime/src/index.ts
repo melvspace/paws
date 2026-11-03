@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { conversationsAtom } from "./chat.ts";
+import { conversationsAtom, mergeConversation } from "./chat.ts";
 import { providersAtom } from "./providers.ts";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import {
@@ -38,7 +38,14 @@ export function connectAgents(
           registry.set(agentsAtom, { snapshot, connected: true, error: null });
 
           if (snapshot.conversations)
-            registry.set(conversationsAtom, snapshot.conversations);
+            registry.update(conversationsAtom, (current) =>
+              snapshot.conversations!.map((next) =>
+                mergeConversation(
+                  current.find((item) => item.agentId === next.agentId),
+                  next,
+                ),
+              ),
+            );
 
           if (snapshot.providers) {
             registry.set(providersAtom, {

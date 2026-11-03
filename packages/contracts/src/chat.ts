@@ -177,6 +177,7 @@ export const MarkChatRead = Schema.Struct({
 export type MarkChatRead = typeof MarkChatRead.Type;
 
 export const Conversation = Schema.Struct({
+  historyCursor: Schema.optional(Schema.NullOr(Schema.String)),
   lastReadMessageId: Schema.optional(Schema.String),
   unreadCount: Schema.optional(Schema.Number),
   agentId: Schema.String,

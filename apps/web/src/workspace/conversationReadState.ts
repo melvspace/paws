@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
-import { chatRequest, conversationsAtom } from "@paws/client-runtime";
+import {
+  chatRequest,
+  conversationsAtom,
+  mergeConversation,
+} from "@paws/client-runtime";
 import type { Conversation } from "@paws/contracts";
 import { appAtomRegistry } from "../lib/atomRegistry.ts";
 
@@ -40,7 +44,10 @@ export function useMarkConversationRead(
 
           if (current && current.revision > next.revision) return items;
 
-          return [...items.filter((item) => item.agentId !== agentId), next];
+          return [
+            ...items.filter((item) => item.agentId !== agentId),
+            mergeConversation(current, next),
+          ];
         });
 
         if (!disposed) setError(null);

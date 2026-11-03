@@ -720,3 +720,30 @@
 .chat-routine-origin svg {
   flex-shrink: 0;
 }
+
+.chat-message-row {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 14px;
+}
+.chat-history-controls {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 0;
+  max-width: var(--chat-content-max-width);
+  margin: 0 auto;
+  text-align: center;
+}
+.chat-history-controls > div {
+  position: absolute;
+  top: 0;
+  width: 100%;
+  background: var(--background);
+}
+
+.chat-date-row {
+  display: flow-root;
+  padding-bottom: 14px;
+}
