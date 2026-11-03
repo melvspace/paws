@@ -27,10 +27,13 @@ export interface ChatAttachmentFile {
 export interface ChatTurn {
   workspace?: string;
   home?: string;
+  teamworkTool?(input: unknown): Promise<unknown>;
+  agentTool?(input: unknown): Promise<unknown>;
   routineTool?(input: unknown): Promise<unknown>;
   memoryTool?(input: unknown): Promise<unknown>;
   teamTool?(input: unknown): Promise<unknown>;
   conversationId?: string;
+  requestId?: string;
   onExecutionStart?(): void;
   agentId: string;
   agentName: string;

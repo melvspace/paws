@@ -155,3 +155,45 @@ it("flushes edits made during an autosave before dismissing the dialog", async (
     fetchMock.mockRestore();
   }
 });
+
+it("autosaves role and description edits on blur and flushes them before dismissal", async () => {
+  const agent = {
+    id: "specialist",
+    name: "Reviewer",
+    role: "Reviewer",
+    description: "Checks APIs",
+    provider: "codex",
+    status: "configured",
+    createdAt: "2026-11-03",
+  } as const;
+  const fetchMock = vi
+    .spyOn(window, "fetch")
+    .mockResolvedValue(new Response(null, { status: 204 }));
+  const dismiss = vi.fn();
+
+  try {
+    await using _screen = await render(
+      <AgentDialog agent={agent} connected onDismiss={dismiss} />,
+    );
+    await page
+      .getByRole("textbox", { name: "Role", exact: true })
+      .fill("Release reviewer");
+    await page
+      .getByRole("textbox", { name: "Description", exact: true })
+      .click();
+    await expect.poll(() => fetchMock.mock.calls.length).toBe(1);
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)),
+    ).toMatchObject({ role: "Release reviewer" });
+    await page
+      .getByRole("textbox", { name: "Description", exact: true })
+      .fill("Checks releases and cleanup");
+    await page.getByRole("button", { name: "Close dialog" }).click();
+    await expect.poll(() => dismiss.mock.calls.length).toBe(1);
+    expect(
+      JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body)),
+    ).toMatchObject({ description: "Checks releases and cleanup" });
+  } finally {
+    fetchMock.mockRestore();
+  }
+});

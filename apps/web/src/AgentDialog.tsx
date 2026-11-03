@@ -72,6 +72,8 @@ export function AgentDialog({
     );
   const [draft, setDraft] = useState(() => ({
     name: agent?.name ?? "",
+    role: agent?.role ?? "",
+    description: agent?.description ?? "",
     avatar:
       agent?.avatar ??
       defaultAgentAvatar(agent?.id ?? Math.random().toString(36)),
@@ -80,7 +82,7 @@ export function AgentDialog({
   }));
   const draftRef = useRef(draft);
   const saved = useRef(draft);
-  const { name, avatar, teamId, sandbox } = draft;
+  const { name, role, description, avatar, teamId, sandbox } = draft;
 
   function change(patch: Partial<typeof draft>) {
     draftRef.current = { ...draftRef.current, ...patch };
@@ -126,6 +128,10 @@ export function AgentDialog({
         try {
           await updateAgent(agent.id, {
             name: next.name,
+            ...(next.role !== saved.current.role ? { role: next.role } : {}),
+            ...(next.description !== saved.current.description
+              ? { description: next.description }
+              : {}),
             avatar: next.avatar,
             ...(next.sandbox !== saved.current.sandbox
               ? { sandbox: next.sandbox }
@@ -209,6 +215,8 @@ export function AgentDialog({
     try {
       const created = await createAgent({
         name: name.trim(),
+        ...(role.trim() ? { role: role.trim() } : {}),
+        ...(description.trim() ? { description: description.trim() } : {}),
         avatar,
         teamId,
         sandbox,
@@ -326,6 +334,29 @@ export function AgentDialog({
             />
           </div>
 
+          {(["role", "description"] as const).map((field) => (
+            <div key={field} className={agent ? "settings-row" : undefined}>
+              <label htmlFor={`agent-${field}`}>
+                {field === "role" ? "Role" : "Description"}
+              </label>
+              <Input
+                id={`agent-${field}`}
+                name={field}
+                value={draft[field]}
+                maxLength={field === "role" ? 160 : 2000}
+                disabled={
+                  pending === "delete" ||
+                  (!agent && pending !== null) ||
+                  confirmingDelete
+                }
+                onChange={(event) => change({ [field]: event.target.value })}
+                onBlur={() => {
+                  if (agent && !confirmingDelete && pending !== "delete")
+                    void saveAgent();
+                }}
+              />
+            </div>
+          ))}
           {agent && (
             <div className="settings-row">
               <label htmlFor="agent-team">Team</label>

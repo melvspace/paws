@@ -1,4 +1,8 @@
-import { memoryToolDescription } from "@paws/provider-core";
+import {
+  memoryToolDescription,
+  teamworkToolDescription,
+  agentToolDescription,
+} from "@paws/provider-core";
 import {
   chatInstructions,
   ChatToolError,
@@ -125,6 +129,87 @@ const finishTurnTool = {
     additionalProperties: false,
     properties: { silent: { type: "boolean", enum: [true] } },
     required: ["silent"],
+  },
+};
+const teamworkTool = {
+  type: "function",
+  name: "paws_teamwork",
+  description: teamworkToolDescription,
+  inputSchema: {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: [
+          "list",
+          "message",
+          "delegate",
+          "handoff",
+          "submit",
+          "review",
+          "block",
+          "cancel",
+          "retry",
+          "interrupt",
+        ],
+      },
+      taskId: { type: "string" },
+      eventId: { type: "string" },
+      revision: { type: "integer", minimum: 1 },
+      toAgentId: { type: "string" },
+      toAgentIds: {
+        type: "array",
+        items: { type: "string" },
+        minItems: 1,
+        maxItems: 32,
+      },
+      attachments: {
+        type: "array",
+        maxItems: 4,
+        items: {
+          type: "object",
+          properties: { path: { type: "string" }, name: { type: "string" } },
+          required: ["path"],
+          additionalProperties: false,
+        },
+      },
+      expectsReply: { type: "boolean" },
+      replyToMessageId: { type: "string" },
+      reviewerId: { type: "string" },
+      title: { type: "string" },
+      text: { type: "string" },
+      verdict: { type: "string", enum: ["approve", "request_changes"] },
+    },
+    required: ["action"],
+    additionalProperties: false,
+  },
+};
+const agentTool = {
+  type: "function",
+  name: "paws_agents",
+  description: agentToolDescription,
+  inputSchema: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["read", "create", "update"] },
+      agentId: { type: "string" },
+      name: { type: "string", minLength: 1, maxLength: 80 },
+      role: { type: "string", maxLength: 160 },
+      description: { type: "string", maxLength: 2000 },
+      sandbox: { type: "boolean" },
+      selection: {
+        type: "object",
+        properties: {
+          providerId: { type: "string" },
+          modelId: { type: "string" },
+          options: { type: "object", additionalProperties: { type: "string" } },
+        },
+        required: ["providerId", "modelId", "options"],
+        additionalProperties: false,
+      },
+    },
+    required: ["action"],
+    additionalProperties: false,
   },
 };
 const routineTool = {
@@ -355,6 +440,8 @@ async function runCodexTurnWithConnection(
                           teamTool,
                           memoryTool,
                           routineTool,
+                          teamworkTool,
+                          agentTool,
                           finishTurnTool,
                         ],
                       }),
@@ -606,6 +693,8 @@ async function runCodexTurnWithConnection(
           "paws_mcp",
           "paws_memory",
           "paws_routine",
+          "paws_teamwork",
+          "paws_agents",
           "paws_finish_turn",
         ].includes(call.tool)
       )
@@ -615,7 +704,9 @@ async function runCodexTurnWithConnection(
         if (
           call.tool === "paws_memory" ||
           call.tool === "paws_mcp" ||
-          call.tool === "paws_routine"
+          call.tool === "paws_routine" ||
+          call.tool === "paws_teamwork" ||
+          call.tool === "paws_agents"
         ) {
           turn.signal.throwIfAborted();
           const blocked = turn.onTool?.(call.tool, "running");
@@ -627,11 +718,15 @@ async function runCodexTurnWithConnection(
             };
 
           const execute =
-            call.tool === "paws_routine"
-              ? turn.routineTool
-              : call.tool === "paws_memory"
-                ? turn.memoryTool
-                : turn.teamTool;
+            call.tool === "paws_agents"
+              ? turn.agentTool
+              : call.tool === "paws_teamwork"
+                ? turn.teamworkTool
+                : call.tool === "paws_routine"
+                  ? turn.routineTool
+                  : call.tool === "paws_memory"
+                    ? turn.memoryTool
+                    : turn.teamTool;
 
           if (!execute) throw new Error("Team resource unavailable.");
 
@@ -746,7 +841,9 @@ async function runCodexTurnWithConnection(
         if (
           call.tool === "paws_memory" ||
           call.tool === "paws_mcp" ||
-          call.tool === "paws_routine"
+          call.tool === "paws_routine" ||
+          call.tool === "paws_teamwork" ||
+          call.tool === "paws_agents"
         ) {
           turn.onTool?.(call.tool, "failed");
 

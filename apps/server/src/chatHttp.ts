@@ -1,13 +1,19 @@
 import { chatHistoryPage } from "./chatHistoryPaging.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Effect, Schema } from "effect";
-import { SendChat, ChatQueueAction, MarkChatRead } from "@paws/contracts";
+import {
+  SendChat,
+  ChatQueueAction,
+  MarkChatRead,
+  type Conversation,
+} from "@paws/contracts";
 import { ChatError, type makeChatService } from "./ChatService.ts";
 
 export async function chatHttp(
   request: IncomingMessage,
   response: ServerResponse,
   chat: ReturnType<typeof makeChatService>,
+  respond?: (id: string, input: SendChat) => Promise<Conversation | undefined>,
 ) {
   const url = new URL(request.url ?? "/", "http://localhost");
   const match =
@@ -171,7 +177,20 @@ export async function chatHttp(
                   id,
                   Schema.decodeUnknownSync(ChatQueueAction)(data),
                 )
-              : chat.send(id, Schema.decodeUnknownSync(SendChat)(data)),
+              : Effect.tryPromise(async () => {
+                  const input = Schema.decodeUnknownSync(SendChat)(data);
+                  const forwarded = await respond?.(id, input);
+
+                  if (forwarded) return forwarded;
+
+                  const sent = await Effect.runPromise(
+                    Effect.result(chat.send(id, input)),
+                  );
+
+                  if (sent._tag === "Failure") throw sent.failure.cause;
+
+                  return sent.success;
+                }),
         ),
       );
 

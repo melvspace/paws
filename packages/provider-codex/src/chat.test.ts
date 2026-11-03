@@ -166,6 +166,8 @@ for await (const line of createInterface({input:process.stdin})) {
     expect(start.params.dynamicTools).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "paws_routine" }),
+        expect.objectContaining({ name: "paws_teamwork" }),
+        expect.objectContaining({ name: "paws_agents" }),
       ]),
     );
     expect(

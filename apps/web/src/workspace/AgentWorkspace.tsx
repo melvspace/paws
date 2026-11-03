@@ -1,3 +1,4 @@
+import { WaitingForReplies } from "./WaitingForReplies.tsx";
 import { AgentAvatar } from "../AgentAvatar.tsx";
 import { defaultAgentAvatar } from "@paws/contracts";
 import { useComposerAttachments } from "./useComposerAttachments.ts";
@@ -297,6 +298,7 @@ export function AgentWorkspace({
             }}
           />
           <div className="chat-composer-lane">
+            <WaitingForReplies agentId={agent.id} />
             <div className="chat-composer">
               <ComposerInput
                 agentId={agent.id}

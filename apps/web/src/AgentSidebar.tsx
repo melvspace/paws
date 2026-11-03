@@ -25,6 +25,7 @@ import { AgentSidebarSummary } from "./AgentSidebarSummary.tsx";
 interface AgentSidebarProps {
   agents: readonly Agent[];
   teams?: readonly Team[];
+  workingAgentIds?: readonly string[];
   selectedId: string | null;
   connected: boolean;
   onCreate: (teamId?: string) => void;
@@ -39,6 +40,7 @@ interface AgentSidebarProps {
 export function AgentSidebar({
   agents,
   teams = [],
+  workingAgentIds = [],
   selectedId,
   connected,
   onCreate,
@@ -67,7 +69,8 @@ export function AgentSidebar({
     destination: Team | null;
   } | null>(null);
   const moving = moveRequest?.agent.id ?? null;
-  const isIdle = (id: string) => activities.get(id) !== "working";
+  const isIdle = (id: string) =>
+    activities.get(id) !== "working" && !workingAgentIds.includes(id);
 
   function drop(toTeamId: string | null) {
     const source = dragged;
@@ -319,6 +322,7 @@ export function AgentSidebar({
                         >
                           <AgentSidebarSummary
                             agent={agent}
+                            working={workingAgentIds.includes(agent.id)}
                             conversation={conversations.find(
                               (item) => item.agentId === agent.id,
                             )}
