@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 import { chromium } from "playwright";
@@ -9,13 +10,38 @@ import { agentContext } from "./teamContext.ts";
 
 const preparationTimeoutMs = 5 * 60_000;
 const preparations = new Map<string, Promise<string>>();
+// Use Chromium's native implementation rather than patching page globals. This
+// applies to every tab, popup and frame, including pages created by the site.
+const browserArgs = ["--disable-blink-features=AutomationControlled"];
+const executeFile = promisify(execFile);
+
+export function chromiumUserAgent(
+  version: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const major = /\b(\d+)\.\d+\.\d+\.\d+\b/.exec(version)?.[1];
+
+  if (!major) throw new Error("Cannot determine Chromium version.");
+
+  const system =
+    platform === "win32"
+      ? "Windows NT 10.0; Win64; x64"
+      : platform === "darwin"
+        ? "Macintosh; Intel Mac OS X 10_15_7"
+        : "X11; Linux x86_64";
+
+  // Match Chromium's reduced desktop UA, keeping its real major version.
+  return `Mozilla/5.0 (${system}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+}
 
 // CDP stays on pipes inside the agent's container. The host-side, single-client
 // bridge is loopback-only and has an unguessable URL; no debug port is exposed.
 const containerBridge = `
 const { spawn } = require('node:child_process');
 const browser = spawn('/usr/bin/chromium', [
-  '--headless', '--no-sandbox', '--disable-dev-shm-usage',
+  '--headless=new', '--no-sandbox', '--disable-dev-shm-usage',
+  ...${JSON.stringify(browserArgs)},
+  '--user-agent=' + process.argv[2],
   '--remote-debugging-pipe', '--no-first-run', '--no-default-browser-check',
   '--user-data-dir=' + process.argv[1], 'about:blank'
 ], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
@@ -38,10 +64,20 @@ export async function launchAgentBrowser(root: string, agentId: string) {
 
   try {
     if (!lease.container) {
+      const { stdout } = await executeFile(
+        chromium.executablePath(),
+        ["--version"],
+        { timeout: 15000 },
+      );
       const context = await chromium.launchPersistentContext(
         resolveWorkspaceDirectory(root, agentId, "browser"),
         {
           headless: true,
+          // The default headless shell lacks normal Chromium capabilities.
+          channel: "chromium",
+          args: browserArgs,
+          ignoreDefaultArgs: ["--enable-automation"],
+          userAgent: chromiumUserAgent(stdout),
           viewport: { width: 1280, height: 800 },
           acceptDownloads: false,
         },
@@ -76,6 +112,10 @@ export async function launchAgentBrowser(root: string, agentId: string) {
     }
 
     preparing = false;
+    const userAgent = chromiumUserAgent(
+      await lease.execute("/usr/bin/chromium --version", preparationSignal),
+      "linux",
+    );
     const bridge = new WebSocketServer({
       host: "127.0.0.1",
       port: 0,
@@ -97,6 +137,7 @@ export async function launchAgentBrowser(root: string, agentId: string) {
       "-e",
       containerBridge,
       lease.browserProfile,
+      userAgent,
     ]);
     const child = spawn(launch.command, launch.args, {
       stdio: ["pipe", "pipe", "ignore"],

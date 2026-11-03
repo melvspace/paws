@@ -776,3 +776,37 @@ it("observes agent browser sessions without launching or streaming and cleans up
     await f.close();
   }
 });
+
+it("provides full Chromium capabilities without forcing the automation flag", async () => {
+  const f = await fixture();
+
+  try {
+    await f.tool({ action: "list" });
+    const runtime = await f.launch.mock.results[0]!.value;
+    const page = runtime.context.pages()[0]!;
+    const request = page.waitForRequest(f.url + "/");
+    await page.goto(f.url);
+    const identity = await page.evaluate(() => ({
+      userAgent: navigator.userAgent,
+      automated: navigator.webdriver,
+      pdfViewer: navigator.pdfViewerEnabled,
+      plugins: navigator.plugins.length,
+    }));
+    expect(identity.userAgent).not.toContain("HeadlessChrome");
+    expect(identity.userAgent).toContain(
+      `Chrome/${runtime.context.browser()!.version().split(".")[0]}.0.0.0`,
+    );
+    expect((await request).headers()["user-agent"]).toBe(identity.userAgent);
+    expect(identity.automated).toBe(false);
+    expect(identity.pdfViewer).toBe(true);
+    expect(identity.plugins).toBeGreaterThan(0);
+    const popup = await runtime.context.newPage();
+    await popup.goto(f.url);
+    expect(await popup.evaluate(() => navigator.webdriver)).toBe(false);
+    expect(await popup.evaluate(() => navigator.userAgent)).toBe(
+      identity.userAgent,
+    );
+  } finally {
+    await f.close();
+  }
+});
