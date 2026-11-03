@@ -280,6 +280,43 @@ export function makeTeamworkService(
         ))
     );
   };
+
+  function inputApplicable(event: TeamEvent) {
+    if (applicable(event)) return true;
+
+    const task = currentTask(event);
+
+    if (
+      event.delivery === "cancelled" ||
+      !task ||
+      task.status !== "blocked" ||
+      task.ownerId !== event.toAgentId ||
+      event.taskRevision === undefined
+    )
+      return false;
+
+    const revision = event.taskRevision;
+    const transitions = events().filter(
+      (item) =>
+        item.taskId === task.id &&
+        item.taskRevision !== undefined &&
+        item.taskRevision > revision &&
+        [
+          "blocked",
+          "handoff",
+          "submitted",
+          "changes_requested",
+          "approved",
+          "cancelled",
+        ].includes(item.kind),
+    );
+
+    return (
+      transitions.length > 0 &&
+      transitions.every((item) => item.kind === "blocked")
+    );
+  }
+
   const conversations = makeChatService(
     root,
     providers,
@@ -292,7 +329,11 @@ export function makeTeamworkService(
       );
       member(turn.agentId);
 
-      if (!applicable(event))
+      const allowed = continuations.has(turn.requestId ?? "")
+        ? inputApplicable(event)
+        : applicable(event);
+
+      if (!allowed)
         throw new ChatToolError("This task assignment has been superseded.");
 
       await runner(turn);
@@ -447,7 +488,11 @@ export function makeTeamworkService(
     });
   }
 
-  async function settleDelivery(event: TeamEvent, requestId = event.id) {
+  async function settleDelivery(
+    event: TeamEvent,
+    requestId = event.id,
+    blockedRevision?: number,
+  ) {
     const target = deliveryService(event);
     const conversationId = event.returnToConversationId ?? event.id;
     await target.wait(conversationId);
@@ -505,6 +550,8 @@ export function makeTeamworkService(
       event,
       response,
       output.flatMap((message) => message.attachments ?? []),
+      blockedRevision !== undefined &&
+        currentTask(event)?.revision === blockedRevision,
     );
   }
 
@@ -692,7 +739,7 @@ export function makeTeamworkService(
 
     if (!event || event.toAgentId !== agentId)
       throw new ChatError(404, "Input request not found.");
-    if (!applicable(event))
+    if (!inputApplicable(event))
       throw new ChatError(409, "This request is no longer active.");
     if (executions.has(agentId))
       throw new ChatError(
@@ -710,6 +757,9 @@ export function makeTeamworkService(
     if (!selection)
       throw new ChatError(409, "Choose a model before answering.");
 
+    const task = currentTask(event);
+    const blockedRevision =
+      task?.status === "blocked" ? task.revision : undefined;
     continuations.set(input.requestId, event.id);
     const outcome = await Effect.runPromise(
       Effect.result(
@@ -739,7 +789,7 @@ export function makeTeamworkService(
         .get(conversationId)
         .messages.find((message) => message.id === messageId)!,
     );
-    const work = settleDelivery(event, input.requestId)
+    const work = settleDelivery(event, input.requestId, blockedRevision)
       .catch((error) => failDelivery(event, error))
       .finally(() => {
         continuations.delete(input.requestId);
@@ -758,6 +808,7 @@ export function makeTeamworkService(
     event: TeamEvent,
     response: string,
     attachments: readonly ChatAttachment[] = [],
+    resumeBlocked = false,
   ) {
     if (findEvent(event.id).delivery === "cancelled") return;
     const task = currentTask(event);
@@ -784,7 +835,8 @@ export function makeTeamworkService(
 
     if (
       task &&
-      task.status === "assigned" &&
+      (task.status === "assigned" ||
+        (resumeBlocked && task.status === "blocked")) &&
       task.ownerId === event.toAgentId &&
       resultText
     ) {
@@ -1091,6 +1143,7 @@ export function makeTeamworkService(
         !request.toAgentId ||
         request.expectsReply === false ||
         request.delivery === "cancelled" ||
+        currentTask(request)?.status === "cancelled" ||
         !["message", "delegated"].includes(request.kind) ||
         messages.some((event) => event.retryOf === request.id)
       )
@@ -1631,13 +1684,28 @@ export function makeTeamworkService(
           (task.ownerId === id || task.reviewerId === id)
         ) {
           changed = true;
-          writeTask({
+          const cancelled: TeamTask = {
             ...task,
             status: "cancelled",
             summary: "An assigned agent was deleted.",
             revision: task.revision + 1,
             updatedAt: new Date().toISOString(),
-          });
+          };
+          writeTask(cancelled);
+          const event: TeamEvent = {
+            id: randomUUID(),
+            taskId: task.id,
+            taskRevision: cancelled.revision,
+            kind: "cancelled",
+            fromAgentId: id,
+            toAgentId: null,
+            text: cancelled.summary,
+            expectsReply: false,
+            delivery: "delivered",
+            createdAt: cancelled.updatedAt,
+          };
+          writeEvent(event);
+          reconcileTaskTransition(event);
         }
       }
 

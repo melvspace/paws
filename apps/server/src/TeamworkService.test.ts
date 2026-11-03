@@ -2132,3 +2132,254 @@ it("recovers a committed terminal transition that had not yet queued its result 
       .events.filter((event) => event.kind === "reply"),
   ).toHaveLength(1);
 });
+
+it.each(["form", "secret"] as const)(
+  "resumes blocked %s input after restart and returns the completed result",
+  async (kind) => {
+    await using fixture = await setup();
+    const { requester, worker } = fixture;
+    fixture.handle(async (turn) => {
+      if (turn.agentId !== worker.id) return;
+
+      if (turn.interaction) {
+        if (kind === "secret")
+          expect(turn.consumeSecret!(turn.interaction.secretRef!)).toBe(
+            "test-private-input",
+          );
+
+        // prettier-ignore
+        turn.onText(
+          "result",
+          "Completed after the requested input.",
+          true,
+        );
+
+        return;
+      }
+
+      const task = fixture.service.list(worker.id).tasks[0]!;
+      await turn.teamworkTool!({
+        action: "block",
+        taskId: task.id,
+        revision: task.revision,
+        text: "Input required.",
+      });
+      await turn.onMessage("input", {
+        text: "Provide input.",
+        actions: [],
+        fields:
+          kind === "form"
+            ? [
+                {
+                  id: "answer",
+                  label: "Answer",
+                  type: "text",
+                  required: true,
+                  choices: [],
+                },
+              ]
+            : [],
+        ...(kind === "secret"
+          ? { secretRequest: { label: "Private input" } }
+          : {}),
+      });
+    });
+    await fixture.command(requester.id, {
+      action: "delegate",
+      toAgentId: worker.id,
+      title: "Work",
+      text: "Complete the work.",
+    });
+    await expect
+      .poll(() =>
+        fixture.main.get(worker.id).messages.some((message) => message.card),
+      )
+      .toBe(true);
+    await expect.poll(() => fixture.service.busy(worker.id)).toBe(false);
+    await fixture.reopen();
+    const card = fixture.main
+      .get(worker.id)
+      .messages.find((message) => message.card)!;
+    await fixture.service.respond(worker.id, {
+      requestId: "blocked-input-response",
+      text: "",
+      selection,
+      reply: {
+        messageId: card.id,
+        actionId: kind === "form" ? "submit" : "save",
+        values: kind === "form" ? { answer: "Confirmed" } : {},
+        ...(kind === "secret" ? { secret: "test-private-input" } : {}),
+      },
+    });
+    await expect
+      .poll(() => fixture.service.list(requester.id).tasks[0]?.status)
+      .toBe("done");
+    await expect
+      .poll(() =>
+        fixture.main
+          .get(requester.id)
+          .messages.some(
+            (message) =>
+              message.peer?.kind === "reply" &&
+              message.text === "Completed after the requested input.",
+          ),
+      )
+      .toBe(true);
+    expect(JSON.stringify(fixture.main.get(worker.id))).not.toContain(
+      "test-private-input",
+    );
+  },
+);
+
+it.each(["handoff", "cancel"] as const)(
+  "rejects blocked input after %s supersedes the assignment",
+  async (action) => {
+    await using fixture = await setup();
+    const { requester, worker, other } = fixture;
+    fixture.handle(async (turn) => {
+      if (turn.agentId !== worker.id) return;
+
+      const task = fixture.service.list(worker.id).tasks[0]!;
+      await turn.teamworkTool!({
+        action: "block",
+        taskId: task.id,
+        revision: task.revision,
+        text: "Input required.",
+      });
+      await turn.onMessage("input", {
+        text: "Confirm?",
+        actions: [{ id: "yes", label: "Yes" }],
+        fields: [],
+      });
+    });
+    await fixture.command(requester.id, {
+      action: "delegate",
+      toAgentId: worker.id,
+      title: "Work",
+      text: "Complete the work.",
+    });
+    await expect
+      .poll(() =>
+        fixture.main.get(worker.id).messages.some((message) => message.card),
+      )
+      .toBe(true);
+    await expect.poll(() => fixture.service.busy(worker.id)).toBe(false);
+    const task = fixture.service.list(worker.id).tasks[0]!;
+    const card = fixture.main
+      .get(worker.id)
+      .messages.find((message) => message.card)!;
+    await fixture.command(worker.id, {
+      action,
+      taskId: task.id,
+      revision: task.revision,
+      toAgentId: other.id,
+      text: "Assignment changed.",
+    });
+    await expect(
+      fixture.service.respond(worker.id, {
+        requestId: "revoked-input",
+        text: "",
+        selection,
+        reply: { messageId: card.id, actionId: "yes", values: {} },
+      }),
+    ).rejects.toThrow("no longer active");
+  },
+);
+
+it.each([
+  { nested: false, reviewerStage: false },
+  { nested: false, reviewerStage: true },
+  { nested: true, reviewerStage: false },
+  { nested: true, reviewerStage: true },
+])(
+  "settles deletion of an idle assignment: %j",
+  async ({ nested, reviewerStage }) => {
+    await using fixture = await setup();
+    const { requester, worker, reviewer, other } = fixture;
+    const owner = nested ? other : worker;
+    const creatorId = nested ? worker.id : requester.id;
+    const deleted = reviewerStage ? reviewer : owner;
+    fixture.handle(async (turn) => {
+      if (
+        nested &&
+        turn.agentId === worker.id &&
+        turn.text.includes("[Paws peer message")
+      ) {
+        await turn.teamworkTool!({
+          action: "delegate",
+          toAgentId: owner.id,
+          reviewerId: reviewer.id,
+          title: "Child",
+          text: "Complete the child work.",
+        });
+
+        return;
+      }
+
+      if (turn.agentId === owner.id) {
+        if (!reviewerStage) {
+          const task = fixture.service.list(owner.id).tasks[0]!;
+          await turn.teamworkTool!({
+            action: "block",
+            taskId: task.id,
+            revision: task.revision,
+            text: "Input required.",
+          });
+
+          return;
+        }
+
+        // prettier-ignore
+        turn.onText(
+        "result",
+        "Implementation ready.",
+        true,
+      );
+      } else if (turn.agentId !== reviewer.id) {
+        // prettier-ignore
+        turn.onText(
+        "result",
+        "An assigned agent was deleted.",
+        true,
+      );
+      }
+    });
+    await fixture.command(requester.id, {
+      action: nested ? "message" : "delegate",
+      toAgentId: worker.id,
+      ...(nested ? {} : { reviewerId: reviewer.id }),
+      title: "Work",
+      text: "Complete the work.",
+    });
+    await expect
+      .poll(() => fixture.service.list(creatorId).tasks[0]?.status)
+      .toBe(reviewerStage ? "review" : "blocked");
+    await expect.poll(() => fixture.service.busy(deleted.id)).toBe(false);
+    await Effect.runPromise(
+      fixture.agents.remove(deleted.id, async () => {
+        await fixture.service.removeAgent(deleted.id);
+        await fixture.main.remove(deleted.id);
+      }),
+    );
+    await expect.poll(() => fixture.service.replyWaits()).toEqual([]);
+    await expect
+      .poll(() =>
+        fixture.main
+          .get(requester.id)
+          .messages.some(
+            (message) =>
+              message.peer?.kind === "reply" &&
+              message.text === "An assigned agent was deleted.",
+          ),
+      )
+      .toBe(true);
+    await expect.poll(() => fixture.service.busy(requester.id)).toBe(false);
+    await fixture.reopen();
+    expect(fixture.service.replyWaits()).toEqual([]);
+    expect(
+      fixture.service
+        .list(requester.id)
+        .events.filter((event) => event.kind === "reply"),
+    ).toHaveLength(1);
+  },
+);
