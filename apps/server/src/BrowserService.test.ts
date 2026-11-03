@@ -20,7 +20,7 @@ async function fixture() {
   const server = createServer((request, response) => {
     response.setHeader("Content-Type", "text/html");
     response.end(
-      `<title>Browser fixture</title><label>Name<input id="name"></label><button onclick="document.querySelector('output').textContent=document.querySelector('input').value">Greet</button><output></output><a href="/next">Next</a><button onclick="window.open('/popup')">Popup</button><button onclick="confirm('Continue?')">Confirm</button><div style="height:1800px">Scroll</div>`,
+      `<title>Browser fixture</title><label>Name<input id="name"></label><button onclick="document.querySelector('output').textContent=document.querySelector('input').value">Greet</button><output></output><a href="/next">Next</a><button onclick="window.open('/popup')">Popup</button><button onclick="confirm('Continue?')">Confirm</button><button onkeyup="confirm('Released?')">Release</button><div style="height:1800px">Scroll</div>`,
     );
   });
   server.listen(0, "127.0.0.1");
@@ -696,3 +696,50 @@ it.each(["release", "takeover", "disconnect"] as const)(
   },
   30000,
 );
+
+it("completes control cleanup when releasing a held key opens a page dialog", async () => {
+  const f = await fixture();
+  const events: BrowserServerMessage[] = [];
+
+  try {
+    const viewer = await f.browsers.attach(
+      f.agent.id,
+      (event) => events.push(event),
+      () => {},
+    );
+    const tabId = latestState(events).tabs[0]!.id;
+    await f.tool({ action: "navigate", tabId, url: f.url });
+    const runtime = await f.launch.mock.results[0]!.value;
+    const page = runtime.context.pages()[0]!;
+    await page.getByRole("button", { name: "Release", exact: true }).focus();
+    await viewer.input({ type: "takeControl", tabId });
+    const generation = latestState(events).tabs[0]!.generation;
+    await viewer.input({
+      type: "key",
+      tabId,
+      generation,
+      key: "Enter",
+      phase: "down",
+    });
+    let released = false;
+    const releasing = viewer
+      .input({ type: "releaseControl", tabId })
+      .then(() => {
+        released = true;
+      });
+    await vi.waitFor(() => expect(released).toBe(true));
+    expect(JSON.stringify(await f.tool({ action: "list" }))).toContain(
+      "Released?",
+    );
+    expect(
+      (await f.tool({ action: "dialog", tabId, accept: false })).isError,
+    ).toBeUndefined();
+    expect(latestState(events).tabs[0]!.dialog).toBeNull();
+    await f.tool({ action: "fill", tabId, selector: "#name", text: "Resumed" });
+    expect(await page.locator("#name").inputValue()).toBe("Resumed");
+    await releasing;
+    await viewer.detach();
+  } finally {
+    await f.close();
+  }
+}, 30000);

@@ -117,16 +117,32 @@ export function makeBrowserService(
   }
 
   async function resetInput(tab: Tab) {
-    // CDP key/button releases can block while a page dialog is open.
     if (tab.dialog) return;
 
-    for (const key of tab.keys) await tab.page.keyboard.up(key).catch(() => {});
+    const keys = [...tab.keys];
+    const buttons = [...tab.buttons];
+    let interrupted = false;
+    await untilDialog(
+      tab,
+      async () => {
+        for (const key of keys) {
+          if (interrupted || tab.dialog) return;
 
-    for (const button of tab.buttons)
-      await tab.page.mouse.up({ button }).catch(() => {});
+          tab.keys.delete(key);
+          await tab.page.keyboard.up(key).catch(() => {});
+        }
 
-    tab.keys.clear();
-    tab.buttons.clear();
+        for (const button of buttons) {
+          if (interrupted || tab.dialog) return;
+
+          tab.buttons.delete(button);
+          await tab.page.mouse.up({ button }).catch(() => {});
+        }
+      },
+      () => {
+        interrupted = true;
+      },
+    );
   }
 
   async function untilDialog<T>(
