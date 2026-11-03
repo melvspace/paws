@@ -85,6 +85,24 @@ it("shows the live page, requires takeover for input, and sends the current leas
     .element(page.getByRole("button", { name: "Return control" }))
     .toBeVisible();
   await image.click();
+  bridge.send.mockClear();
+  await userEvent.dblClick(image);
+  expect(
+    bridge.send.mock.calls
+      .map(([message]) => message)
+      .filter(
+        (message) => message.type === "pointer" && message.phase !== "move",
+      )
+      .map(
+        (message) =>
+          message.type === "pointer" && [message.phase, message.clickCount],
+      ),
+  ).toEqual([
+    ["down", 1],
+    ["up", 1],
+    ["down", 2],
+    ["up", 2],
+  ]);
   await userEvent.keyboard("A");
   expect(bridge.send.mock.calls).toEqual(
     expect.arrayContaining([

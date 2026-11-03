@@ -10,9 +10,14 @@ import { launchBrowserFixture } from "../../../server/src/browserTestRuntime.ts"
 it("opens a real browser tab from the workspace plus button through the dev proxy", async () => {
   await mkdir("/tmp/codex", { recursive: true });
   const root = await mkdtemp("/tmp/codex/paws-browser-ui-");
+  let runtime: Awaited<ReturnType<typeof launchBrowserFixture>> | undefined;
   const app = createServer(root, {
     runChat: async () => {},
-    launchBrowser: launchBrowserFixture,
+    launchBrowser: async (...args) => {
+      runtime = await launchBrowserFixture(...args);
+
+      return runtime;
+    },
   });
   app.server.listen(0, "127.0.0.1");
   await once(app.server, "listening");
@@ -162,6 +167,18 @@ it("opens a real browser tab from the workspace plus button through the dev prox
       );
     });
     expect(await page.getByRole("alert").count()).toBe(0);
+    const remote = runtime!.context
+      .pages()
+      .findLast((tab) => tab.url().startsWith("https://www.google.com/"))!;
+    await remote.setContent(
+      '<button style="position:fixed;inset:0" ondblclick="this.textContent=\'Double clicked\'">Click</button>',
+    );
+    await page
+      .getByRole("img", { name: "Browser page interaction" })
+      .dblclick();
+    await expect
+      .poll(() => remote.locator("button").textContent())
+      .toBe("Double clicked");
   } finally {
     await viewer.close();
     await vite.close();

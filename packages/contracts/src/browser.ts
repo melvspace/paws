@@ -101,6 +101,9 @@ export const BrowserClientMessage = Schema.Union([
     y: coordinate,
     phase: Schema.Literals(["down", "up", "move"]),
     button: Schema.Literals(["left", "right", "middle"]),
+    clickCount: Schema.optional(
+      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 32 })),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("key"),

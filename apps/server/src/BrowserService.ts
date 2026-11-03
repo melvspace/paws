@@ -438,7 +438,11 @@ export function makeBrowserService(
 
       publish(session);
 
-      await tab.page.goto(url, { waitUntil: "domcontentloaded" });
+      await untilDialog(
+        tab,
+        () => tab.page.goto(url, { waitUntil: "domcontentloaded" }),
+        () => null,
+      );
 
       return textResult({ tabId: tab.id, ...state(session, viewer) });
     }
@@ -718,10 +722,16 @@ export function makeBrowserService(
 
                   if (message.phase === "down") {
                     tab.buttons.add(message.button);
-                    await page.mouse.down({ button: message.button });
+                    await page.mouse.down({
+                      button: message.button,
+                      clickCount: message.clickCount ?? 1,
+                    });
                   } else if (message.phase === "up") {
                     tab.buttons.delete(message.button);
-                    await page.mouse.up({ button: message.button });
+                    await page.mouse.up({
+                      button: message.button,
+                      clickCount: message.clickCount ?? 1,
+                    });
                   }
                 } else if (message.type === "key") {
                   const printableUnicode =

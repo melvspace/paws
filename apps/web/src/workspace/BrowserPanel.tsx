@@ -222,6 +222,33 @@ export function BrowserPanel({
       : null;
   }
 
+  function pointerInput(
+    event: { clientX: number; clientY: number; button: number; detail: number },
+    phase: "down" | "up",
+  ) {
+    if (!controlling || !tab) return;
+
+    const position = point(event);
+
+    if (position)
+      send({
+        type: "pointer",
+        tabId: tab.id,
+        generation: tab.generation,
+        ...position,
+        phase,
+        clickCount: Math.max(1, Math.min(32, event.detail)),
+        button:
+          event.button === 2 ? "right" : event.button === 1 ? "middle" : "left",
+      });
+    else if (phase === "up")
+      send({
+        type: "resetInput",
+        tabId: tab.id,
+        generation: tab.generation,
+      });
+  }
+
   return (
     <section
       className="browser-panel"
@@ -458,52 +485,28 @@ export function BrowserPanel({
               onPointerDown={(event) => {
                 if (!controlling) return;
 
-                event.preventDefault();
                 event.currentTarget.focus();
                 event.currentTarget.setPointerCapture(event.pointerId);
-                const position = point(event);
 
-                if (position)
-                  send({
-                    type: "pointer",
-                    tabId: tab.id,
-                    generation: tab.generation,
-                    ...position,
-                    phase: "down",
-                    button:
-                      event.button === 2
-                        ? "right"
-                        : event.button === 1
-                          ? "middle"
-                          : "left",
-                  });
+                if (event.pointerType !== "mouse") {
+                  event.preventDefault();
+                  pointerInput(event, "down");
+                }
               }}
               onPointerUp={(event) => {
+                if (event.pointerType !== "mouse") pointerInput(event, "up");
+              }}
+              onMouseDown={(event) => {
                 if (!controlling) return;
 
                 event.preventDefault();
-                const position = point(event);
+                pointerInput(event, "down");
+              }}
+              onMouseUp={(event) => {
+                if (!controlling) return;
 
-                if (position)
-                  send({
-                    type: "pointer",
-                    tabId: tab.id,
-                    generation: tab.generation,
-                    ...position,
-                    phase: "up",
-                    button:
-                      event.button === 2
-                        ? "right"
-                        : event.button === 1
-                          ? "middle"
-                          : "left",
-                  });
-                else
-                  send({
-                    type: "resetInput",
-                    tabId: tab.id,
-                    generation: tab.generation,
-                  });
+                event.preventDefault();
+                pointerInput(event, "up");
               }}
               onPointerMove={(event) => {
                 if (!controlling) return;

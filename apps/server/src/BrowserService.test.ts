@@ -19,6 +19,13 @@ async function fixture() {
   const browsers = makeBrowserService(root, launch);
   const server = createServer((request, response) => {
     response.setHeader("Content-Type", "text/html");
+
+    if (request.url === "/alert") {
+      response.end("<script>alert('Opened?')</script><title>Answered</title>");
+
+      return;
+    }
+
     response.end(
       `<title>Browser fixture</title><label>Name<input id="name"></label><button onclick="document.querySelector('output').textContent=document.querySelector('input').value">Greet</button><output></output><a href="/next">Next</a><button onclick="window.open('/popup')">Popup</button><button onclick="confirm('Continue?')">Confirm</button><button onkeyup="confirm('Released?')">Release</button><div style="height:1800px">Scroll</div>`,
     );
@@ -61,6 +68,127 @@ function latestState(events: BrowserServerMessage[]) {
 
   return state;
 }
+
+it("returns new-tab dialogs promptly and frees the queue for sequential callers", async () => {
+  const f = await fixture();
+  const events: BrowserServerMessage[] = [];
+
+  try {
+    const viewer = await f.browsers.attach(
+      f.agent.id,
+      (event) => events.push(event),
+      () => {},
+    );
+    let result: Awaited<ReturnType<typeof f.tool>> | undefined;
+    const opened = f
+      .tool({ action: "open", url: `${f.url}/alert` })
+      .then((value) => {
+        result = value;
+      });
+    await vi.waitFor(() => expect(result).toBeDefined());
+    expect(result?.isError).toBeUndefined();
+    const tab = latestState(events).tabs.find((item) => item.dialog);
+    expect(tab?.dialog?.message).toBe("Opened?");
+    expect(JSON.stringify(result)).toContain(tab!.id);
+    expect((await f.tool({ action: "list" })).isError).toBeUndefined();
+    expect(
+      (await f.tool({ action: "dialog", tabId: tab!.id, accept: true }))
+        .isError,
+    ).toBeUndefined();
+    await vi.waitFor(() =>
+      expect(
+        latestState(events).tabs.find((item) => item.id === tab!.id)?.title,
+      ).toBe("Answered"),
+    );
+    await opened;
+    await viewer.detach();
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
+it("forwards human click counts without breaking single clicks or drags", async () => {
+  const f = await fixture();
+  const events: BrowserServerMessage[] = [];
+
+  try {
+    const viewer = await f.browsers.attach(
+      f.agent.id,
+      (event) => events.push(event),
+      () => {},
+    );
+    const tabId = latestState(events).tabs[0]!.id;
+    await f.tool({ action: "navigate", tabId, url: f.url });
+    const runtime = await f.launch.mock.results[0]!.value;
+    const page = runtime.context.pages()[0]!;
+    await page.evaluate(() => {
+      document.body.innerHTML =
+        '<button style="width:200px;height:100px">Click</button><output></output>';
+      document.addEventListener("click", (event) => {
+        document.querySelector("output")!.textContent +=
+          `click:${event.detail};`;
+      });
+      document.addEventListener("dblclick", () => {
+        document.querySelector("output")!.textContent += "double;";
+      });
+      document.addEventListener("mousemove", (event) => {
+        if (event.buttons && (event.movementX || event.movementY))
+          document.querySelector("output")!.textContent += "drag;";
+      });
+    });
+    await viewer.input({ type: "takeControl", tabId });
+    const generation = latestState(events).tabs[0]!.generation;
+
+    for (const clickCount of [1, 2]) {
+      for (const phase of ["down", "up"] as const) {
+        await viewer.input({
+          type: "pointer",
+          tabId,
+          generation,
+          x: 50,
+          y: 50,
+          phase,
+          button: "left",
+          clickCount,
+        });
+      }
+    }
+
+    expect(await page.locator("output").textContent()).toBe(
+      "click:1;click:2;double;",
+    );
+
+    for (const phase of ["down", "move", "up"] as const) {
+      await viewer.input({
+        type: "pointer",
+        tabId,
+        generation,
+        x: phase === "down" ? 50 : 100,
+        y: 50,
+        phase,
+        button: "left",
+        clickCount: 1,
+      });
+    }
+
+    expect(await page.locator("output").textContent()).toContain("drag;");
+    await expect(
+      viewer.input({
+        type: "pointer",
+        tabId,
+        generation,
+        x: 50,
+        y: 50,
+        phase: "down",
+        button: "left",
+        clickCount: 0,
+      }),
+    ).rejects.toThrow();
+    await viewer.detach();
+  } finally {
+    await f.close();
+  }
+}, 30000);
 
 it("runs real browser tools, preserves cookies, isolates agents, and cleans up", async () => {
   const f = await fixture();
