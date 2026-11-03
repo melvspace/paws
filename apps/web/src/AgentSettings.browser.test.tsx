@@ -45,7 +45,7 @@ it("places an unclipped Edit control below the avatar", async () => {
   expect(change).toHaveBeenCalledWith({ animal: "dog", color: "red" });
 });
 
-it("confirms membership changes and autosaves memories on blur without an explicit save button", async () => {
+it("confirms membership changes and keeps memories out of general settings", async () => {
   const agent = {
     id: "ada",
     name: "Ada",
@@ -80,15 +80,9 @@ it("confirms membership changes and autosaves memories on blur without an explic
       .element(page.getByRole("button", { name: "Save changes" }))
       .not.toBeInTheDocument();
     const team = page.getByRole("combobox", { name: "Team", exact: true });
-    const name = page
-      .getByRole("textbox", { name: "Name", exact: true })
-      .element();
-    const memory = page
-      .getByRole("textbox", { name: "Personal memories", exact: true })
-      .element();
-    expect(name.closest(".settings-group")).toBe(
-      memory.closest(".settings-group"),
-    );
+    await expect
+      .element(page.getByRole("textbox", { name: "Personal memories" }))
+      .not.toBeInTheDocument();
     expect(
       page
         .getByRole("heading", { name: "Agent settings", exact: true })
@@ -108,14 +102,6 @@ it("confirms membership changes and autosaves memories on blur without an explic
     expect(
       JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)),
     ).toMatchObject({ fromTeamId: null, toTeamId: "project" });
-    await page
-      .getByRole("textbox", { name: "Personal memories", exact: true })
-      .fill("Prefer concise answers");
-    await page.getByRole("textbox", { name: "Name", exact: true }).click();
-    await expect.poll(() => fetchMock.mock.calls.length).toBe(2);
-    expect(
-      JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)),
-    ).toMatchObject({ memory: "Prefer concise answers" });
   } finally {
     fetchMock.mockRestore();
     appAtomRegistry.set(agentsAtom, {
@@ -148,14 +134,14 @@ it("flushes edits made during an autosave before dismissing the dialog", async (
     await using _screen = await render(
       <AgentDialog agent={agent} connected onDismiss={dismiss} />,
     );
-    const memory = page.getByRole("textbox", {
-      name: "Personal memories",
+    const name = page.getByRole("textbox", {
+      name: "Name",
       exact: true,
     });
-    await memory.fill("First memory");
-    await page.getByRole("textbox", { name: "Name", exact: true }).click();
+    await name.fill("First name");
+    name.element().blur();
     await expect.poll(() => fetchMock.mock.calls.length).toBe(1);
-    await memory.fill("Latest memory");
+    await name.fill("Latest name");
     await page.getByRole("button", { name: "Close dialog" }).click();
     expect(dismiss).not.toHaveBeenCalled();
     finish(new Response(null, { status: 204 }));
@@ -163,7 +149,7 @@ it("flushes edits made during an autosave before dismissing the dialog", async (
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(
       JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)),
-    ).toMatchObject({ memory: "Latest memory" });
+    ).toMatchObject({ name: "Latest name" });
   } finally {
     finish(new Response(null, { status: 204 }));
     fetchMock.mockRestore();

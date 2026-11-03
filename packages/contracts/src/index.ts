@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { Conversation } from "./chat.ts";
 import { ProviderSnapshot } from "./providers.ts";
 import { Team } from "./teams.ts";
+import { MemoryEntry } from "./memories.ts";
 import { AgentAvatar } from "./avatars.ts";
 
 export const CreateAgent = Schema.Struct({
@@ -22,6 +23,7 @@ export const UpdateAgent = Schema.Struct({
 export type UpdateAgent = typeof UpdateAgent.Type;
 
 export const Agent = Schema.Struct({
+  memories: Schema.optional(Schema.Array(MemoryEntry)),
   id: Schema.String,
   name: Schema.String,
   avatar: Schema.optional(AgentAvatar),
@@ -51,3 +53,5 @@ export * from "./avatars.ts";
 export * from "./teams.ts";
 
 export * from "./routines.ts";
+
+export * from "./memories.ts";

@@ -1,0 +1,41 @@
+.memories-settings {
+  max-width: 720px;
+  margin-inline: auto;
+}
+.memories-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.memories-toolbar h3 {
+  font-size: 16px;
+  font-weight: 500;
+}
+.memory-entry {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px;
+}
+.memory-entry + .memory-entry {
+  border-top: 1px solid var(--border);
+}
+.memory-copy {
+  flex: 1;
+  min-width: 0;
+}
+.memory-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.memory-meta {
+  margin: 8px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.memory-error {
+  margin-bottom: 20px;
+}

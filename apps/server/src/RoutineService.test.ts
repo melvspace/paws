@@ -524,10 +524,10 @@ it("starts main-chat timeouts after acquiring the routine execution slot", async
   });
   const calls: string[] = [];
   await using fixture = await setup(async (turn) => {
-    calls.push(turn.text);
+    calls.push(turn.text.split("\n\n[Paws persistent context]")[0]!);
 
     if (turn.text.includes("Paws routine")) await held;
-    else if (turn.text === "Queued main") {
+    else if (turn.text.startsWith("Queued main\n\n[Paws persistent context]")) {
       await new Promise<void>((resolve) =>
         turn.signal.addEventListener("abort", () => resolve(), { once: true }),
       );

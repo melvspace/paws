@@ -1,3 +1,5 @@
+import { makeMemoryService } from "./MemoryService.ts";
+import { memoryHttp } from "./memoryHttp.ts";
 import {
   makeRoutineService,
   configuredRoutineLimits,
@@ -146,6 +148,8 @@ export function createServer(
     }
 
     try {
+      if (await memoryHttp(request, response, makeMemoryService(root))) return;
+
       if (await routineHttp(request, response, routines)) return;
 
       const credentials =
@@ -363,6 +367,20 @@ export function createServer(
           const input = Schema.decodeUnknownSync(
             isTeamCreate ? SaveTeam : UpdateTeam,
           )(JSON.parse(body));
+          if (
+            input.memory !== undefined &&
+            (isTeamUpdate || input.memory !== "")
+          ) {
+            response.writeHead(403).end(
+              JSON.stringify({
+                error:
+                  "Agents manage memories. Use the memories list to delete entries.",
+              }),
+            );
+
+            return;
+          }
+
           const team = await Effect.runPromise(agents.saveTeam(input, teamId));
 
           if (team && input.integrations) {
@@ -385,6 +403,17 @@ export function createServer(
           isCreate ? CreateAgent : UpdateAgent,
           { onExcessProperty: "error" },
         )(JSON.parse(body));
+
+        if (input.memory !== undefined) {
+          response.writeHead(403).end(
+            JSON.stringify({
+              error:
+                "Agents manage memories. Use the memories list to delete entries.",
+            }),
+          );
+
+          return;
+        }
 
         if (
           updateId &&

@@ -26,5 +26,6 @@ export {
   chatInstructions,
   chatHarnessRevision,
   teamToolDescription,
+  memoryToolDescription,
 } from "./instructions.ts";
 export type { McpHarnessClient } from "./mcp.ts";

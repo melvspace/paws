@@ -5,6 +5,7 @@ import { ChatCard, ChatFileInputs, validateChatCard } from "@paws/contracts";
 import {
   ChatToolError,
   teamToolDescription,
+  memoryToolDescription,
   type ChatTurn,
 } from "@paws/provider-core";
 
@@ -51,11 +52,20 @@ export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
     },
     {
       name: "paws_memory",
-      description:
-        "Read or update persistent memories. Omit teamId for your own private memories; provide a teamId to share with that team's members. Omit memory to read. To update, first read and then provide the complete replacement memory, preserving useful existing facts. Never store credentials.",
+      description: memoryToolDescription,
       schema: z.object({
         teamId: z.string().optional(),
         memory: z.string().max(16000).optional(),
+        action: z
+          .enum(["list", "search", "read", "create", "update", "delete"])
+          .optional(),
+        id: z.string().optional(),
+        text: z.string().max(16000).optional(),
+        expected: z.string().optional(),
+        inclusion: z.enum(["essential", "searchable"]).optional(),
+        query: z.string().max(200).optional(),
+        limit: z.number().int().min(1).max(10).optional(),
+        after: z.string().optional(),
       }),
       async execute(value: unknown) {
         if (!turn.memoryTool) throw new Error("Memories unavailable.");

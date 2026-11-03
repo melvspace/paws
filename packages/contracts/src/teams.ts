@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { MemoryEntry } from "./memories.ts";
 
 export const TeamIntegration = Schema.Struct({
   id: Schema.String,
@@ -42,6 +43,7 @@ export const UpdateTeam = Schema.Struct({
 export type UpdateTeam = typeof UpdateTeam.Type;
 
 export const Team = Schema.Struct({
+  memories: Schema.optional(Schema.Array(MemoryEntry)),
   template: Schema.optional(Schema.String),
   id: Schema.String,
   name: Schema.String,

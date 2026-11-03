@@ -1,3 +1,4 @@
+import { MemoriesSettings } from "./MemoriesSettings.tsx";
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { Agent } from "@paws/contracts";
 import { AgentDialog } from "../AgentDialog.tsx";
@@ -15,16 +16,23 @@ export function AgentSettingsPanel({
   connected: boolean;
   beforeClose: MutableRefObject<(() => Promise<void>) | null>;
   onDismiss: () => void;
-  initialPage?: "general" | "routines";
+  initialPage?: "general" | "routines" | "memories";
 }) {
   const [page, setPage] = useState(initialPage);
   const scroll = useRef<HTMLDivElement>(null);
   const generalFlush = useRef<(() => Promise<void>) | null>(null);
+  const memoryFlush = useRef<(() => Promise<void>) | null>(null);
   const routineFlush = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
     const flush = async () => {
-      await (page === "general" ? generalFlush : routineFlush).current?.();
+      await (
+        page === "general"
+          ? generalFlush
+          : page === "memories"
+            ? memoryFlush
+            : routineFlush
+      ).current?.();
     };
     beforeClose.current = flush;
 
@@ -55,9 +63,19 @@ export function AgentSettingsPanel({
           embedded
           beforeClose={generalFlush}
           onDismiss={onDismiss}
+          onMemories={() => void navigate("memories")}
           onRoutines={() => void navigate("routines")}
         />
       </div>
+      {page === "memories" && (
+        <MemoriesSettings
+          kind="agents"
+          ownerId={agent.id}
+          connected={connected}
+          beforeClose={memoryFlush}
+          onBack={() => void navigate("general")}
+        />
+      )}
       {page === "routines" && (
         <div className="agent-routines-page">
           <RoutinesSettings

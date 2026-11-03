@@ -1,3 +1,4 @@
+import { MemoriesSettings } from "./settings/MemoriesSettings.tsx";
 import { TeamDialog } from "./TeamDialog.tsx";
 import { ReassignAgentDialog } from "./ReassignAgentDialog.tsx";
 import { useEffect, useRef, useState, type RefObject } from "react";
@@ -17,7 +18,6 @@ import {
 } from "@paws/client-runtime";
 import type { Agent, Team, UpdateTeam } from "@paws/contracts";
 import { Input } from "./components/ui/input.tsx";
-import { Textarea } from "./components/ui/textarea.tsx";
 import { Button } from "./components/ui/button.tsx";
 import { Checkbox } from "./components/ui/checkbox.tsx";
 import { AgentAvatar } from "./AgentAvatar.tsx";
@@ -159,12 +159,11 @@ function TeamDetails({
           const next = draftRef.current;
           const patch: {
             name?: string;
-            memory?: string;
             integrations?: Team["integrations"];
           } = {};
           const expected: UpdateTeam["expected"] = {};
 
-          for (const key of ["name", "memory", "integrations"] as const) {
+          for (const key of ["name", "integrations"] as const) {
             if (
               JSON.stringify(next[key]) !== JSON.stringify(saved.current[key])
             ) {
@@ -185,7 +184,7 @@ function TeamDetails({
           } else {
             const merged = { ...result };
 
-            for (const key of ["name", "memory", "integrations"] as const) {
+            for (const key of ["name", "integrations"] as const) {
               if (JSON.stringify(edits[key]) !== JSON.stringify(next[key])) {
                 Object.assign(merged, { [key]: edits[key] });
               }
@@ -384,13 +383,11 @@ function TeamDetails({
           </div>
         )}
         {tab === "Memories" && (
-          <Textarea
-            aria-label="Shared memories"
-            value={draft.memory}
-            maxLength={16000}
-            disabled={!connected}
-            onChange={(event) => change({ memory: event.target.value })}
-            onBlur={autosave}
+          <MemoriesSettings
+            kind="teams"
+            ownerId={team.id}
+            connected={connected}
+            beforeClose={childFlush}
           />
         )}
         {(tab === "Files" || tab === "Skills") && (

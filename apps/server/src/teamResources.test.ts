@@ -24,7 +24,7 @@ it("manages shared files and skill packages through HTTP without traversing link
       headers: json,
       body: JSON.stringify({
         name: "Project",
-        memory: "Shared facts",
+        memory: "",
         integrations: [{ id: "pachca", kind: "mcp-stdio", command: "node" }],
       }),
     });

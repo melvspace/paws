@@ -54,9 +54,6 @@
   flex: auto;
   width: 100%;
 }
-.agent-settings-content .agent-memory-row textarea {
-  min-height: 140px;
-}
 .agent-settings-menu {
   margin-top: 24px;
 }
@@ -68,6 +65,9 @@
   padding: 16px;
   border-radius: 0;
   font-weight: 500;
+}
+.agent-settings-menu-item + .agent-settings-menu-item {
+  border-top: 1px solid var(--border);
 }
 .agent-settings-menu-item > span {
   flex: 1;

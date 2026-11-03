@@ -114,6 +114,7 @@ export function makeAgentService(
         }
 
         const team: Team = {
+          ...(current?.memories ? { memories: current.memories } : {}),
           template:
             current?.template ??
             (typeof image === "string" ? image : "paws-team-runtime:1"),
@@ -303,15 +304,26 @@ export function makeAgentService(
           if (changing && existing.sandbox)
             await stopEnvironment(root, id, "agent");
 
-          db.prepare("UPDATE agents SET data = ? WHERE id = ?").run(
-            JSON.stringify(agent),
-            id,
-          );
+          const patch = {
+            name: agent.name,
+            avatar: agent.avatar,
+            ...(input.sandbox !== undefined ? { sandbox: agent.sandbox } : {}),
+            ...(input.memory !== undefined ? { memory: agent.memory } : {}),
+          };
+          db.prepare(
+            "UPDATE agents SET data = json_patch(data, json(?)) WHERE id = ?",
+          ).run(JSON.stringify(patch), id);
         } finally {
           if (changing) transitions.delete(id);
         }
 
-        return agent;
+        return decode(
+          JSON.parse(
+            String(
+              db.prepare("SELECT data FROM agents WHERE id = ?").get(id)!.data,
+            ),
+          ),
+        );
       }),
   );
 
@@ -341,19 +353,24 @@ export function makeAgentService(
 
           validateTeam(teamId);
           placeWorkspace(root, id, teamId);
-          const moved = { ...agent, teamId };
           try {
-            db.prepare("UPDATE agents SET data = ? WHERE id = ?").run(
-              JSON.stringify(moved),
-              id,
-            );
+            db.prepare(
+              "UPDATE agents SET data = json_set(data, '$.teamId', json(?)) WHERE id = ?",
+            ).run(JSON.stringify(teamId), id);
           } catch (error) {
             placeWorkspace(root, id, agent.teamId ?? null);
 
             throw error;
           }
 
-          return moved;
+          return decode(
+            JSON.parse(
+              String(
+                db.prepare("SELECT data FROM agents WHERE id = ?").get(id)!
+                  .data,
+              ),
+            ),
+          );
         } finally {
           pendingTeams.delete(id);
           transitions.delete(id);

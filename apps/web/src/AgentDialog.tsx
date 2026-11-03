@@ -1,6 +1,5 @@
 import { ReassignAgentDialog } from "./ReassignAgentDialog.tsx";
 import { Switch } from "./components/ui/switch.tsx";
-import { Textarea } from "./components/ui/textarea.tsx";
 import { useAtomValue } from "@effect/atom-react";
 import { agentsAtom, conversationsAtom } from "@paws/client-runtime";
 import { Input } from "./components/ui/input.tsx";
@@ -12,7 +11,13 @@ import {
   type FormEvent,
   type MutableRefObject,
 } from "react";
-import { Trash2Icon, XIcon, Clock3Icon, ChevronRightIcon } from "lucide-react";
+import {
+  Trash2Icon,
+  XIcon,
+  Clock3Icon,
+  ChevronRightIcon,
+  BrainIcon,
+} from "lucide-react";
 import { createAgent, deleteAgent, updateAgent } from "@paws/client-runtime";
 import { defaultAgentAvatar, type Agent } from "@paws/contracts";
 import { AvatarPicker } from "./AvatarPicker.tsx";
@@ -40,6 +45,7 @@ interface AgentDialogProps {
   embedded?: boolean;
   beforeClose?: MutableRefObject<(() => Promise<void>) | null>;
   onRoutines?: () => void;
+  onMemories?: () => void;
 }
 
 export function AgentDialog({
@@ -50,6 +56,7 @@ export function AgentDialog({
   embedded = false,
   beforeClose,
   onRoutines,
+  onMemories,
 }: AgentDialogProps) {
   const returnFocusRef = useRef(document.activeElement);
   const keepAgentRef = useRef<HTMLButtonElement>(null);
@@ -70,11 +77,10 @@ export function AgentDialog({
       defaultAgentAvatar(agent?.id ?? Math.random().toString(36)),
     teamId: agent?.teamId ?? initialTeamId,
     sandbox: agent?.sandbox ?? false,
-    memory: agent?.memory ?? "",
   }));
   const draftRef = useRef(draft);
   const saved = useRef(draft);
-  const { name, avatar, teamId, sandbox, memory } = draft;
+  const { name, avatar, teamId, sandbox } = draft;
 
   function change(patch: Partial<typeof draft>) {
     draftRef.current = { ...draftRef.current, ...patch };
@@ -123,9 +129,6 @@ export function AgentDialog({
             avatar: next.avatar,
             ...(next.sandbox !== saved.current.sandbox
               ? { sandbox: next.sandbox }
-              : {}),
-            ...(next.memory !== saved.current.memory
-              ? { memory: next.memory }
               : {}),
           });
           saved.current = next;
@@ -366,27 +369,6 @@ export function AgentDialog({
               />
             </div>
           )}
-          {agent && (
-            <div className="settings-row agent-memory-row">
-              <label htmlFor="agent-memory">Personal memories</label>
-              <Textarea
-                id="agent-memory"
-                value={memory}
-                maxLength={16000}
-                disabled={
-                  pending === "delete" ||
-                  (!agent && pending !== null) ||
-                  !connected ||
-                  confirmingDelete
-                }
-                onChange={(event) => change({ memory: event.target.value })}
-                onBlur={() => {
-                  if (agent && !confirmingDelete && pending !== "delete")
-                    void saveAgent();
-                }}
-              />
-            </div>
-          )}
         </div>
         {!agent && (
           <div className="actions">
@@ -407,18 +389,32 @@ export function AgentDialog({
           </div>
         )}
       </Form>
-      {agent && onRoutines && (
+      {agent && (onRoutines || onMemories) && (
         <div className="settings-group agent-settings-menu">
-          <Button
-            type="button"
-            variant="ghost"
-            className="settings-row agent-settings-menu-item"
-            onClick={onRoutines}
-          >
-            <Clock3Icon size={18} aria-hidden />
-            <span>Routines</span>
-            <ChevronRightIcon size={16} aria-hidden />
-          </Button>
+          {onMemories && (
+            <Button
+              type="button"
+              variant="ghost"
+              className="settings-row agent-settings-menu-item"
+              onClick={onMemories}
+            >
+              <BrainIcon size={18} aria-hidden />
+              <span>Memories</span>
+              <ChevronRightIcon size={16} aria-hidden />
+            </Button>
+          )}
+          {onRoutines && (
+            <Button
+              type="button"
+              variant="ghost"
+              className="settings-row agent-settings-menu-item"
+              onClick={onRoutines}
+            >
+              <Clock3Icon size={18} aria-hidden />
+              <span>Routines</span>
+              <ChevronRightIcon size={16} aria-hidden />
+            </Button>
+          )}
         </div>
       )}
       {agent && (

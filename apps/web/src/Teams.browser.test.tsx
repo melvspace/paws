@@ -79,6 +79,13 @@ it("shows every team, including empty teams, and collapses its agents independen
     .toBeVisible();
 });
 
+const memoryFixture = (text = "Project conventions") => ({
+  id: "legacy",
+  text,
+  createdAt: "2026-11-01",
+  updatedAt: "2026-11-01",
+});
+
 it("manages team membership and shared memories from the existing Settings dialog", async () => {
   appAtomRegistry.set(agentsAtom, {
     snapshot: { agents, teams },
@@ -89,6 +96,15 @@ it("manages team membership and shared memories from the existing Settings dialo
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/memories")) {
+        if (!init?.method || init.method === "GET")
+          return Response.json([memoryFixture()]);
+
+        requests.push({ url, body: JSON.parse(String(init.body)) });
+
+        return Response.json([]);
+      }
+
       if (!init?.method || init.method === "GET") return Response.json([]);
 
       requests.push({ url, body: JSON.parse(String(init.body)) });
@@ -115,19 +131,22 @@ it("manages team membership and shared memories from the existing Settings dialo
   });
   await page.getByRole("tab", { name: "Memories", exact: true }).click();
   await expect
-    .element(page.getByRole("textbox", { name: "Shared memories" }))
-    .toHaveValue("Project conventions");
+    .element(page.getByText("Project conventions", { exact: true }))
+    .toBeVisible();
+  await expect.element(page.getByRole("textbox")).not.toBeInTheDocument();
   await page
-    .getByRole("textbox", { name: "Shared memories" })
-    .fill("Updated project context");
-  await page.getByRole("tab", { name: "General", exact: true }).click();
+    .getByRole("button", {
+      name: "Delete memory: Project conventions",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", { name: "Confirm delete memory", exact: true })
+    .click();
   await expect.poll(() => requests.length).toBe(2);
   expect(requests[1]).toMatchObject({
-    url: "/api/teams/project-a",
-    body: {
-      memory: "Updated project context",
-      expected: { memory: "Project conventions" },
-    },
+    url: "/api/teams/project-a/memories",
+    body: { action: "delete", id: "legacy", expected: "Project conventions" },
   });
   await expect
     .element(page.getByRole("button", { name: "Save team", exact: true }))
@@ -326,36 +345,54 @@ it("opens integration forms on demand and adds configuration and authentication 
   await expect.element(page.getByLabelText("Command")).not.toBeInTheDocument();
 });
 
-it("keeps unsaved team memories open on failure and retries when closing Settings", async () => {
+it("keeps failed team memory deletions visible and allows retry", async () => {
   appAtomRegistry.set(agentsAtom, {
     snapshot: { agents, teams },
     connected: true,
     error: null,
   });
-  const fetchMock = vi
-    .fn()
-    .mockResolvedValue(new Response(null, { status: 500 }));
-  vi.stubGlobal("fetch", fetchMock);
-  const dismiss = vi.fn();
+  let fail = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      if (!init?.method || init.method === "GET")
+        return Response.json([memoryFixture()]);
+      if (fail)
+        return Response.json(
+          { error: "Could not delete memory." },
+          { status: 500 },
+        );
+
+      return Response.json([]);
+    }),
+  );
   await using _screen = await render(
-    <AppSettingsDialog initialPage="Teams" onDismiss={dismiss} />,
+    <AppSettingsDialog initialPage="Teams" onDismiss={() => {}} />,
   );
   await page.getByRole("button", { name: "Project A", exact: true }).click();
   await page.getByRole("tab", { name: "Memories", exact: true }).click();
   await page
-    .getByRole("textbox", { name: "Shared memories" })
-    .fill("Keep this edit");
-  await page.getByRole("button", { name: "Close settings" }).click();
-  await expect.element(page.getByRole("alert")).toBeVisible();
-  expect(dismiss).not.toHaveBeenCalled();
+    .getByRole("button", {
+      name: "Delete memory: Project conventions",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", { name: "Confirm delete memory", exact: true })
+    .click();
   await expect
-    .element(page.getByRole("textbox", { name: "Shared memories" }))
-    .toHaveValue("Keep this edit");
-  fetchMock.mockImplementation(async (_url: string, init?: RequestInit) =>
-    Response.json({ ...teams[0], ...JSON.parse(String(init?.body)) }),
-  );
-  await page.getByRole("button", { name: "Close settings" }).click();
-  await expect.poll(() => dismiss.mock.calls.length).toBe(1);
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("Could not delete memory.");
+  await expect
+    .element(page.getByText("Project conventions", { exact: true }))
+    .toBeVisible();
+  fail = false;
+  await page
+    .getByRole("button", { name: "Confirm delete memory", exact: true })
+    .click();
+  await expect
+    .element(page.getByText("No memories yet", { exact: true }))
+    .toBeVisible();
 });
 
 it("retains failed credentials when switching team tabs or returning to the team list", async () => {
@@ -406,26 +443,25 @@ it("retains failed credentials when switching team tabs or returning to the team
     .toBeVisible();
 });
 
-it("reloads conflicting team edits so Settings can recover and continue saving", async () => {
+it("reloads a memory changed by an agent before confirming deletion again", async () => {
   appAtomRegistry.set(agentsAtom, {
     snapshot: { agents, teams },
     connected: true,
     error: null,
   });
-  let current = { ...teams[0]!, memory: "Updated by agent" };
+  let current = memoryFixture();
   vi.stubGlobal(
     "fetch",
     vi.fn(async (_url: string, init?: RequestInit) => {
-      if (!init?.method) return Response.json({ agents, teams: [current] });
+      if (!init?.method || init.method === "GET")
+        return Response.json([current]);
 
       const input = JSON.parse(String(init.body));
 
-      if (input.expected.memory !== current.memory)
-        return new Response(null, { status: 400 });
+      if (input.expected !== current.text)
+        return Response.json({ error: "Memory changed." }, { status: 400 });
 
-      current = { ...current, memory: input.memory };
-
-      return Response.json(current);
+      return Response.json([]);
     }),
   );
   await using _screen = await render(
@@ -433,21 +469,37 @@ it("reloads conflicting team edits so Settings can recover and continue saving",
   );
   await page.getByRole("button", { name: "Project A", exact: true }).click();
   await page.getByRole("tab", { name: "Memories", exact: true }).click();
-  await page.getByLabelText("Shared memories").fill("Conflicting edit");
-  await page.getByRole("tab", { name: "General", exact: true }).click();
-  await expect.element(page.getByRole("alert")).toBeVisible();
   await page
-    .getByRole("button", { name: "Discard team edits", exact: true })
+    .getByRole("button", {
+      name: "Delete memory: Project conventions",
+      exact: true,
+    })
+    .click();
+  current = memoryFixture("Updated by agent");
+  await page
+    .getByRole("button", { name: "Confirm delete memory", exact: true })
     .click();
   await expect
-    .element(page.getByLabelText("Shared memories"))
-    .toHaveValue("Updated by agent");
-  await page.getByLabelText("Shared memories").fill("New edit");
-  await page.getByRole("tab", { name: "General", exact: true }).click();
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("Memory changed.");
+  await page
+    .getByRole("button", { name: "Reload memories", exact: true })
+    .click();
   await expect
-    .element(page.getByRole("textbox", { name: "Name", exact: true }))
+    .element(page.getByText("Updated by agent", { exact: true }))
     .toBeVisible();
-  expect(current.memory).toBe("New edit");
+  await page
+    .getByRole("button", {
+      name: "Delete memory: Updated by agent",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", { name: "Confirm delete memory", exact: true })
+    .click();
+  await expect
+    .element(page.getByText("No memories yet", { exact: true }))
+    .toBeVisible();
 });
 
 it("flushes credentials after new integration configuration succeeds but authentication fails", async () => {

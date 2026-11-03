@@ -19,6 +19,9 @@ import type { ChatTurn, RunChatTurn } from "@paws/provider-core";
 import { makeAgentService } from "./AgentService.ts";
 import { makeChatService } from "./ChatService.ts";
 
+const promptText = (text = "") =>
+  text.split("\n\n[Paws persistent context]")[0] ?? "";
+
 const provider: ProviderSnapshot = {
   config: {
     id: "codex",
@@ -176,7 +179,7 @@ it("validates and consumes interactive replies once and sends their contents int
   ).rejects.toThrow();
   await Effect.runPromise(fixture.chat.send(id, { ...input("reply"), reply }));
   await expect.poll(() => fixture.chat.get(id).status).toBe("idle");
-  expect(calls[1]?.text).toBe("");
+  expect(promptText(calls[1]?.text)).toBe("");
   expect(calls[1]?.interaction).toMatchObject({
     source: "paws",
     type: "form_submitted",
@@ -266,7 +269,7 @@ for (const mode of ["steer", "queue", "unsupported", "ambiguous"] as const) {
     if (calls[1]) {
       expect(calls[1].nativeThreadId).toBe("native-thread");
       expect(calls[1].interaction?.eventId).toBe("choice-response");
-      expect(calls[1].text).toBe("");
+      expect(promptText(calls[1].text)).toBe("");
     }
 
     expect(
@@ -327,7 +330,7 @@ it("queues typed follow-ups in order and lets an explicit steer reach the active
   const steered: string[] = [];
   let finish = () => {};
   await using fixture = await setup(async (turn) => {
-    prompts.push(turn.text);
+    prompts.push(promptText(turn.text));
     turn.onThread("native-thread");
 
     if (prompts.length > 1) return;
@@ -335,7 +338,7 @@ it("queues typed follow-ups in order and lets an explicit steer reach the active
     turn.onSteer?.(async (followUp) => {
       if (!("text" in followUp)) return "queue";
 
-      steered.push(followUp.text);
+      steered.push(promptText(followUp.text));
 
       return "accepted";
     });
@@ -420,7 +423,7 @@ it("keeps secret values out of persisted messages and delivers them once to the 
   await Effect.runPromise(fixture.chat.send(id, { ...input("saved"), reply }));
   await expect.poll(() => fixture.chat.get(id).status).toBe("idle");
   expect(calls[1]?.interaction?.type).toBe("secret_saved");
-  expect(calls[1]?.text).toBe("");
+  expect(promptText(calls[1]?.text)).toBe("");
   expect(JSON.stringify(fixture.chat.get(id))).not.toContain(secret);
   expect(
     fixture.chat.get(id).messages.filter((m) => m.role === "user"),
@@ -733,7 +736,7 @@ it("hands a conversation to a different provider instead of locking its account"
   expect(calls[1]?.nativeThreadId).toBeNull();
   expect(calls[1]?.handoff).toContain("Remember the calico cat.");
   expect(calls[1]?.handoff).not.toContain('"text":"Continue"');
-  expect(calls[1]?.text).toBe("Continue");
+  expect(promptText(calls[1]?.text)).toBe("Continue");
   await expect
     .poll(() => fixture.chat.get(fixture.agent.id).status)
     .toBe("idle");
@@ -1057,7 +1060,7 @@ it("recreates a non-resumable provider session once with full history", async ()
   expect(calls).toHaveLength(3);
   expect(calls[2]?.nativeThreadId).toBeNull();
   expect(calls[2]?.handoff).toContain("The remembered answer");
-  expect(calls[2]?.text).toBe("Continue");
+  expect(promptText(calls[2]?.text)).toBe("Continue");
 });
 
 it("attaches workspace media and documents durably, scopes downloads, and supports media seeking", async () => {
@@ -1269,7 +1272,7 @@ it("tracks completed messages independently of the turn and releases interrupted
 it("preserves unsent messages when the server shuts down and reopens", async () => {
   const calls: string[] = [];
   await using fixture = await setup(async (turn) => {
-    calls.push(turn.text);
+    calls.push(promptText(turn.text));
     await new Promise<void>((resolve) => {
       turn.signal.addEventListener("abort", () => resolve(), { once: true });
     });
@@ -1376,7 +1379,7 @@ it("recovers a crash snapshot, keeps selected models, edits/removes held inputs 
   );
   await expect.poll(() => fixture.chat.get(id).status).toBe("idle");
   expect(calls).toHaveLength(2);
-  expect(calls[1]?.text).toBe("Make 4k");
+  expect(promptText(calls[1]?.text)).toBe("Make 4k");
   expect(calls[1]?.selection.providerId).toBe("other");
   expect(fixture.chat.get(id).queue).toEqual([]);
   expect(
@@ -1495,7 +1498,7 @@ it("recovers queued form responses but requires secrets to be entered again", as
   );
   await expect.poll(() => fixture.chat.get(id).status).toBe("idle");
   expect(calls[1]?.interaction?.action.id).toBe("yes");
-  expect(calls[1]?.text).toBe("");
+  expect(promptText(calls[1]?.text)).toBe("");
   expect(
     fixture.chat.get(id).messages.filter((message) => message.role === "user"),
   ).toHaveLength(1);
@@ -1934,6 +1937,6 @@ it.each(["message", "interaction"] as const)(
     releases[1]!();
     await expect.poll(() => fixture.chat.get(id).status).toBe("idle");
     expect(turns).toHaveLength(3);
-    expect(turns[2]?.text).toBe("Next task");
+    expect(promptText(turns[2]?.text)).toBe("Next task");
   },
 );

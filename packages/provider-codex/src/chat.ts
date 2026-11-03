@@ -1,3 +1,4 @@
+import { memoryToolDescription } from "@paws/provider-core";
 import {
   chatInstructions,
   ChatToolError,
@@ -151,13 +152,23 @@ const routineTool = {
 const memoryTool = {
   type: "function",
   name: "paws_memory",
-  description:
-    "Read or update persistent memories. Omit teamId for private personal memories; provide teamId for shared team memories. Omit memory to read. Read before updating and provide the full replacement memory, preserving useful existing facts. Never store credentials.",
+  description: memoryToolDescription,
   inputSchema: {
     type: "object",
     properties: {
       teamId: { type: "string" },
       memory: { type: "string", maxLength: 16000 },
+      action: {
+        type: "string",
+        enum: ["list", "search", "read", "create", "update", "delete"],
+      },
+      id: { type: "string" },
+      text: { type: "string", maxLength: 16000 },
+      expected: { type: "string" },
+      inclusion: { type: "string", enum: ["essential", "searchable"] },
+      query: { type: "string", maxLength: 200 },
+      limit: { type: "integer", minimum: 1, maximum: 10 },
+      after: { type: "string" },
     },
     additionalProperties: false,
   },
