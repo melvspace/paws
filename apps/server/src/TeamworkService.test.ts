@@ -1718,3 +1718,135 @@ it.each(["message", "delegate"] as const)(
     expect(childRuns).toBe(1);
   },
 );
+
+it.each(["submitted", "handoff", "changes_requested"] as const)(
+  "reports failed %s work and retries that stage after restart",
+  async (stage) => {
+    await using fixture = await setup();
+    const { requester, worker, reviewer, other } = fixture;
+    let fail = true;
+    let initialWorkerRuns = 0;
+    let stageRuns = 0;
+    fixture.handle(async (turn) => {
+      const event = fixture.service
+        .list(turn.agentId)
+        .events.find((item) => item.id === turn.requestId)!;
+
+      if (event.kind === stage) {
+        stageRuns++;
+
+        if (fail) throw new ChatExecutionError("Stage runtime unavailable.");
+      }
+
+      if (turn.agentId === worker.id && event.kind === "delegated") {
+        initialWorkerRuns++;
+
+        if (stage === "handoff") {
+          const task = fixture.service.list(worker.id).tasks[0]!;
+          await turn.teamworkTool!({
+            action: "handoff",
+            taskId: task.id,
+            revision: task.revision,
+            toAgentId: other.id,
+            text: "Finish from the completed draft.",
+          });
+
+          return;
+        }
+      }
+
+      if (turn.agentId === reviewer.id) {
+        const task = fixture.service.list(reviewer.id).tasks[0]!;
+        await turn.teamworkTool!({
+          action: "review",
+          taskId: task.id,
+          revision: task.revision,
+          verdict:
+            stage === "changes_requested" && task.revision === 2
+              ? "request_changes"
+              : "approve",
+          text: "Review verdict.",
+        });
+      }
+
+      // prettier-ignore
+      turn.onText(
+        "result",
+        "Completed this step.",
+        true,
+      );
+    });
+    await fixture.command(requester.id, {
+      action: "delegate",
+      toAgentId: worker.id,
+      ...(stage === "handoff" ? {} : { reviewerId: reviewer.id }),
+      title: "Verify",
+      text: "Implement and verify the result.",
+    });
+    await expect
+      .poll(() =>
+        fixture.service
+          .list(worker.id)
+          .events.some(
+            (event) => event.kind === stage && event.delivery === "failed",
+          ),
+      )
+      .toBe(true);
+    await expect
+      .poll(
+        () =>
+          fixture.service
+            .replyWaits()
+            .find((wait) => wait.agentId === requester.id)?.status,
+      )
+      .toBe("failed");
+    const failed = fixture.service
+      .list(requester.id)
+      .events.find(
+        (event) => event.kind === stage && event.delivery === "failed",
+      )!;
+    expect(
+      fixture.service.replyWaits().find((wait) => wait.agentId === requester.id)
+        ?.recovery,
+    ).toMatchObject({ eventId: failed.id, canRetry: true });
+    await expect
+      .poll(() =>
+        fixture.main
+          .get(requester.id)
+          .messages.some((message) =>
+            message.text.includes("could not complete"),
+          ),
+      )
+      .toBe(true);
+    await expect.poll(() => fixture.service.busy(requester.id)).toBe(false);
+    expect(initialWorkerRuns).toBe(1);
+    expect(stageRuns).toBe(1);
+    await fixture.reopen();
+    expect(
+      fixture.service.replyWaits().find((wait) => wait.agentId === requester.id)
+        ?.recovery,
+    ).toMatchObject({ eventId: failed.id, canRetry: true });
+    fail = false;
+    await expect(
+      fixture.command(stage === "handoff" ? reviewer.id : other.id, {
+        action: "retry",
+        eventId: failed.id,
+      }),
+    ).rejects.toThrow("another agent");
+    await fixture.command(requester.id, {
+      action: "retry",
+      eventId: failed.id,
+    });
+    await expect
+      .poll(() => fixture.service.list(requester.id).tasks[0]?.status)
+      .toBe("done");
+    await expect.poll(() => fixture.service.replyWaits()).toEqual([]);
+    expect(initialWorkerRuns).toBe(1);
+    expect(stageRuns).toBe(2);
+    expect(
+      fixture.main
+        .get(requester.id)
+        .messages.some((message) => message.peer?.kind === "reply"),
+    ).toBe(true);
+  },
+);

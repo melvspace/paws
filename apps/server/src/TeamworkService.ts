@@ -115,9 +115,15 @@ export function makeTeamworkService(
   };
   const list = (agentId: string) => {
     member(agentId);
+    const allTasks = tasks();
+    const createdTaskIds = new Set(
+      allTasks
+        .filter((task) => task.createdBy === agentId)
+        .map((task) => task.id),
+    );
 
     return {
-      tasks: tasks().filter(
+      tasks: allTasks.filter(
         (task) =>
           task.ownerId === agentId ||
           task.reviewerId === agentId ||
@@ -126,7 +132,9 @@ export function makeTeamworkService(
       events: events()
         .filter(
           (event) =>
-            event.fromAgentId === agentId || event.toAgentId === agentId,
+            event.fromAgentId === agentId ||
+            event.toAgentId === agentId ||
+            createdTaskIds.has(event.taskId ?? ""),
         )
         .slice(-100),
     };
@@ -345,6 +353,11 @@ export function makeTeamworkService(
     }
   }
 
+  for (const event of events()) {
+    if (["failed", "interrupted"].includes(event.delivery))
+      notifyStageFailure(event);
+  }
+
   async function deliver(event: TeamEvent) {
     try {
       member(event.toAgentId!);
@@ -523,12 +536,52 @@ export function makeTeamworkService(
           : "Agent delivery failed. Check the model and runtime, then retry the message.",
     });
 
+    if (!closed) notifyStageFailure(findEvent(event.id));
+
     if (!closed && event.expectsReply !== false)
       queueReply(
         event,
         event.toAgentId!,
         `I could not complete this request. ${findEvent(event.id).error}`,
       );
+  }
+
+  function notifyStageFailure(event: TeamEvent) {
+    if (
+      !["submitted", "handoff", "changes_requested"].includes(event.kind) ||
+      !applicable(event)
+    )
+      return;
+
+    const request = events().findLast(
+      (item) => item.taskId === event.taskId && item.kind === "delegated",
+    );
+    const id = `${event.id}-failure`;
+
+    if (
+      !request?.fromAgentId ||
+      request.expectsReply === false ||
+      request.delivery === "cancelled" ||
+      events().some((item) => item.id === id || item.retryOf === event.id)
+    )
+      return;
+
+    const notice: TeamEvent = {
+      id,
+      kind: "message",
+      fromAgentId: event.toAgentId,
+      toAgentId: request.fromAgentId,
+      text: `I could not complete ${event.kind === "submitted" ? "the review" : "this step"}. ${event.error ?? "Execution was interrupted."} Retry the failed step to continue.`,
+      expectsReply: false,
+      returnToConversationId:
+        request.originConversationId ?? request.fromAgentId,
+      rootEventId: event.rootEventId ?? request.id,
+      depth: (event.depth ?? 0) + 1,
+      delivery: "queued",
+      createdAt: new Date().toISOString(),
+    };
+    writeEvent(notice);
+    trace(notice);
   }
 
   async function respond(agentId: string, input: SendChat) {
@@ -948,6 +1001,18 @@ export function makeTeamworkService(
       )
         continue;
 
+      const stage = request.taskId
+        ? messages.findLast(
+            (item) =>
+              item.taskId === request.taskId &&
+              ["submitted", "handoff", "changes_requested"].includes(
+                item.kind,
+              ) &&
+              applicable(item) &&
+              !messages.some((attempt) => attempt.retryOf === item.id),
+          )
+        : undefined;
+      const pending = stage ?? request;
       const response = messages.find(
         (event) => event.replyToMessageId === request.id,
       );
@@ -955,30 +1020,30 @@ export function makeTeamworkService(
       const status =
         reply && (reply.delivery === "delivered" || replyReceived(reply))
           ? "done"
-          : request.delivery === "failed" ||
-              request.delivery === "skipped" ||
+          : pending.delivery === "failed" ||
+              pending.delivery === "skipped" ||
               reply?.delivery === "failed"
             ? "failed"
-            : request.delivery === "interrupted" ||
+            : pending.delivery === "interrupted" ||
                 reply?.delivery === "interrupted"
               ? "interrupted"
-              : request.delivery === "queued"
+              : pending.delivery === "queued"
                 ? "queued"
-                : request.delivery === "running"
+                : pending.delivery === "running"
                   ? "working"
                   : "waiting";
       waits.push({
         agentId: request.fromAgentId,
         requestId: request.id,
-        toAgentId: request.toAgentId,
-        toName: agentName(request.toAgentId),
+        toAgentId: pending.toAgentId ?? request.toAgentId,
+        toName: agentName(pending.toAgentId ?? request.toAgentId),
         batchId:
           request.originRequestId ?? request.originConversationId ?? request.id,
         status,
         recovery: recovery(
           reply && ["failed", "interrupted"].includes(reply.delivery)
             ? reply
-            : request,
+            : pending,
         ),
       });
     }
@@ -1100,7 +1165,8 @@ export function makeTeamworkService(
 
               if (
                 actor !== previous.fromAgentId &&
-                actor !== previous.toAgentId
+                actor !== previous.toAgentId &&
+                actor !== currentTask(previous)?.createdBy
               )
                 throw new ChatError(
                   403,
