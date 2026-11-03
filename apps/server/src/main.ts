@@ -307,7 +307,13 @@ export function createServer(
       )
         return;
       if (await providerHttp(request, response, providers)) return;
-      if (await chatHttp(request, response, chat)) return;
+      // prettier-ignore
+      if (await chatHttp(
+        request,
+        response,
+        chat,
+        teamwork.respond,
+      )) return;
 
       if (request.method === "GET" && request.url === "/api/agents") {
         response.end(JSON.stringify(await snapshot()));

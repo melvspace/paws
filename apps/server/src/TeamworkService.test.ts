@@ -519,68 +519,76 @@ it("bounds peer chains without relying on shared team membership", async () => {
   expect(fixture.service.list(requester.id).events).toHaveLength(9);
 });
 
-it("waits for nested delegation and resumes the owning agent before completing its internal work", async () => {
-  await using fixture = await setup();
-  const { requester, worker, other } = fixture;
-  let release = () => {};
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const calls: string[] = [];
-  fixture.handle(async (turn) => {
-    calls.push(turn.agentId);
-
-    if (
-      turn.agentId === worker.id &&
-      turn.text.includes("[Paws peer message")
-    ) {
-      await turn.teamworkTool!({
-        action: "message",
-        toAgentId: other.id,
-        text: "Check the API before I finish the root task.",
-      });
-      turn.onText("progress", "Waiting for the API check.", true);
-
-      return;
-    }
-
-    if (turn.agentId === other.id) await held;
-
-    turn.onText(
-      "result",
-      turn.agentId === other.id
-        ? "The API check passed."
-        : "Combined result verified.",
-      true,
-    );
-  });
-  try {
-    await fixture.command(requester.id, {
-      action: "delegate",
-      toAgentId: worker.id,
-      title: "Root",
-      text: "Produce a verified result.",
+it.each(["message", "delegate"] as const)(
+  "waits for nested %s work and returns the resumed result",
+  async (action) => {
+    await using fixture = await setup();
+    const { requester, worker, other } = fixture;
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    await expect.poll(() => fixture.service.busy(other.id)).toBe(true);
-    expect(fixture.service.list(requester.id).tasks[0]?.status).toBe(
-      "assigned",
-    );
-    release();
-    await expect
-      .poll(() => fixture.service.list(requester.id).tasks[0]?.status)
-      .toBe("done");
-    await expect
-      .poll(() =>
-        fixture.main
-          .get(requester.id)
-          .messages.some((message) => message.peer?.kind === "reply"),
-      )
-      .toBe(true);
-    expect(calls).toEqual([worker.id, other.id, worker.id, requester.id]);
-  } finally {
-    release();
-  }
-});
+    const calls: string[] = [];
+    fixture.handle(async (turn) => {
+      calls.push(turn.agentId);
+
+      if (
+        turn.agentId === worker.id &&
+        turn.text.includes("[Paws peer message")
+      ) {
+        await turn.teamworkTool!({
+          action: "message",
+          toAgentId: other.id,
+          text: "Check the API before I finish the root task.",
+        });
+        turn.onText("progress", "Waiting for the API check.", true);
+
+        return;
+      }
+
+      if (turn.agentId === other.id) await held;
+
+      turn.onText(
+        "result",
+        turn.agentId === other.id
+          ? "The API check passed."
+          : "Combined result verified.",
+        true,
+      );
+    });
+    try {
+      await fixture.command(requester.id, {
+        action,
+        toAgentId: worker.id,
+        title: "Root",
+        text: "Produce a verified result.",
+      });
+      await expect.poll(() => fixture.service.busy(other.id)).toBe(true);
+
+      if (action === "delegate")
+        expect(fixture.service.list(requester.id).tasks[0]?.status).toBe(
+          "assigned",
+        );
+
+      release();
+
+      if (action === "delegate")
+        await expect
+          .poll(() => fixture.service.list(requester.id).tasks[0]?.status)
+          .toBe("done");
+      await expect
+        .poll(() =>
+          fixture.main
+            .get(requester.id)
+            .messages.some((message) => message.peer?.kind === "reply"),
+        )
+        .toBe(true);
+      expect(calls).toEqual([worker.id, other.id, worker.id, requester.id]);
+    } finally {
+      release();
+    }
+  },
+);
 
 it("correlates explicit replies and suppresses the automatic duplicate", async () => {
   await using fixture = await setup();
@@ -1492,3 +1500,131 @@ it("retries a failed return delivery without asking the worker to repeat complet
       ),
   ).toBe(true);
 });
+
+it("processes every queued child reply before completing the parent task", async () => {
+  await using fixture = await setup();
+  const { requester, worker, reviewer, other } = fixture;
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const replies: string[] = [];
+  fixture.handle(async (turn) => {
+    if (turn.agentId === worker.id) {
+      if (turn.text.includes("[Paws peer message")) {
+        await turn.teamworkTool!({
+          action: "message",
+          toAgentIds: [reviewer.id, other.id],
+          text: "Check your part.",
+        });
+
+        return;
+      }
+
+      replies.push(turn.text);
+      await held;
+      // prettier-ignore
+      turn.onText(
+        "result",
+        "Combined result.",
+        true,
+      );
+    } else {
+      // prettier-ignore
+      turn.onText(
+        "result",
+        `Result from ${turn.agentName}`,
+        true,
+      );
+    }
+  });
+  try {
+    await fixture.command(requester.id, {
+      action: "delegate",
+      toAgentId: worker.id,
+      title: "Combine",
+      text: "Combine both checks.",
+    });
+    await expect.poll(() => replies.length).toBe(1);
+    await expect
+      .poll(
+        () =>
+          fixture.service
+            .list(worker.id)
+            .events.filter(
+              (event) =>
+                event.kind === "reply" && event.toAgentId === worker.id,
+            ).length,
+      )
+      .toBe(2);
+    release();
+    await expect
+      .poll(() => fixture.service.list(requester.id).tasks[0]?.status)
+      .toBe("done");
+    await expect.poll(() => replies.length).toBe(2);
+    expect(
+      fixture.service
+        .list(worker.id)
+        .events.filter(
+          (event) => event.kind === "reply" && event.toAgentId === worker.id,
+        )
+        .every((event) => event.delivery === "delivered"),
+    ).toBe(true);
+  } finally {
+    release();
+  }
+});
+
+it.each([false, true])(
+  "returns native generated images with accompanying text: %s",
+  async (withText) => {
+    await using fixture = await setup();
+    const { requester, worker } = fixture;
+    const directory = join(
+      resolveWorkspaceDirectory(fixture.root, worker.id, "home"),
+      ".codex/generated_images",
+    );
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, "generated.png"),
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    );
+    const path = `${agentExecutionPaths(fixture.root, worker.id).home}/.codex/generated_images/generated.png`;
+    fixture.handle(async (turn) => {
+      if (turn.agentId !== worker.id) return;
+
+      await turn.onImage!("generated", path);
+
+      if (withText) {
+        // prettier-ignore
+        turn.onText(
+          "result",
+          "Generated image.",
+          true,
+        );
+      }
+    });
+    await fixture.command(requester.id, {
+      action: "message",
+      toAgentId: worker.id,
+      text: "Generate an image.",
+    });
+    await expect
+      .poll(
+        () =>
+          fixture.service
+            .list(requester.id)
+            .events.find((event) => event.kind === "reply")?.delivery,
+      )
+      .toBe("delivered");
+    const reply = fixture.service
+      .list(requester.id)
+      .events.find((event) => event.kind === "reply")!;
+    expect(reply.attachments).toHaveLength(1);
+    expect(reply.text).toBe(withText ? "Generated image." : "Files attached.");
+    expect(
+      (await fixture.main.attachment(requester.id, reply.attachments![0]!.id))
+        .mediaType,
+    ).toBe("image/png");
+  },
+);

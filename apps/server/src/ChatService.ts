@@ -387,6 +387,7 @@ export function makeChatService(
     savedPath: string,
     createdAt = new Date().toISOString(),
     canPublish = () => true,
+    requestId?: string,
   ) {
     const id = `image:${nativeId}`;
 
@@ -411,6 +412,7 @@ export function makeChatService(
 
       const message: ChatMessage = {
         id,
+        ...(requestId ? { requestId } : {}),
         role: "assistant",
         text: "",
         createdAt,
@@ -1104,6 +1106,7 @@ export function makeChatService(
                       savedPath,
                       undefined,
                       () => !silent && !abort.signal.aborted,
+                      input.requestId,
                     );
                     finishHandoff("completed");
                   }
@@ -1448,6 +1451,27 @@ export function makeChatService(
                 item.id === messageId ? message : item,
               )
             : [...current.conversation.messages, message],
+        },
+      });
+    },
+    publishCard(id: string, message: ChatMessage) {
+      const state = states.get(id) ?? {
+        conversation: get(id),
+        nativeThreadId: null,
+        requests: {},
+      };
+      persist({
+        ...state,
+        conversation: {
+          ...state.conversation,
+          messages: state.conversation.messages.some(
+            (item) => item.id === message.id,
+          )
+            ? state.conversation.messages.map((item) =>
+                item.id === message.id ? message : item,
+              )
+            : [...state.conversation.messages, message],
+          revision: state.conversation.revision + 1,
         },
       });
     },

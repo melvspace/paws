@@ -114,6 +114,7 @@ export type PeerMessageOrigin = typeof PeerMessageOrigin.Type;
 
 export const ChatMessage = Schema.Struct({
   id: Schema.String,
+  requestId: Schema.optional(Schema.String),
   role: Schema.Literals(["user", "assistant"]),
   text: Schema.String,
   createdAt: Schema.String,

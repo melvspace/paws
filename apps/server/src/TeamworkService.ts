@@ -13,6 +13,8 @@ import {
   type ChatAttachment,
   type Conversation,
   type PeerMessageRecovery,
+  type SendChat,
+  type ChatMessage,
 } from "@paws/contracts";
 import { ChatToolError, type RunChatTurn } from "@paws/provider-core";
 import { ChatError, makeChatService } from "./ChatService.ts";
@@ -66,6 +68,7 @@ export function makeTeamworkService(
   `);
   let closed = false;
   const executions = new Map<string, Promise<void>>();
+  const continuations = new Map<string, string>();
   const tasks = () =>
     db
       .prepare("SELECT data FROM team_tasks ORDER BY rowid")
@@ -274,7 +277,11 @@ export function makeTeamworkService(
     providers,
     async (turn) => {
       // Recheck after acquiring the shared per-agent execution lock as well.
-      const event = findEvent(turn.requestId ?? turn.conversationId!);
+      const event = findEvent(
+        continuations.get(turn.requestId ?? "") ??
+          turn.requestId ??
+          turn.conversationId!,
+      );
       member(turn.agentId);
 
       if (!applicable(event))
@@ -408,79 +415,185 @@ export function makeTeamworkService(
 
       if (outcome._tag === "Failure") throw outcome.failure.cause;
 
-      await target.wait(conversationId);
-      const conversation = target.get(conversationId);
-      const waiting = conversation.messages.some(
-        (message) =>
-          message.card &&
-          !message.response &&
-          (message.card.actions.length ||
-            message.card.fields.length ||
-            message.card.secretRequest),
+      await settleDelivery(event);
+    } catch (error) {
+      failDelivery(event, error);
+    } finally {
+      trace(findEvent(event.id));
+      onChange();
+    }
+  }
+
+  function publishInput(event: TeamEvent, message: ChatMessage) {
+    main.publishCard(event.toAgentId!, {
+      ...message,
+      id: `peer-input:${event.returnToConversationId ?? event.id}:${message.id}`,
+      peer: undefined,
+    });
+  }
+
+  async function settleDelivery(event: TeamEvent, requestId = event.id) {
+    const target = deliveryService(event);
+    const conversationId = event.returnToConversationId ?? event.id;
+    await target.wait(conversationId);
+    const conversation = target.get(conversationId);
+    const waiting = conversation.messages.filter(
+      (message) =>
+        message.card &&
+        !message.response &&
+        (!message.interaction ||
+          message.interaction.delivery === "cancelled") &&
+        (message.card.actions.length ||
+          message.card.fields.length ||
+          message.card.secretRequest),
+    );
+
+    if (conversation.status === "error" || conversation.interrupted)
+      throw new ChatError(
+        409,
+        conversation.error ?? "Execution was interrupted. Retry the message.",
       );
 
-      if (
-        conversation.status === "error" ||
-        conversation.interrupted ||
-        waiting
-      )
-        throw new ChatError(
-          409,
-          conversation.error ??
-            "Execution needs attention. Inspect the conversation and resolve any requested input in the agent’s main chat before retrying.",
-        );
+    if (findEvent(event.id).delivery === "cancelled") return;
 
-      if (findEvent(event.id).delivery === "cancelled") return;
+    writeEvent({
+      ...findEvent(event.id),
+      delivery: "delivered",
+      error: undefined,
+    });
 
+    if (target === conversations) {
+      for (const message of conversation.messages) {
+        if (
+          message.card &&
+          (message.card.actions.length ||
+            message.card.fields.length ||
+            message.card.secretRequest)
+        )
+          publishInput(event, message);
+      }
+    }
+
+    if (waiting.length) return;
+
+    const output = conversation.messages.filter(
+      (message) =>
+        message.role === "assistant" &&
+        (message.id.startsWith(`${requestId}:`) ||
+          message.requestId === requestId),
+    );
+    const response = output
+      .map((message) => message.text || message.card?.text || "")
+      .filter(Boolean)
+      .join("\n\n");
+    await finishRequest(
+      event,
+      response,
+      output.flatMap((message) => message.attachments ?? []),
+    );
+  }
+
+  function failDelivery(event: TeamEvent, error: unknown) {
+    if (findEvent(event.id).delivery === "cancelled") return;
+
+    if (replyReceived(event)) {
       writeEvent({
         ...findEvent(event.id),
         delivery: "delivered",
         error: undefined,
       });
-      const output = conversation.messages.filter(
-        (message) =>
-          message.role === "assistant" && message.id.startsWith(`${event.id}:`),
-      );
-      const response = output
-        .map((message) => message.text || message.card?.text || "")
-        .filter(Boolean)
-        .join("\n\n");
-      await finishRequest(
-        event,
-        response,
-        output.flatMap((message) => message.attachments ?? []),
-      );
-    } catch (error) {
-      if (findEvent(event.id).delivery === "cancelled") return;
 
-      if (replyReceived(event)) {
-        writeEvent({
-          ...findEvent(event.id),
-          delivery: "delivered",
-          error: undefined,
-        });
-
-        return;
-      }
-
-      writeEvent({
-        ...findEvent(event.id),
-        delivery: closed ? "interrupted" : "failed",
-        error:
-          error instanceof ChatError
-            ? error.message
-            : "Agent delivery failed. Check the model and runtime, then retry the message.",
-      });
-      if (!closed && event.expectsReply !== false)
-        queueReply(
-          event,
-          event.toAgentId!,
-          `I could not complete this request. ${findEvent(event.id).error}`,
-        );
-    } finally {
-      trace(findEvent(event.id));
-      onChange();
+      return;
     }
+
+    writeEvent({
+      ...findEvent(event.id),
+      delivery: closed ? "interrupted" : "failed",
+      error:
+        error instanceof ChatError
+          ? error.message
+          : "Agent delivery failed. Check the model and runtime, then retry the message.",
+    });
+
+    if (!closed && event.expectsReply !== false)
+      queueReply(
+        event,
+        event.toAgentId!,
+        `I could not complete this request. ${findEvent(event.id).error}`,
+      );
+  }
+
+  async function respond(agentId: string, input: SendChat) {
+    const reply = input.reply;
+
+    if (!reply?.messageId.startsWith("peer-input:")) return;
+
+    const event = events().find((item) =>
+      reply.messageId.startsWith(`peer-input:${item.id}:`),
+    );
+
+    if (!event || event.toAgentId !== agentId)
+      throw new ChatError(404, "Input request not found.");
+    if (!applicable(event))
+      throw new ChatError(409, "This request is no longer active.");
+    if (executions.has(agentId))
+      throw new ChatError(
+        409,
+        "Wait for the agent to finish before answering.",
+      );
+    if (input.text.trim() || input.attachmentIds?.length)
+      throw new ChatError(400, "Send only the requested input.");
+
+    const conversationId = event.returnToConversationId ?? event.id;
+    const target = deliveryService(event);
+    const messageId = reply.messageId.slice(`peer-input:${event.id}:`.length);
+    const selection = target.get(conversationId).selection;
+
+    if (!selection)
+      throw new ChatError(409, "Choose a model before answering.");
+
+    continuations.set(input.requestId, event.id);
+    const outcome = await Effect.runPromise(
+      Effect.result(
+        target.send(conversationId, {
+          ...input,
+          selection,
+          mode: "queue",
+          reply: { ...reply, messageId },
+        }),
+      ),
+    );
+
+    if (outcome._tag === "Failure") {
+      continuations.delete(input.requestId);
+
+      throw outcome.failure.cause;
+    }
+
+    writeEvent({
+      ...findEvent(event.id),
+      delivery: "running",
+      error: undefined,
+    });
+    publishInput(
+      event,
+      target
+        .get(conversationId)
+        .messages.find((message) => message.id === messageId)!,
+    );
+    const work = settleDelivery(event, input.requestId)
+      .catch((error) => failDelivery(event, error))
+      .finally(() => {
+        continuations.delete(input.requestId);
+        executions.delete(agentId);
+        trace(findEvent(event.id));
+        pump();
+        onChange();
+      });
+    executions.set(agentId, work);
+    onChange();
+
+    return main.get(agentId);
   }
 
   async function finishRequest(
@@ -492,7 +605,8 @@ export function makeTeamworkService(
     const task = currentTask(event);
     const resultText =
       response || (attachments.length ? "Files attached." : "");
-    const delegated = events().some(
+    const messages = events();
+    const delegated = messages.some(
       (item) =>
         item.fromAgentId === event.toAgentId &&
         item.expectsReply !== false &&
@@ -500,7 +614,12 @@ export function makeTeamworkService(
         item.originConversationId ===
           (event.returnToConversationId ?? event.id) &&
         item.id !== event.id &&
-        !events().some((reply) => reply.replyToMessageId === item.id),
+        !messages.some((attempt) => attempt.retryOf === item.id) &&
+        !messages.some(
+          (reply) =>
+            reply.replyToMessageId === item.id &&
+            reply.delivery === "delivered",
+        ),
     );
 
     if (delegated) return;
@@ -537,7 +656,8 @@ export function makeTeamworkService(
       ? events().findLast(
           (item) => item.taskId === updated.id && item.kind === "delegated",
         )
-      : event;
+      : (events().find((item) => item.id === event.returnToConversationId) ??
+        event);
 
     if (
       !request?.fromAgentId ||
@@ -1261,6 +1381,7 @@ export function makeTeamworkService(
   return {
     list,
     execute,
+    respond,
     conversations,
     ready,
     async tool(
@@ -1269,7 +1390,8 @@ export function makeTeamworkService(
       conversationId?: string,
       requestId?: string,
     ) {
-      const sourceId = requestId ?? conversationId;
+      const sourceId =
+        continuations.get(requestId ?? "") ?? requestId ?? conversationId;
 
       if (
         sourceId &&
