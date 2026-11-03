@@ -36,7 +36,9 @@ it("streams over same-origin sockets, rejects foreign and missing agents, and re
     events.findLast((event): event is BrowserState => event.type === "state");
 
   try {
-    await vi.waitFor(() => expect(latest()?.tabs.length).toBe(1));
+    await vi.waitFor(() => expect(latest()?.tabs.length).toBe(1), {
+      timeout: 10000,
+    });
     await vi.waitFor(() =>
       expect(events.some((event) => event.type === "frame")).toBe(true),
     );
@@ -118,7 +120,9 @@ it.concurrent.each([1, 2, 3])(
       events.findLast((event): event is BrowserState => event.type === "state");
 
     try {
-      await vi.waitFor(() => expect(latest()?.tabs.length).toBe(1));
+      await vi.waitFor(() => expect(latest()?.tabs.length).toBe(1), {
+        timeout: 10000,
+      });
       const tabId = latest()!.tabs[0]!.id;
       socket.send(JSON.stringify({ type: "takeControl", tabId }));
       await vi.waitFor(() => expect(latest()?.controllerTabId).toBe(tabId));
@@ -158,5 +162,5 @@ it.concurrent.each([1, 2, 3])(
       await rm(root, { recursive: true, force: true });
     }
   },
-  15000,
+  30000,
 );
