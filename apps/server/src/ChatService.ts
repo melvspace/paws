@@ -1475,6 +1475,33 @@ export function makeChatService(
         },
       });
     },
+    restorePeerOrigins(
+      resolve: (
+        conversationId: string,
+        message: ChatMessage,
+      ) => ChatMessage["peer"],
+    ) {
+      for (const [id, state] of states) {
+        let changed = false;
+        const messages = state.conversation.messages.map((message) => {
+          if (message.peer) return message;
+
+          const peer = resolve(id, message);
+
+          if (!peer) return message;
+
+          changed = true;
+
+          return { ...message, peer };
+        });
+
+        if (changed)
+          patch(id, (current) => ({
+            ...current,
+            conversation: { ...current.conversation, messages },
+          }));
+      }
+    },
     sendPeer(
       id: string,
       input: SendChat,

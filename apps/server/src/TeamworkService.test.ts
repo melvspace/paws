@@ -2682,3 +2682,132 @@ it("bounds reply-wait database reads with settled history, retries, stages, and 
     reads.mockRestore();
   }
 });
+
+it("restores peer identities in delivered history so requests and replies never become ordinary chat bubbles", async () => {
+  await using fixture = await setup();
+  const { requester, worker } = fixture;
+  const requestText = "Identify the attached video.";
+  const replyText = "It is a shape-morphing animation.";
+  const calls: string[] = [];
+  await writeFile(
+    join(
+      resolveWorkspaceDirectory(fixture.root, requester.id, "workspace"),
+      "clip.mp4",
+    ),
+    "attachment snapshot fixture",
+  );
+  fixture.handle(async (turn) => {
+    calls.push(turn.agentId);
+    turn.onText(
+      "result",
+      turn.agentId === worker.id ? replyText : "Here is the result.",
+      true,
+    );
+  });
+  await fixture.command(requester.id, {
+    action: "message",
+    toAgentId: worker.id,
+    text: requestText,
+    attachments: [{ path: "clip.mp4" }],
+  });
+  await expect
+    .poll(
+      () =>
+        fixture.service
+          .list(requester.id)
+          .events.filter((event) => event.delivery === "delivered").length,
+    )
+    .toBe(2);
+  const events = fixture.service.list(requester.id).events;
+  const request = events.find((event) => event.kind === "message")!;
+  const reply = events.find((event) => event.kind === "reply")!;
+
+  // Older persisted rows retained stable event ids but omitted peer metadata.
+  // Reproduce the screenshot's outgoing trace, incoming trace and blue reply.
+  for (const agentId of [requester.id, worker.id]) {
+    for (const message of fixture.main
+      .get(agentId)
+      .messages.filter((item) => item.peer)) {
+      fixture.main.publishCard(agentId, { ...message, peer: undefined });
+    }
+  }
+
+  fixture.main.publishCard(requester.id, {
+    id: "ordinary-user",
+    role: "user",
+    text: replyText,
+    createdAt: "2026-11-03T15:10:00Z",
+  });
+  const before = [requester.id, worker.id].map(
+    (id) => fixture.main.get(id).messages,
+  );
+  const originalCalls = [...calls];
+  await fixture.reopen();
+  expect(
+    fixture.main
+      .get(requester.id)
+      .messages.find((message) => message.id === `peer:${request.id}:sent`)
+      ?.peer,
+  ).toMatchObject({
+    eventId: request.id,
+    direction: "sent",
+    fromAgentId: requester.id,
+    toAgentId: worker.id,
+  });
+  expect(
+    fixture.main
+      .get(worker.id)
+      .messages.find((message) => message.id === `peer:${request.id}:received`)
+      ?.peer,
+  ).toMatchObject({ eventId: request.id, direction: "received" });
+  expect(
+    fixture.main
+      .get(requester.id)
+      .messages.find((message) => message.id === reply.id)?.peer,
+  ).toMatchObject({
+    eventId: reply.id,
+    kind: "reply",
+    fromAgentId: worker.id,
+    requestText,
+  });
+  expect(
+    fixture.main
+      .get(requester.id)
+      .messages.find((message) => message.id === "ordinary-user")?.peer,
+  ).toBeUndefined();
+  const withoutOrigins = (messages: (typeof before)[number]) =>
+    messages.map(({ peer: _peer, ...message }) => message);
+  expect(
+    [requester.id, worker.id].map((id) =>
+      withoutOrigins(fixture.main.get(id).messages),
+    ),
+  ).toEqual(before.map(withoutOrigins));
+  expect(
+    fixture.main
+      .get(worker.id)
+      .messages.find((message) => message.id === `peer:${request.id}:received`)
+      ?.attachments,
+  ).toHaveLength(1);
+  const db = new DatabaseSync(join(fixture.root, "state.sqlite"), {
+    readOnly: true,
+  });
+
+  try {
+    const row = db
+      .prepare("SELECT data FROM conversations WHERE agent_id = ?")
+      .get(requester.id)!;
+    const saved = JSON.parse(String(row.data));
+    expect(
+      saved.conversation.messages.find(
+        (message: { id: string }) => message.id === reply.id,
+      ).peer.eventId,
+    ).toBe(reply.id);
+  } finally {
+    db.close();
+  }
+
+  const repairedRevision = fixture.main.get(requester.id).revision;
+  await fixture.reopen();
+  expect(fixture.main.get(requester.id).revision).toBe(repairedRevision);
+  expect(calls).toEqual(originalCalls);
+});

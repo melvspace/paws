@@ -31,3 +31,5 @@ export {
   agentToolDescription,
 } from "./instructions.ts";
 export type { McpHarnessClient } from "./mcp.ts";
+
+export * from "./browser.ts";

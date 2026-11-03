@@ -51,6 +51,7 @@ export async function runClaudeTurn(
     "request_secret",
     "paws_read_attachment",
     "paws_view_image",
+    "paws_browser",
   ].map((name) => `mcp__paws__${name}`);
   const effort = turn.selection.options.effort;
   const validEffort =

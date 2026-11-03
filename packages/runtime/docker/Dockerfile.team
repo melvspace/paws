@@ -1,6 +1,6 @@
 FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git bash nodejs npm python3 python3-venv ripgrep ffmpeg util-linux procps \
+    ca-certificates curl git bash nodejs npm python3 python3-venv ripgrep ffmpeg chromium util-linux procps \
     build-essential pkg-config unzip xz-utils \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /opt/paws/bin

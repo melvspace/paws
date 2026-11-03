@@ -375,6 +375,67 @@ export function makeTeamworkService(
       );
   }
 
+  function restorePeerHistory() {
+    const savedEvents = new Map(events().map((event) => [event.id, event]));
+    const services = new Set([main, conversations]);
+    const origins = new Map<string, PeerMessageOrigin>();
+
+    for (const event of savedEvents.values()) {
+      if (
+        event.returnToConversationId &&
+        !savedEvents.has(event.returnToConversationId)
+      ) {
+        const service = returnService(event.returnToConversationId);
+
+        if (service) services.add(service);
+      }
+    }
+
+    for (const service of services) {
+      service.restorePeerOrigins((conversationId, message) => {
+        const trace = /^peer:([^:]+):(sent|received)$/.exec(message.id);
+        const event = savedEvents.get(trace?.[1] ?? message.id);
+
+        if (!event?.fromAgentId || !event.toAgentId) return;
+
+        const direction = trace?.[2] === "sent" ? "sent" : "received";
+
+        if (trace) {
+          if (service !== main) return;
+
+          const owner =
+            direction === "sent" ? event.fromAgentId : event.toAgentId;
+
+          if (
+            conversationId !== owner &&
+            (direction === "sent" ||
+              currentTask(event)?.createdBy !== conversationId)
+          )
+            return;
+        } else if (
+          service !== deliveryService(event) ||
+          conversationId !== (event.returnToConversationId ?? event.id) ||
+          (event.returnToConversationId && message.text !== event.text)
+        )
+          return;
+
+        const key = `${event.id}:${direction}`;
+        let peer = origins.get(key);
+
+        if (!peer) {
+          peer = origin(event, direction);
+          origins.set(key, peer);
+        }
+
+        return peer;
+      });
+    }
+  }
+
+  // Restore provenance before reconciling receipts, so completed peer work is
+  // displayed correctly and cannot be mistaken for an undelivered user input.
+  restorePeerHistory();
+
   // External side effects may already have happened; interrupted work needs an explicit retry.
   for (const event of events()) {
     if (

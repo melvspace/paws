@@ -1,3 +1,5 @@
+import { makeBrowserService } from "./BrowserService.ts";
+import { browserSockets } from "./browserSockets.ts";
 import { makeTeamworkService } from "./TeamworkService.ts";
 import { peerMessageHttp } from "./peerMessageHttp.ts";
 import { makeAgentManagementService } from "./AgentManagementService.ts";
@@ -49,14 +51,23 @@ export function createServer(
     runChat?: RunChatTurn;
     routineLimits?: typeof routineLimits;
     discoverProviders?: Parameters<typeof makeProviderService>[1];
+    launchBrowser?: Parameters<typeof makeBrowserService>[1];
   } = {},
 ) {
   let teamworkRevision = 0;
+  const browsers = makeBrowserService(
+    root,
+    options.launchBrowser,
+    (id) =>
+      !agents.changing(id) &&
+      Effect.runSync(agents.list()).some((agent) => agent.id === id),
+  );
   const agents = makeAgentService(
     root,
     (id) => !chat.busy(id) && !routines?.busy(id) && !teamwork?.busy(id),
     async (id) => {
       await managedChat.closeAgent(id);
+      await browsers.closeAgent(id);
     },
   );
   const providers = makeProviderService(root, options.discoverProviders, () => {
@@ -81,6 +92,7 @@ export function createServer(
   const run: RunChatTurn = (turn) =>
     execute({
       ...turn,
+      browserTool: (input) => browsers.tool(turn.agentId, input, turn.signal),
       teamworkTool: (input) =>
         teamwork.tool(turn.agentId, input, turn.conversationId, turn.requestId),
       agentTool: (input) =>
@@ -559,7 +571,27 @@ export function createServer(
           .end(JSON.stringify({ error: "Unable to process webhook request." }));
     }
   });
-  const sockets = new WebSocketServer({ server, path: "/ws" });
+  const sockets = new WebSocketServer({ noServer: true });
+  const browserStream = browserSockets(
+    server,
+    browsers,
+    async (id) =>
+      !agents.changing(id) &&
+      (await Effect.runPromise(agents.list())).some((agent) => agent.id === id),
+  );
+  server.on("upgrade", (request, socket, head) => {
+    if (request.url !== "/ws") return;
+
+    if (!isAllowedRequestOrigin(request.headers)) {
+      socket.destroy();
+
+      return;
+    }
+
+    sockets.handleUpgrade(request, socket, head, (client) =>
+      sockets.emit("connection", client, request),
+    );
+  });
 
   async function broadcast() {
     const state = JSON.stringify(await snapshot());
@@ -600,12 +632,14 @@ export function createServer(
       }
 
       sockets.close();
+      browserStream.close();
       server.close();
       webhookServer.close();
       await teamwork.close();
       await routines.close();
       await chat.close();
       await managedChat.close();
+      await browsers.close();
       await closeNativeMcpLogins(root);
       await providers.close();
       agents.close();

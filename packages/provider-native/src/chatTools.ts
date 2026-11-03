@@ -4,6 +4,7 @@ import { Schema } from "effect";
 import { ChatCard, ChatFileInputs, validateChatCard } from "@paws/contracts";
 import {
   ChatToolError,
+  browserTool,
   teamToolDescription,
   memoryToolDescription,
   teamworkToolDescription,
@@ -23,6 +24,42 @@ export const toolText = (text: string) => ({
 
 export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
   const entries = [
+    {
+      name: browserTool.name,
+      description: browserTool.description,
+      schema: z.object({
+        action: z.enum([
+          "list",
+          "open",
+          "navigate",
+          "snapshot",
+          "screenshot",
+          "click",
+          "fill",
+          "press",
+          "scroll",
+          "back",
+          "forward",
+          "reload",
+          "close",
+          "dialog",
+        ]),
+        tabId: z.string().optional(),
+        url: z.string().optional(),
+        selector: z.string().optional(),
+        text: z.string().optional(),
+        key: z.string().optional(),
+        x: z.number().optional(),
+        y: z.number().optional(),
+        deltaY: z.number().optional(),
+        accept: z.boolean().optional(),
+      }),
+      async execute(value: unknown) {
+        if (!turn.browserTool) throw new ChatToolError("Browser unavailable.");
+
+        return { ...(await turn.browserTool(value)) };
+      },
+    },
     {
       name: "paws_teamwork",
       description: teamworkToolDescription,
