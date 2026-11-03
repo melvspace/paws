@@ -5,6 +5,7 @@ import {
   ChatAttachment,
   Conversation,
   type SendChat,
+  type MarkChatRead,
   type ChatQueueAction,
   type ChatMessage,
 } from "@paws/contracts";
@@ -29,10 +30,16 @@ export const outgoingMessagesAtom = Atom.make<readonly OutgoingMessage[]>(
 
 export async function chatRequest(
   agentId: string,
-  input?: SendChat | ChatQueueAction | "stop" | "compact" | "continue",
+  input?:
+    | SendChat
+    | ChatQueueAction
+    | MarkChatRead
+    | "stop"
+    | "compact"
+    | "continue",
 ) {
   const response = await fetch(
-    `/api/agents/${encodeURIComponent(agentId)}/chat${typeof input === "string" ? `/${input}` : input && "action" in input ? "/queue" : ""}`,
+    `/api/agents/${encodeURIComponent(agentId)}/chat${typeof input === "string" ? `/${input}` : input && "action" in input ? "/queue" : input && "messageId" in input ? "/read" : ""}`,
     {
       method: input ? "POST" : "GET",
       ...(input && typeof input !== "string"

@@ -1,7 +1,7 @@
 import * as Fs from "node:fs/promises";
 import { once } from "node:events";
 import { Schema } from "effect";
-import { Agent } from "@paws/contracts";
+import { Agent, Conversation } from "@paws/contracts";
 import { WebSocket } from "ws";
 import { expect, it } from "vite-plus/test";
 import { createServer } from "./main.ts";
@@ -206,8 +206,7 @@ it("accepts chat messages, broadcasts replies, returns validation errors and rej
   const base = `http://127.0.0.1:${address.port}`;
   const headers = { "Content-Type": "application/json" };
   const socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws`);
-  const snapshots: { conversations?: { messages: { text: string }[] }[] }[] =
-    [];
+  const snapshots: { conversations?: Conversation[] }[] = [];
   socket.on("message", (data) => snapshots.push(JSON.parse(String(data))));
 
   try {
@@ -259,6 +258,44 @@ it("accepts chat messages, broadcasts replies, returns validation errors and rej
       200,
     );
     expect(turns).toBe(1);
+    const conversation = Schema.decodeUnknownSync(Conversation)(
+      await (await fetch(url)).json(),
+    );
+    const lastMessage = conversation.messages.at(-1)!;
+    expect(conversation.unreadCount).toBe(1);
+    const readResponse = await fetch(`${url}/read`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ messageId: lastMessage.id }),
+    });
+    expect(readResponse.status).toBe(200);
+    expect(await readResponse.json()).toMatchObject({
+      lastReadMessageId: lastMessage.id,
+      unreadCount: 0,
+    });
+    await expect
+      .poll(() =>
+        snapshots.some((snapshot) =>
+          snapshot.conversations?.some(
+            (item) =>
+              item.lastReadMessageId === lastMessage.id &&
+              item.unreadCount === 0,
+          ),
+        ),
+      )
+      .toBe(true);
+    const invalidRead = await fetch(`${url}/read`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ messageId: "missing" }),
+    });
+    expect(invalidRead.status).toBe(400);
+    const foreignRead = await fetch(`${url}/read`, {
+      method: "POST",
+      headers: { ...headers, Origin: "https://foreign.example" },
+      body: JSON.stringify({ messageId: lastMessage.id }),
+    });
+    expect(foreignRead.status).toBe(403);
     const conflict = await fetch(url, {
       method: "POST",
       headers,

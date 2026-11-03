@@ -4,7 +4,6 @@ import {
   type Conversation,
 } from "@paws/contracts";
 import { AgentAvatar } from "./AgentAvatar.tsx";
-import { useUnreadCount } from "./workspace/conversationReadState.ts";
 
 export function AgentSidebarSummary({
   agent,
@@ -15,10 +14,8 @@ export function AgentSidebarSummary({
   conversation: Conversation | undefined;
   animated: boolean;
 }) {
-  const unread = useUnreadCount(conversation);
-  const lastMessage = conversation?.messages.findLast(
-    (message) => !message.card,
-  );
+  const unread = conversation?.unreadCount ?? 0;
+  const lastMessage = conversation?.messages.at(-1);
   const date = lastMessage ? new Date(lastMessage.createdAt) : null;
   const validDate = date && Number.isFinite(date.getTime()) ? date : null;
   const today = validDate?.toDateString() === new Date().toDateString();

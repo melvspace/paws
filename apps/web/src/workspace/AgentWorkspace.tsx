@@ -52,7 +52,7 @@ export function AgentWorkspace({
   onSettingsClosed,
 }: AgentWorkspaceProps) {
   const chat = useConversation(agent.id);
-  useMarkConversationRead(chat.conversation);
+  const readState = useMarkConversationRead(chat.conversation);
   const { connected } = useAtomValue(agentsAtom);
   const { followUpMode } = useChatPreferences();
   const [alternateHeld, setAlternateHeld] = useState(false);
@@ -252,6 +252,11 @@ export function AgentWorkspace({
           {(!rightPanelOpen || sheet) && controls}
         </header>
         <section className="chat-panel" id="workspace-chat" aria-label="Chat">
+          {readState.error && (
+            <div className="workspace-error" role="alert">
+              {readState.error} <Button onClick={readState.retry}>Retry</Button>
+            </div>
+          )}
           <ChatHistory
             conversation={chat.conversation}
             outgoing={chat.outgoing}

@@ -59,6 +59,20 @@ const Stored = Schema.Struct({
 });
 type Stored = typeof Stored.Type;
 
+function withUnreadCount(conversation: Conversation): Conversation {
+  const lastRead = conversation.messages.findIndex(
+    (message) => message.id === conversation.lastReadMessageId,
+  );
+
+  return {
+    ...conversation,
+    unreadCount: conversation.messages
+      .slice(lastRead + 1)
+      .filter((message) => message.role === "assistant" && !message.streaming)
+      .length,
+  };
+}
+
 export class ChatError extends Error {
   readonly status: number;
 
@@ -481,7 +495,7 @@ export function makeChatService(
   const get = (id: string): Conversation => {
     agent(id);
 
-    return (
+    return withUnreadCount(
       states.get(id)?.conversation ?? {
         agentId: id,
         revision: 0,
@@ -489,9 +503,43 @@ export function makeChatService(
         error: null,
         selection: null,
         messages: [],
-      }
+      },
     );
   };
+  const markRead = Effect.fn("ChatService.markRead")(
+    (id: string, messageId: string) =>
+      Effect.try(() => {
+        const conversation = get(id);
+        const index = conversation.messages.findIndex(
+          (message) => message.id === messageId,
+        );
+        const lastRead = conversation.messages.findIndex(
+          (message) => message.id === conversation.lastReadMessageId,
+        );
+
+        if (index < 0 || conversation.messages[index]?.streaming)
+          throw new ChatError(
+            400,
+            "Choose a completed message in this conversation.",
+          );
+
+        if (closed || closing)
+          throw new ChatError(503, "Server is shutting down.");
+
+        if (index > lastRead) {
+          patch(id, (state) => ({
+            ...state,
+            conversation: {
+              ...state.conversation,
+              lastReadMessageId: messageId,
+            },
+          }));
+        }
+
+        return get(id);
+      }),
+  );
+
   const send = Effect.fn("ChatService.send")(
     (
       id: string,
@@ -1418,6 +1466,7 @@ export function makeChatService(
       };
     },
     send,
+    markRead,
     updateQueue,
     continueInterrupted,
     compact: Effect.fn("ChatService.compact")(function* (id: string) {
@@ -1438,7 +1487,8 @@ export function makeChatService(
       );
     }),
     stop,
-    list: () => [...states.values()].map((state) => state.conversation),
+    list: () =>
+      [...states.values()].map((state) => withUnreadCount(state.conversation)),
     async remove(id: string) {
       await stop(id);
       states.delete(id);

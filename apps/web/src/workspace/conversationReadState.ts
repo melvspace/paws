@@ -1,82 +1,69 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
+import { chatRequest, conversationsAtom } from "@paws/client-runtime";
 import type { Conversation } from "@paws/contracts";
-
-const changeEvent = "paws-conversation-read";
-const fallback = new Map<string, string>();
-const storageKey = (agentId: string) => `paws.conversation-read.${agentId}`;
-
-function read(agentId: string) {
-  if (fallback.has(agentId)) return fallback.get(agentId) ?? "";
-
-  try {
-    return localStorage.getItem(storageKey(agentId)) ?? "";
-  } catch {
-    return fallback.get(agentId) ?? "";
-  }
-}
-
-function subscribe(listener: () => void) {
-  window.addEventListener("storage", listener);
-  window.addEventListener(changeEvent, listener);
-
-  return () => {
-    window.removeEventListener("storage", listener);
-    window.removeEventListener(changeEvent, listener);
-  };
-}
-
-export function useUnreadCount(conversation: Conversation | undefined) {
-  const agentId = conversation?.agentId ?? "";
-  const marker = useSyncExternalStore(subscribe, () => read(agentId));
-  const messages = conversation?.messages ?? [];
-  const lastRead = messages.findIndex((message) => message.id === marker);
-
-  return messages
-    .slice(lastRead + 1)
-    .filter(
-      (message) =>
-        message.role === "assistant" && !message.streaming && !message.card,
-    ).length;
-}
+import { appAtomRegistry } from "../lib/atomRegistry.ts";
 
 export function useMarkConversationRead(
   conversation: Conversation | undefined,
 ) {
   const agentId = conversation?.agentId;
-  const lastMessage = conversation?.messages.findLast(
-    (message) => !message.streaming,
-  );
-  const messageId = lastMessage?.id;
+  const messageId = conversation?.messages.findLast(
+    (message) => message.role === "assistant" && !message.streaming,
+  )?.id;
+  const lastReadMessageId = conversation?.lastReadMessageId;
+  const unreadCount = conversation?.unreadCount ?? 0;
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    function markRead() {
+    let pending = false;
+    let disposed = false;
+
+    async function markRead() {
       if (
         !agentId ||
         !messageId ||
+        unreadCount === 0 ||
+        lastReadMessageId === messageId ||
         document.visibilityState !== "visible" ||
         !document.hasFocus() ||
-        read(agentId) === messageId
+        pending
       )
         return;
 
-      try {
-        localStorage.setItem(storageKey(agentId), messageId);
-        fallback.delete(agentId);
-      } catch {
-        // Keep read state for this session when storage is unavailable.
-        fallback.set(agentId, messageId);
-      }
+      pending = true;
 
-      window.dispatchEvent(new Event(changeEvent));
+      try {
+        const next = await chatRequest(agentId, { messageId });
+        appAtomRegistry.update(conversationsAtom, (items) => {
+          const current = items.find((item) => item.agentId === agentId);
+
+          if (current && current.revision > next.revision) return items;
+
+          return [...items.filter((item) => item.agentId !== agentId), next];
+        });
+
+        if (!disposed) setError(null);
+      } catch {
+        if (!disposed) setError("Could not mark messages as read.");
+      } finally {
+        pending = false;
+      }
     }
 
-    markRead();
-    window.addEventListener("focus", markRead);
-    document.addEventListener("visibilitychange", markRead);
+    const update = () => void markRead();
+    update();
+    window.addEventListener("focus", update);
+    window.addEventListener("online", update);
+    document.addEventListener("visibilitychange", update);
 
     return () => {
-      window.removeEventListener("focus", markRead);
-      document.removeEventListener("visibilitychange", markRead);
+      disposed = true;
+      window.removeEventListener("focus", update);
+      window.removeEventListener("online", update);
+      document.removeEventListener("visibilitychange", update);
     };
-  }, [agentId, messageId]);
+  }, [agentId, messageId, lastReadMessageId, unreadCount, attempt]);
+
+  return { error, retry: () => setAttempt((current) => current + 1) };
 }

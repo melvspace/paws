@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Effect, Schema } from "effect";
-import { SendChat, ChatQueueAction } from "@paws/contracts";
+import { SendChat, ChatQueueAction, MarkChatRead } from "@paws/contracts";
 import { ChatError, type makeChatService } from "./ChatService.ts";
 
 export async function chatHttp(
@@ -9,7 +9,7 @@ export async function chatHttp(
   chat: ReturnType<typeof makeChatService>,
 ) {
   const match =
-    /^\/api\/agents\/([^/]+)\/chat(?:\/(stop|compact|continue|queue|skills|uploads|attachments\/([a-f0-9]{64})))?$/.exec(
+    /^\/api\/agents\/([^/]+)\/chat(?:\/(stop|compact|continue|queue|read|skills|uploads|attachments\/([a-f0-9]{64})))?$/.exec(
       request.url ?? "",
     );
 
@@ -141,7 +141,7 @@ export async function chatHttp(
       result = outcome.success;
     } else if (
       request.method === "POST" &&
-      (!match[2] || match[2] === "queue")
+      (!match[2] || match[2] === "queue" || match[2] === "read")
     ) {
       if (request.headers["content-type"] !== "application/json")
         throw new ChatError(415, "Expected application/json.");
@@ -158,12 +158,17 @@ export async function chatHttp(
       const data: unknown = JSON.parse(body);
       const outcome = await Effect.runPromise(
         Effect.result(
-          match[2] === "queue"
-            ? chat.updateQueue(
+          match[2] === "read"
+            ? chat.markRead(
                 id,
-                Schema.decodeUnknownSync(ChatQueueAction)(data),
+                Schema.decodeUnknownSync(MarkChatRead)(data).messageId,
               )
-            : chat.send(id, Schema.decodeUnknownSync(SendChat)(data)),
+            : match[2] === "queue"
+              ? chat.updateQueue(
+                  id,
+                  Schema.decodeUnknownSync(ChatQueueAction)(data),
+                )
+              : chat.send(id, Schema.decodeUnknownSync(SendChat)(data)),
         ),
       );
 

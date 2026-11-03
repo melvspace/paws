@@ -1940,3 +1940,83 @@ it.each(["message", "interaction"] as const)(
     expect(promptText(turns[2]?.text)).toBe("Next task");
   },
 );
+
+it("persists shared read markers, counts new replies, and rejects invalid markers", async () => {
+  await using fixture = await setup(async (turn) => {
+    turn.onText("text", "Reply");
+  });
+  const { agent, other } = fixture;
+  await Effect.runPromise(fixture.chat.send(agent.id, input("read-first")));
+  await expect.poll(() => fixture.chat.get(agent.id).status).toBe("idle");
+  const first = fixture.chat.get(agent.id);
+  const reply = first.messages.at(-1)!;
+  expect(first.unreadCount).toBe(1);
+  expect(fixture.chat.list()[0]?.unreadCount).toBe(1);
+  const read = await Effect.runPromise(
+    fixture.chat.markRead(agent.id, reply.id),
+  );
+  expect(read).toMatchObject({ lastReadMessageId: reply.id, unreadCount: 0 });
+  expect(read.revision).toBeGreaterThan(first.revision);
+  await fixture.reopen();
+  expect(fixture.chat.get(agent.id)).toMatchObject({
+    lastReadMessageId: reply.id,
+    unreadCount: 0,
+  });
+  await Effect.runPromise(fixture.chat.send(agent.id, input("read-next")));
+  await expect.poll(() => fixture.chat.get(agent.id).status).toBe("idle");
+  expect(fixture.chat.get(agent.id).unreadCount).toBe(1);
+  const latest = fixture.chat.get(agent.id).messages.at(-1)!;
+  await Effect.runPromise(fixture.chat.markRead(agent.id, latest.id));
+  const revision = fixture.chat.get(agent.id).revision;
+  await Effect.runPromise(fixture.chat.markRead(agent.id, reply.id));
+  expect(fixture.chat.get(agent.id)).toMatchObject({
+    lastReadMessageId: latest.id,
+    unreadCount: 0,
+    revision,
+  });
+  await expect(
+    Effect.runPromise(fixture.chat.markRead(agent.id, "unknown")),
+  ).rejects.toThrow();
+  await expect(
+    Effect.runPromise(fixture.chat.markRead(other.id, latest.id)),
+  ).rejects.toThrow();
+  await expect(
+    Effect.runPromise(fixture.chat.markRead("missing", latest.id)),
+  ).rejects.toThrow();
+});
+
+it("keeps streaming replies unread until completed and preserves replies newer than a read request", async () => {
+  let finish: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  await using fixture = await setup(async (turn) => {
+    turn.onText("text", "Streaming");
+    await gate;
+  });
+
+  try {
+    await Effect.runPromise(
+      fixture.chat.send(fixture.agent.id, input("stream-read")),
+    );
+    await expect
+      .poll(() => fixture.chat.get(fixture.agent.id).messages.length)
+      .toBe(2);
+    const messages = fixture.chat.get(fixture.agent.id).messages;
+    expect(fixture.chat.get(fixture.agent.id).unreadCount).toBe(0);
+    await expect(
+      Effect.runPromise(
+        fixture.chat.markRead(fixture.agent.id, messages[1]!.id),
+      ),
+    ).rejects.toThrow();
+    await Effect.runPromise(
+      fixture.chat.markRead(fixture.agent.id, messages[0]!.id),
+    );
+    finish!();
+    await expect
+      .poll(() => fixture.chat.get(fixture.agent.id).unreadCount)
+      .toBe(1);
+  } finally {
+    finish!();
+  }
+});

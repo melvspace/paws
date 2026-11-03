@@ -171,7 +171,14 @@ export const ContextUsage = Schema.Struct({
   totalProcessedTokens: Schema.optional(Schema.Number),
 });
 export type ContextUsage = typeof ContextUsage.Type;
+export const MarkChatRead = Schema.Struct({
+  messageId: Schema.String,
+});
+export type MarkChatRead = typeof MarkChatRead.Type;
+
 export const Conversation = Schema.Struct({
+  lastReadMessageId: Schema.optional(Schema.String),
+  unreadCount: Schema.optional(Schema.Number),
   agentId: Schema.String,
   revision: Schema.Number,
   contextUsage: Schema.optional(ContextUsage),
