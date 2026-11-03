@@ -38,7 +38,9 @@ function Harness({ initialOpen = true }: { initialOpen?: boolean }) {
         viewportWidth={1280}
         controls={null}
         onClose={() => setOpen(false)}
-        onTabChange={() => setOpen(true)}
+        onTabChange={(_tab, { reveal }) => {
+          if (!reveal) setOpen(true);
+        }}
         onTabClose={async () => {
           setBrowserOpen(false);
 

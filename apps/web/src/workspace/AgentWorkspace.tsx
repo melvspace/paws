@@ -565,22 +565,31 @@ export function AgentWorkspace({
             return false;
           }
         }}
-        onTabChange={(tab) => {
-          if (tab === "settings") onSettings();
-          else
-            void (async () => {
-              try {
-                if (document.activeElement instanceof HTMLElement)
-                  document.activeElement.blur();
+        onTabChange={async (tab, { reveal }) => {
+          if (tab === "settings") {
+            onSettings();
 
-                await flush.current?.();
-                onSettingsClosed?.();
-                setBrowserOpen(true);
-                setState((current) => ({ ...current, sidebarOpen: true }));
-              } catch {
-                // Failed edits remain in the settings panel.
-              }
-            })();
+            return true;
+          }
+
+          if (reveal && !settingsOpen) return true;
+
+          try {
+            if (document.activeElement instanceof HTMLElement)
+              document.activeElement.blur();
+
+            await flush.current?.();
+
+            if (reveal) return true;
+
+            onSettingsClosed?.();
+            setBrowserOpen(true);
+            setState((current) => ({ ...current, sidebarOpen: true }));
+
+            return true;
+          } catch {
+            return false;
+          }
         }}
       >
         {settingsOpen && (

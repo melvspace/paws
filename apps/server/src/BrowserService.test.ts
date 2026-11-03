@@ -239,6 +239,57 @@ it("cancels a selector click waiting for an element without dispatching input", 
   }
 }, 30000);
 
+it("releases modifiers after failed shortcuts before accepting the next key", async () => {
+  const f = await fixture();
+  const events: BrowserServerMessage[] = [];
+
+  try {
+    const viewer = await f.browsers.attach(
+      f.agent.id,
+      (event) => events.push(event),
+      () => {},
+    );
+    const tabId = latestState(events).tabs[0]!.id;
+    await f.tool({ action: "navigate", tabId, url: f.url });
+    const runtime = await f.launch.mock.results[0]!.value;
+    const page = runtime.context.pages()[0]!;
+    await page.locator("input").focus();
+    expect(
+      (await f.tool({ action: "press", tabId, key: "Control+NoSuchKey" }))
+        .isError,
+    ).toBe(true);
+    await f.tool({ action: "press", tabId, key: "a" });
+    expect(await page.locator("input").inputValue()).toBe("a");
+    await viewer.input({ type: "takeControl", tabId });
+    const generation = latestState(events).tabs[0]!.generation;
+    await expect(
+      viewer.input({
+        type: "action",
+        generation,
+        input: { action: "press", tabId, key: "Shift+NoSuchKey" },
+      }),
+    ).rejects.toThrow();
+    await viewer.input({
+      type: "key",
+      tabId,
+      generation,
+      key: "b",
+      phase: "down",
+    });
+    await viewer.input({
+      type: "key",
+      tabId,
+      generation,
+      key: "b",
+      phase: "up",
+    });
+    expect(await page.locator("input").inputValue()).toBe("ab");
+    await viewer.detach();
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
 it.each(["click", "fill", "press"] as const)(
   "cancels dialog-interrupted %s input and clears held modifiers",
   async (action) => {

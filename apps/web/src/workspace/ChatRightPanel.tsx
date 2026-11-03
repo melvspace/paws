@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -35,7 +36,10 @@ interface ChatRightPanelProps {
   children?: ReactNode;
   browserOpen?: boolean;
   browserReveal?: number;
-  onTabChange?: (tab: "settings" | "browser") => void;
+  onTabChange?: (
+    tab: "settings" | "browser",
+    options: { reveal: boolean },
+  ) => boolean | void | Promise<boolean | void>;
   onTabClose?: (tab: "settings" | "browser") => Promise<boolean>;
 }
 
@@ -58,13 +62,14 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     "settings",
   );
   const hasSettings = !!props.children;
+  const tabRequest = useRef(0);
 
   useEffect(() => {
     if (hasSettings) setSelectedTab("settings");
   }, [hasSettings]);
 
   useEffect(() => {
-    if (props.browserOpen) setSelectedTab("browser");
+    if (props.browserOpen) void selectTab("browser", true);
   }, [props.browserOpen, props.browserReveal]);
 
   const activeTab =
@@ -100,9 +105,17 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     settings: { label: "Agent settings", Icon: SettingsIcon },
   };
 
-  function selectTab(tab: "settings" | "browser") {
-    setSelectedTab(tab);
-    props.onTabChange?.(tab);
+  async function selectTab(tab: "settings" | "browser", reveal = false) {
+    const request = ++tabRequest.current;
+
+    try {
+      const accepted = await props.onTabChange?.(tab, { reveal });
+
+      if (accepted !== false && request === tabRequest.current)
+        setSelectedTab(tab);
+    } catch {
+      // The settings editor owns the persistence error and retains its edits.
+    }
   }
 
   async function closeTab(tab: "settings" | "browser") {

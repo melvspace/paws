@@ -418,7 +418,7 @@ export function makeBrowserService(
       );
   }
 
-  async function action({
+  async function performAction({
     session,
     input,
     viewer,
@@ -686,6 +686,26 @@ export function makeBrowserService(
     return textResult(state(session, viewer));
   }
 
+  async function action(options: Parameters<typeof performAction>[0]) {
+    const { session, input, viewer, generation, signal } = options;
+    const tab = session.tabs.get(input.tabId ?? "");
+    let completed = false;
+
+    try {
+      const result = await performAction(options);
+      completed = true;
+
+      return result;
+    } finally {
+      if (
+        (!completed || signal?.aborted) &&
+        tab?.owner === (viewer?.id ?? null) &&
+        tab?.generation === generation
+      )
+        await resetInput(tab);
+    }
+  }
+
   const tool = Effect.fn("BrowserService.tool")(
     (agentId: string, value: unknown, signal: AbortSignal) =>
       Effect.tryPromise(async () => {
@@ -708,18 +728,8 @@ export function makeBrowserService(
 
             const tab = input.tabId ? getTab(session, input.tabId) : undefined;
 
-            const perform = async () => {
-              try {
-                return await action({ session, input, generation, signal });
-              } finally {
-                if (
-                  signal.aborted &&
-                  tab?.owner === null &&
-                  tab.generation === generation
-                )
-                  await resetInput(tab);
-              }
-            };
+            const perform = () =>
+              action({ session, input, generation, signal });
 
             if (!tab) return perform();
 
