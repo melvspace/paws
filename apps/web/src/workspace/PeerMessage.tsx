@@ -7,6 +7,7 @@ import {
 } from "@paws/contracts";
 import { ChevronDownIcon } from "lucide-react";
 import { AgentAvatar } from "../AgentAvatar.tsx";
+import { MessageAttachment } from "./MessageAttachment.tsx";
 import { MessageMarkdown } from "./MessageMarkdown.tsx";
 import { messageTime } from "./messageTime.ts";
 import "./peer-messages.css";
@@ -99,7 +100,11 @@ function PeerMessage({
           <PeerTime createdAt={message.createdAt} />
           {failed && (
             <span className="chat-peer-failure" role="status">
-              {delivery === "interrupted" ? "Interrupted" : "Failed"}
+              {delivery === "cancelled"
+                ? "Cancelled"
+                : delivery === "interrupted"
+                  ? "Interrupted"
+                  : "Failed"}
             </span>
           )}
           <ChevronDownIcon size={14} className="peer-chevron" aria-hidden />
@@ -123,6 +128,13 @@ function PeerMessage({
               </blockquote>
             )}
             <MessageMarkdown text={message.text} />
+            {message.attachments?.map((attachment) => (
+              <MessageAttachment
+                key={attachment.id}
+                attachment={attachment}
+                agentId={viewerId}
+              />
+            ))}
           </div>
         </div>
       </details>

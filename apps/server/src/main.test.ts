@@ -1,6 +1,7 @@
 import * as Fs from "node:fs/promises";
 import { once } from "node:events";
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
+import { makeAgentService } from "./AgentService.ts";
 import { Agent, Conversation } from "@paws/contracts";
 import { WebSocket } from "ws";
 import { expect, it } from "vite-plus/test";
@@ -325,6 +326,71 @@ it("accepts chat messages, broadcasts replies, returns validation errors and rej
   } finally {
     socket.terminate();
     await app.close();
+    await Fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+it("authorizes agent management in direct user turns and denies it for peer requests and returned replies", async () => {
+  await Fs.mkdir("/tmp/codex", { recursive: true });
+  const root = await Fs.mkdtemp("/tmp/codex/paws-agent-tools-");
+  const agents = makeAgentService(root);
+  const requester = await Effect.runPromise(
+    agents.create({ name: "Requester" }),
+  );
+  const worker = await Effect.runPromise(agents.create({ name: "Worker" }));
+  const denied: string[] = [];
+  const app = createServer(root, {
+    discoverProviders: async () => ({
+      auth: "authenticated",
+      version: "test",
+      models: [{ id: "test", name: "Test", options: [] }],
+    }),
+    runChat: async (turn) => {
+      if (turn.requestId === "user-setup") {
+        await turn.agentTool!({
+          action: "create",
+          name: "Specialist",
+          role: "Reviewer",
+        });
+      } else {
+        await expect(
+          turn.agentTool!({ action: "create", name: "Unrequested" }),
+        ).rejects.toThrow("direct user conversation");
+        denied.push(turn.agentId);
+      }
+
+      turn.onText("result", "Checked", true);
+    },
+  });
+
+  try {
+    const provider = await Effect.runPromise(app.providers.create("codex"));
+    await app.providers.refresh(provider.config.id);
+    await Effect.runPromise(
+      app.chat.send(requester.id, {
+        requestId: "user-setup",
+        text: "Create a reviewer agent",
+        selection: {
+          providerId: provider.config.id,
+          modelId: "test",
+          options: {},
+        },
+      }),
+    );
+    await app.chat.wait(requester.id);
+    expect(
+      (await Effect.runPromise(agents.list())).map((agent) => agent.name),
+    ).toEqual(["Requester", "Worker", "Specialist"]);
+    await app.teamwork.tool(requester.id, {
+      action: "message",
+      toAgentId: worker.id,
+      text: "Check your setup",
+    });
+    await expect.poll(() => denied).toEqual([worker.id, requester.id]);
+    expect(await Effect.runPromise(agents.list())).toHaveLength(3);
+  } finally {
+    await app.close();
+    agents.close();
     await Fs.rm(root, { recursive: true, force: true });
   }
 });

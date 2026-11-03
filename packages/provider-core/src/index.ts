@@ -28,5 +28,6 @@ export {
   teamToolDescription,
   memoryToolDescription,
   teamworkToolDescription,
+  agentToolDescription,
 } from "./instructions.ts";
 export type { McpHarnessClient } from "./mcp.ts";

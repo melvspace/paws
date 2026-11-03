@@ -22,11 +22,13 @@ import {
   stopEnvironment,
 } from "@paws/runtime";
 
+export class AgentSettingsError extends Error {}
+
 function validateName(value: string) {
   const name = value.trim();
 
   if (!name || name.length > 80) {
-    throw new Error("Use a name of 1–80 characters.");
+    throw new AgentSettingsError("Use a name of 1–80 characters.");
   }
 
   return name;
@@ -34,9 +36,16 @@ function validateName(value: string) {
 
 function validateMemory(memory: string) {
   if (memory.length > 16000)
-    throw new Error("Memory must be at most 16000 characters.");
+    throw new AgentSettingsError("Memory must be at most 16000 characters.");
 
   return memory.trim();
+}
+
+function validateProfile(value: string, limit: number) {
+  if (value.length > limit)
+    throw new AgentSettingsError(`Use at most ${limit} characters.`);
+
+  return value.trim();
 }
 
 export function makeAgentService(
@@ -77,7 +86,7 @@ export function makeAgentService(
     (input: UpdateTeam & { template?: string | undefined }, id?: string) =>
       Effect.try(() => {
         if (id && deletingTeams.has(id))
-          throw new Error("Team environment is changing.");
+          throw new AgentSettingsError("Team environment is changing.");
 
         const row = id
           ? db.prepare("SELECT data FROM teams WHERE id = ?").get(id)
@@ -98,7 +107,7 @@ export function makeAgentService(
                 current?.[key] ?? (key === "integrations" ? [] : undefined),
               )
           )
-            throw new Error(
+            throw new AgentSettingsError(
               "Team changed. Reopen it before retrying this edit.",
             );
         }
@@ -110,7 +119,7 @@ export function makeAgentService(
           (typeof image !== "string" ||
             !/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,255}$/.test(image))
         ) {
-          throw new Error("Use a container image name or digest.");
+          throw new AgentSettingsError("Use a container image name or digest.");
         }
 
         const team: Team = {
@@ -141,7 +150,7 @@ export function makeAgentService(
             .run(JSON.stringify(team), team.id, String(row.data));
 
           if (!result.changes)
-            throw new Error("Team changed. Retry this edit.");
+            throw new AgentSettingsError("Team changed. Retry this edit.");
         } else {
           db.prepare("INSERT INTO teams (id, data) VALUES (?, ?)").run(
             team.id,
@@ -156,7 +165,7 @@ export function makeAgentService(
     (id: string, cleanup: () => Promise<void> = async () => {}) =>
       Effect.tryPromise(async () => {
         if (deletingTeams.has(id))
-          throw new Error("Team environment is changing.");
+          throw new AgentSettingsError("Team environment is changing.");
 
         if (!db.prepare("SELECT id FROM teams WHERE id = ?").get(id))
           return false;
@@ -168,7 +177,9 @@ export function makeAgentService(
           .all(id);
 
         if (members.length || [...pendingTeams.values()].includes(id))
-          throw new Error("Move the team's agents before deleting it.");
+          throw new AgentSettingsError(
+            "Move the team's agents before deleting it.",
+          );
 
         deletingTeams.add(id);
 
@@ -187,13 +198,13 @@ export function makeAgentService(
 
   function validateTeam(id: string | null) {
     if (id && deletingTeams.has(id))
-      throw new Error("Team environment is changing.");
+      throw new AgentSettingsError("Team environment is changing.");
 
     if (
       id !== null &&
       !db.prepare("SELECT id FROM teams WHERE id = ?").get(id)
     ) {
-      throw new Error("Team not found.");
+      throw new AgentSettingsError("Team not found.");
     }
 
     return id;
@@ -201,7 +212,7 @@ export function makeAgentService(
 
   function requireIdle(id: string) {
     if (transitions.has(id) || !isIdle(id))
-      throw new Error("Only idle agents can change environments.");
+      throw new AgentSettingsError("Only idle agents can change environments.");
   }
 
   const decode = Schema.decodeUnknownSync(Agent);
@@ -216,6 +227,14 @@ export function makeAgentService(
   const create = Effect.fn("AgentService.create")((input: CreateAgent) =>
     Effect.tryPromise(async () => {
       const name = validateName(input.name);
+      const profile = {
+        ...(input.role !== undefined
+          ? { role: validateProfile(input.role, 160) }
+          : {}),
+        ...(input.description !== undefined
+          ? { description: validateProfile(input.description, 2000) }
+          : {}),
+      };
       const id = Crypto.randomUUID();
       const avatar = Schema.decodeUnknownSync(AgentAvatar)(
         input.avatar ?? defaultAgentAvatar(id),
@@ -223,6 +242,7 @@ export function makeAgentService(
 
       const agent: Agent = {
         name,
+        ...profile,
         id,
         avatar,
         teamId: validateTeam(input.teamId ?? null),
@@ -261,9 +281,17 @@ export function makeAgentService(
   );
 
   const update = Effect.fn("AgentService.update")(
-    (id: string, input: UpdateAgent) =>
+    (id: string, input: UpdateAgent, configure?: (agent: Agent) => void) =>
       Effect.tryPromise(async () => {
         const name = validateName(input.name);
+        const profile = {
+          ...(input.role !== undefined
+            ? { role: validateProfile(input.role, 160) }
+            : {}),
+          ...(input.description !== undefined
+            ? { description: validateProfile(input.description, 2000) }
+            : {}),
+        };
         const row = db.prepare("SELECT data FROM agents WHERE id = ?").get(id);
 
         if (!row) {
@@ -271,14 +299,18 @@ export function makeAgentService(
         }
 
         if (transitions.has(id))
-          throw new Error("Agent environment is changing.");
+          throw new AgentSettingsError("Agent environment is changing.");
 
         const existing = decode(JSON.parse(String(row.data)));
+
+        if (configure) requireIdle(id);
         if (input.sandbox !== undefined && input.sandbox !== existing.sandbox) {
           requireIdle(id);
 
           if (existing.teamId)
-            throw new Error("Team agents use their team's environment.");
+            throw new AgentSettingsError(
+              "Team agents use their team's environment.",
+            );
         }
 
         const avatar = Schema.decodeUnknownSync(AgentAvatar)(
@@ -286,6 +318,7 @@ export function makeAgentService(
         );
         const agent = {
           ...existing,
+          ...profile,
           name,
           avatar,
           ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
@@ -294,22 +327,35 @@ export function makeAgentService(
             : {}),
         };
         const changing =
-          input.sandbox !== undefined && input.sandbox !== existing.sandbox;
+          Boolean(configure) ||
+          (input.sandbox !== undefined && input.sandbox !== existing.sandbox);
 
         if (changing) transitions.add(id);
 
         try {
           if (changing) await closeExecution(id);
 
-          if (changing && existing.sandbox)
+          if (
+            input.sandbox !== undefined &&
+            input.sandbox !== existing.sandbox &&
+            existing.sandbox
+          )
             await stopEnvironment(root, id, "agent");
 
+          if (configure && !isIdle(id))
+            throw new AgentSettingsError(
+              "Configure the model while the agent is idle.",
+            );
+
           const patch = {
+            ...profile,
             name: agent.name,
             avatar: agent.avatar,
             ...(input.sandbox !== undefined ? { sandbox: agent.sandbox } : {}),
             ...(input.memory !== undefined ? { memory: agent.memory } : {}),
           };
+
+          configure?.(agent);
           db.prepare(
             "UPDATE agents SET data = json_patch(data, json(?)) WHERE id = ?",
           ).run(JSON.stringify(patch), id);
@@ -332,13 +378,15 @@ export function makeAgentService(
       Effect.tryPromise(async () => {
         const row = db.prepare("SELECT data FROM agents WHERE id = ?").get(id);
 
-        if (!row) throw new Error("Agent not found.");
+        if (!row) throw new AgentSettingsError("Agent not found.");
 
         const agent = decode(JSON.parse(String(row.data)));
         requireIdle(id);
 
         if ((agent.teamId ?? null) !== input.fromTeamId) {
-          throw new Error("Agent membership changed. Try moving it again.");
+          throw new AgentSettingsError(
+            "Agent membership changed. Try moving it again.",
+          );
         }
 
         const teamId = validateTeam(input.toTeamId);
@@ -382,7 +430,7 @@ export function makeAgentService(
     (id: string, cleanup: () => Promise<void> = async () => {}) =>
       Effect.tryPromise(async () => {
         if (transitions.has(id))
-          throw new Error("Agent environment is changing.");
+          throw new AgentSettingsError("Agent environment is changing.");
 
         if (!db.prepare("SELECT id FROM agents WHERE id = ?").get(id))
           return false;

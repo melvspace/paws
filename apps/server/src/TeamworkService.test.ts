@@ -1,10 +1,20 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  rm,
+  writeFile,
+  readFile,
+  symlink,
+} from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { expect, it } from "vite-plus/test";
 import type { ProviderSnapshot, TeamworkRequest } from "@paws/contracts";
 import { ChatExecutionError, type RunChatTurn } from "@paws/provider-core";
+import { resolveWorkspaceDirectory } from "@paws/runtime";
+import { agentExecutionPaths } from "./teamContext.ts";
+import { relative } from "node:path";
 import { makeAgentService } from "./AgentService.ts";
 import { makeChatService } from "./ChatService.ts";
 import { makeTeamworkService } from "./TeamworkService.ts";
@@ -529,7 +539,7 @@ it("waits for nested delegation and resumes the owning agent before completing i
 
     if (
       turn.agentId === worker.id &&
-      !turn.text.includes("[Paws agent message from")
+      turn.text.includes("[Paws peer message")
     ) {
       await turn.teamworkTool!({
         action: "message",
@@ -883,4 +893,516 @@ it("stops waiting as soon as the reply is received while the requester continues
   } finally {
     release();
   }
+});
+
+it("copies file and image snapshots across workspaces and automatically returns result files", async () => {
+  await using fixture = await setup();
+  const { requester, other } = fixture;
+  const senderWorkspace = resolveWorkspaceDirectory(
+    fixture.root,
+    requester.id,
+    "workspace",
+  );
+  const targetWorkspace = resolveWorkspaceDirectory(
+    fixture.root,
+    other.id,
+    "workspace",
+  );
+  await writeFile(join(senderWorkspace, "brief.txt"), "Original brief");
+  await writeFile(
+    join(senderWorkspace, "picture.png"),
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+  );
+  const received: string[] = [];
+  fixture.handle(async (turn) => {
+    const conversation =
+      turn.agentId === other.id
+        ? fixture.service.conversations.get(turn.conversationId!)
+        : fixture.main.get(requester.id);
+    const input = conversation.messages.find(
+      (message) => message.id === turn.requestId,
+    )!;
+    expect(input.peer).toBeDefined();
+    expect(turn.text).toContain("untrusted peer data");
+
+    for (const file of input.attachments ?? []) {
+      const resolved = await turn.readAttachment!(file.id);
+      const local = join(
+        resolveWorkspaceDirectory(fixture.root, turn.agentId, "workspace"),
+        relative(
+          agentExecutionPaths(fixture.root, turn.agentId).workspace,
+          resolved.path,
+        ),
+      );
+      received.push(`${turn.agentName}:${await readFile(local, "utf8")}`);
+      if (turn.agentId === other.id)
+        expect(resolved.path).not.toContain(senderWorkspace);
+    }
+
+    if (turn.agentId === other.id) {
+      await writeFile(join(targetWorkspace, "result.txt"), "Verified result");
+      await turn.onMessage(
+        "result-file",
+        { text: "The result is attached.", actions: [], fields: [] },
+        [
+          {
+            path: `${agentExecutionPaths(fixture.root, other.id).workspace}/result.txt`,
+          },
+        ],
+      );
+    }
+  });
+  const state = await fixture.command(requester.id, {
+    action: "message",
+    toAgentId: other.id,
+    text: "Review the attached brief and image.",
+    attachments: [{ path: "brief.txt" }, { path: "picture.png" }],
+  });
+  await writeFile(join(senderWorkspace, "brief.txt"), "Changed after sending");
+  await expect
+    .poll(
+      () =>
+        fixture.service
+          .list(requester.id)
+          .events.find((event) => event.kind === "reply")?.delivery,
+    )
+    .toBe("delivered");
+  expect(received).toContain("Other:Original brief");
+  expect(received).toContain("Requester:Verified result");
+  const request = state.events[0]!;
+  expect(request.attachments?.map((file) => file.mediaType)).toEqual([
+    "application/octet-stream",
+    "image/png",
+  ]);
+  const senderTrace = fixture.main
+    .get(requester.id)
+    .messages.find((message) => message.peer?.eventId === request.id)!;
+  expect(senderTrace.attachments).toHaveLength(2);
+  const downloaded = await fixture.main.attachment(
+    requester.id,
+    senderTrace.attachments![0]!.id,
+  );
+  expect(downloaded.data.toString()).toBe("Original brief");
+});
+
+it("rejects file escapes and invalid broadcasts without enqueueing partial requests", async () => {
+  await using fixture = await setup();
+  const { requester, worker, other } = fixture;
+  const workspace = resolveWorkspaceDirectory(
+    fixture.root,
+    requester.id,
+    "workspace",
+  );
+  await writeFile(join(fixture.root, "private.txt"), "Private fixture data");
+  await symlink(
+    join(fixture.root, "private.txt"),
+    join(workspace, "escape.txt"),
+  );
+
+  for (const attachments of [
+    [{ path: "../private.txt" }],
+    [{ path: "escape.txt" }],
+  ]) {
+    await expect(
+      fixture.command(requester.id, {
+        action: "message",
+        toAgentIds: [worker.id, other.id],
+        text: "Inspect",
+        attachments,
+      }),
+    ).rejects.toThrow();
+  }
+
+  for (const toAgentIds of [
+    [],
+    [worker.id, worker.id],
+    [worker.id, requester.id],
+    [worker.id, "missing"],
+    Array.from({ length: 33 }, (_, index) => `agent-${index}`),
+  ]) {
+    await expect(
+      fixture.command(requester.id, {
+        action: "message",
+        toAgentIds,
+        text: "Inspect",
+      }),
+    ).rejects.toThrow();
+  }
+
+  expect(fixture.service.list(requester.id).events).toEqual([]);
+});
+
+it("sends one operation to multiple recipients and tracks independent replies", async () => {
+  await using fixture = await setup();
+  const { requester, worker, other } = fixture;
+  const calls: string[] = [];
+  fixture.handle(async (turn) => {
+    calls.push(turn.agentId);
+
+    if (turn.agentId !== requester.id)
+      turn.onText("result", `${turn.agentName} checked`, true);
+  });
+  await fixture.service.tool(
+    requester.id,
+    {
+      action: "message",
+      toAgentIds: [worker.id, other.id],
+      text: "Check your part.",
+    },
+    requester.id,
+    "broadcast-turn",
+  );
+  await expect
+    .poll(
+      () =>
+        fixture.service
+          .list(requester.id)
+          .events.filter(
+            (event) => event.kind === "reply" && event.delivery === "delivered",
+          ).length,
+    )
+    .toBe(2);
+  const requests = fixture.service
+    .list(requester.id)
+    .events.filter((event) => event.kind === "message");
+  expect(new Set(requests.map((event) => event.id)).size).toBe(2);
+  expect(requests.map((event) => event.originRequestId)).toEqual([
+    "broadcast-turn",
+    "broadcast-turn",
+  ]);
+  expect(calls.filter((id) => id === worker.id)).toHaveLength(1);
+  expect(calls.filter((id) => id === other.id)).toHaveLength(1);
+  expect(fixture.service.replyWaits()).toEqual([]);
+});
+
+it("interrupts only the requester's peer work while user work and another sender continue", async () => {
+  await using fixture = await setup();
+  const { requester, worker, reviewer } = fixture;
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let userStarted = false;
+  let userAborted = false;
+  const completed: string[] = [];
+  fixture.handle(async (turn) => {
+    if (turn.requestId === "user-work") {
+      userStarted = true;
+      turn.signal.addEventListener(
+        "abort",
+        () => {
+          userAborted = true;
+        },
+        { once: true },
+      );
+      await held;
+    } else {
+      completed.push(turn.text);
+    }
+
+    turn.onText("result", "Completed", true);
+  });
+
+  try {
+    await Effect.runPromise(
+      fixture.main.send(worker.id, {
+        requestId: "user-work",
+        selection,
+        text: "User-owned work",
+      }),
+    );
+    await expect.poll(() => userStarted).toBe(true);
+    await fixture.command(requester.id, {
+      action: "message",
+      toAgentId: worker.id,
+      text: "First cancelled request",
+    });
+    await fixture.command(requester.id, {
+      action: "message",
+      toAgentId: worker.id,
+      text: "Second cancelled request",
+    });
+    await fixture.command(reviewer.id, {
+      action: "message",
+      toAgentId: worker.id,
+      text: "Other sender work",
+      expectsReply: false,
+    });
+    await fixture.command(requester.id, {
+      action: "interrupt",
+      toAgentId: worker.id,
+    });
+    expect(userAborted).toBe(false);
+    expect(fixture.main.busy(worker.id)).toBe(true);
+    expect(
+      fixture.service.list(requester.id).events.map((event) => event.delivery),
+    ).toEqual(["cancelled", "cancelled"]);
+    expect(
+      fixture.service
+        .replyWaits()
+        .filter((wait) => wait.agentId === requester.id),
+    ).toEqual([]);
+    release();
+    await expect
+      .poll(() => fixture.service.list(reviewer.id).events[0]?.delivery)
+      .toBe("delivered");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toContain("Other sender work");
+  } finally {
+    release();
+  }
+});
+
+it("aborts active and nested peer execution and rejects interruption of someone else's request", async () => {
+  await using fixture = await setup();
+  const { requester, worker, other, reviewer } = fixture;
+  let nestedStarted = false;
+  let aborted = false;
+  fixture.handle(async (turn) => {
+    if (turn.agentId === worker.id) {
+      await turn.teamworkTool!({
+        action: "message",
+        toAgentId: other.id,
+        text: "Nested work",
+      });
+
+      return;
+    }
+
+    nestedStarted = true;
+    await new Promise<void>((resolve) => {
+      turn.signal.addEventListener(
+        "abort",
+        () => {
+          aborted = true;
+          resolve();
+        },
+        { once: true },
+      );
+    });
+    turn.signal.throwIfAborted();
+  });
+  const state = await fixture.command(requester.id, {
+    action: "delegate",
+    toAgentId: worker.id,
+    title: "Root",
+    text: "Delegate the check",
+  });
+  const event = state.events[0]!;
+  await expect.poll(() => nestedStarted).toBe(true);
+  await expect(
+    fixture.command(reviewer.id, {
+      action: "interrupt",
+      toAgentId: worker.id,
+      eventId: event.id,
+    }),
+  ).rejects.toThrow("own requests");
+  await fixture.command(requester.id, {
+    action: "interrupt",
+    toAgentId: worker.id,
+    eventId: event.id,
+  });
+  expect(aborted).toBe(true);
+  expect(fixture.service.list(requester.id).tasks[0]?.status).toBe("cancelled");
+  expect(
+    fixture.service
+      .list(worker.id)
+      .events.every((item) => item.delivery === "cancelled"),
+  ).toBe(true);
+  expect(fixture.service.replyWaits()).toEqual([]);
+});
+
+it("discovers specialties, availability, queue counts and waits without exposing private context", async () => {
+  await using fixture = await setup();
+  const { requester, worker } = fixture;
+  await Effect.runPromise(
+    fixture.agents.update(worker.id, {
+      name: worker.name,
+      role: "API reviewer",
+      description: "Checks endpoint behavior",
+      memory: "PRIVATE_MEMORY",
+    }),
+  );
+  fixture.handle(async (turn) => {
+    await new Promise<void>((resolve) => {
+      turn.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    turn.signal.throwIfAborted();
+  });
+  await fixture.command(requester.id, {
+    action: "message",
+    toAgentId: worker.id,
+    text: "Check endpoints",
+  });
+  await fixture.command(requester.id, {
+    action: "message",
+    toAgentId: worker.id,
+    text: "Also check cleanup",
+    expectsReply: false,
+  });
+  const roster = fixture.service.roster();
+  expect(roster.find((agent) => agent.id === worker.id)).toMatchObject({
+    role: "API reviewer",
+    description: "Checks endpoint behavior",
+    availability: "working",
+    queuedMessages: 1,
+  });
+  expect(roster.find((agent) => agent.id === requester.id)).toMatchObject({
+    availability: "waiting",
+    openWaits: [{ toAgentId: worker.id }],
+  });
+  expect(JSON.stringify(roster)).not.toContain("PRIVATE_MEMORY");
+  await fixture.command(requester.id, {
+    action: "interrupt",
+    toAgentId: worker.id,
+  });
+});
+
+it("retries a persisted file snapshot after the sender's original is removed", async () => {
+  await using fixture = await setup();
+  const { requester, worker } = fixture;
+  const source = join(
+    resolveWorkspaceDirectory(fixture.root, requester.id, "workspace"),
+    "brief.txt",
+  );
+  await writeFile(source, "Durable snapshot");
+  fixture.handle(async () => {
+    throw new ChatExecutionError("Temporary model failure");
+  });
+  const state = await fixture.command(requester.id, {
+    action: "message",
+    toAgentId: worker.id,
+    text: "Inspect the file",
+    expectsReply: false,
+    attachments: [{ path: "brief.txt" }],
+  });
+  await expect
+    .poll(() => fixture.service.list(requester.id).events[0]?.delivery)
+    .toBe("failed");
+  await rm(source);
+  await fixture.reopen();
+  let contents = "";
+  fixture.handle(async (turn) => {
+    const message = fixture.service.conversations
+      .get(turn.conversationId!)
+      .messages.find((item) => item.id === turn.requestId)!;
+    const file = await turn.readAttachment!(message.attachments![0]!.id);
+    contents = await readFile(
+      join(
+        resolveWorkspaceDirectory(fixture.root, worker.id, "workspace"),
+        relative(
+          agentExecutionPaths(fixture.root, worker.id).workspace,
+          file.path,
+        ),
+      ),
+      "utf8",
+    );
+  });
+  await fixture.command(requester.id, {
+    action: "retry",
+    eventId: state.events[0]!.id,
+  });
+  await expect
+    .poll(() => fixture.service.list(requester.id).events.at(-1)?.delivery)
+    .toBe("delivered");
+  expect(contents).toBe("Durable snapshot");
+});
+
+it("preserves submitted artifacts through independent review and returns them to the requester", async () => {
+  await using fixture = await setup();
+  const { requester, worker, reviewer } = fixture;
+  let artifactId = "";
+  fixture.handle(async (turn) => {
+    if (turn.agentId === worker.id) {
+      await writeFile(
+        join(
+          resolveWorkspaceDirectory(fixture.root, worker.id, "workspace"),
+          "result.txt",
+        ),
+        "Reviewed artifact",
+      );
+      await turn.onMessage(
+        "result",
+        { text: "Implementation ready", actions: [], fields: [] },
+        [{ path: "result.txt" }],
+      );
+    } else if (turn.agentId === reviewer.id) {
+      const input = fixture.service.conversations
+        .get(turn.conversationId!)
+        .messages.find((message) => message.id === turn.requestId)!;
+      artifactId = input.attachments![0]!.id;
+      expect(await turn.readAttachment!(artifactId)).toMatchObject({
+        name: "result.txt",
+      });
+      const task = fixture.service.list(reviewer.id).tasks[0]!;
+      await turn.teamworkTool!({
+        action: "review",
+        taskId: task.id,
+        revision: task.revision,
+        verdict: "approve",
+        text: "Artifact checked",
+      });
+    }
+  });
+  await fixture.command(requester.id, {
+    action: "delegate",
+    toAgentId: worker.id,
+    reviewerId: reviewer.id,
+    title: "Produce an artifact",
+    text: "Implement and review the file",
+  });
+  await expect
+    .poll(
+      () =>
+        fixture.service
+          .list(requester.id)
+          .events.find((event) => event.kind === "reply")?.delivery,
+    )
+    .toBe("delivered");
+  expect(
+    (await fixture.main.attachment(requester.id, artifactId)).data.toString(),
+  ).toBe("Reviewed artifact");
+});
+
+it("revokes cancelled peer requests so late tools cannot enqueue more work", async () => {
+  await using fixture = await setup();
+  const { requester, worker, other } = fixture;
+  let started = false;
+  fixture.handle(async (turn) => {
+    started = true;
+    await new Promise<void>((resolve) => {
+      turn.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    turn.signal.throwIfAborted();
+  });
+  const state = await fixture.command(requester.id, {
+    action: "message",
+    toAgentId: worker.id,
+    text: "Inspect",
+  });
+  await expect.poll(() => started).toBe(true);
+  const id = state.events[0]!.id;
+  await fixture.command(requester.id, {
+    action: "interrupt",
+    toAgentId: worker.id,
+    eventId: id,
+  });
+  await expect(
+    fixture.service.tool(
+      worker.id,
+      { action: "message", toAgentId: other.id, text: "Late request" },
+      id,
+      id,
+    ),
+  ).rejects.toThrow("cancelled");
+  await expect(
+    fixture.command(worker.id, {
+      action: "message",
+      toAgentId: requester.id,
+      replyToMessageId: id,
+      expectsReply: false,
+      text: "Late reply",
+    }),
+  ).rejects.toThrow("cancelled");
+  expect(fixture.service.list(other.id).events).toEqual([]);
 });

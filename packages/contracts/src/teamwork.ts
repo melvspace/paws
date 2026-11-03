@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { ChatAttachment, ChatFileInput, ChatSelection } from "./chat.ts";
 
 export const TeamTaskStatus = Schema.Literals([
   "assigned",
@@ -47,6 +48,7 @@ export const TeamEvent = Schema.Struct({
   fromAgentId: Schema.NullOr(Schema.String),
   toAgentId: Schema.NullOr(Schema.String),
   text: Schema.String,
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
   expectsReply: Schema.optional(Schema.Boolean),
   replyToMessageId: Schema.optional(Schema.String),
   originConversationId: Schema.optional(Schema.String),
@@ -59,6 +61,7 @@ export const TeamEvent = Schema.Struct({
     "failed",
     "interrupted",
     "skipped",
+    "cancelled",
   ]),
   error: Schema.optional(Schema.String),
   createdAt: Schema.String,
@@ -83,11 +86,14 @@ export const TeamworkRequest = Schema.Struct({
     "block",
     "cancel",
     "retry",
+    "interrupt",
   ]),
   taskId: Schema.optional(Schema.String),
   eventId: Schema.optional(Schema.String),
   revision: Schema.optional(Schema.Number),
   toAgentId: Schema.optional(Schema.String),
+  toAgentIds: Schema.optional(Schema.Array(Schema.String)),
+  attachments: Schema.optional(Schema.Array(ChatFileInput)),
   expectsReply: Schema.optional(Schema.Boolean),
   replyToMessageId: Schema.optional(Schema.String),
   reviewerId: Schema.optional(Schema.String),
@@ -96,6 +102,17 @@ export const TeamworkRequest = Schema.Struct({
   verdict: Schema.optional(Schema.Literals(["approve", "request_changes"])),
 });
 export type TeamworkRequest = typeof TeamworkRequest.Type;
+
+export const AgentManagementRequest = Schema.Struct({
+  action: Schema.Literals(["read", "create", "update"]),
+  agentId: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  role: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
+  sandbox: Schema.optional(Schema.Boolean),
+  selection: Schema.optional(ChatSelection),
+});
+export type AgentManagementRequest = typeof AgentManagementRequest.Type;
 
 export const AgentReplyWait = Schema.Struct({
   agentId: Schema.String,

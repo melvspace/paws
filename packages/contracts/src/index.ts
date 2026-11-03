@@ -8,6 +8,8 @@ import { AgentAvatar } from "./avatars.ts";
 
 export const CreateAgent = Schema.Struct({
   name: Schema.String,
+  role: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
   avatar: Schema.optional(AgentAvatar),
   teamId: Schema.optional(Schema.NullOr(Schema.String)),
   sandbox: Schema.optional(Schema.Boolean),
@@ -17,6 +19,8 @@ export type CreateAgent = typeof CreateAgent.Type;
 
 export const UpdateAgent = Schema.Struct({
   name: Schema.String,
+  role: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
   avatar: Schema.optional(AgentAvatar),
   memory: Schema.optional(Schema.String),
   sandbox: Schema.optional(Schema.Boolean),
@@ -27,6 +31,8 @@ export const Agent = Schema.Struct({
   memories: Schema.optional(Schema.Array(MemoryEntry)),
   id: Schema.String,
   name: Schema.String,
+  role: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
   avatar: Schema.optional(AgentAvatar),
   teamId: Schema.optional(Schema.NullOr(Schema.String)),
   sandbox: Schema.optional(Schema.Boolean),

@@ -97,6 +97,24 @@ export async function readChatAttachment(
   return readFile(join(root, "chat-attachments", agentId, attachment.id));
 }
 
+// Copy immutable attachment snapshots, never grant access to the sender's workspace.
+export async function copyChatAttachments(
+  root: string,
+  fromAgentId: string,
+  toAgentId: string,
+  attachments: readonly ChatAttachment[],
+) {
+  if (!attachments.length || fromAgentId === toAgentId) return;
+
+  const destination = join(root, "chat-attachments", toAgentId);
+  await mkdir(destination, { recursive: true, mode: 0o700 });
+
+  for (const attachment of attachments) {
+    const data = await readChatAttachment(root, fromAgentId, attachment);
+    await writeFile(join(destination, attachment.id), data, { mode: 0o600 });
+  }
+}
+
 function attachmentName(value: string) {
   return (
     basename(value)

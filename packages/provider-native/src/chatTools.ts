@@ -7,6 +7,7 @@ import {
   teamToolDescription,
   memoryToolDescription,
   teamworkToolDescription,
+  agentToolDescription,
   type ChatTurn,
 } from "@paws/provider-core";
 
@@ -36,11 +37,22 @@ export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
           "block",
           "cancel",
           "retry",
+          "interrupt",
         ]),
         taskId: z.string().optional(),
         eventId: z.string().optional(),
         revision: z.number().optional(),
         toAgentId: z.string().optional(),
+        toAgentIds: z.array(z.string()).min(1).max(32).optional(),
+        attachments: z
+          .array(
+            z.object({
+              path: z.string().min(1).max(4096),
+              name: z.string().max(200).optional(),
+            }),
+          )
+          .max(4)
+          .optional(),
         expectsReply: z.boolean().optional(),
         replyToMessageId: z.string().optional(),
         reviewerId: z.string().optional(),
@@ -60,6 +72,44 @@ export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
               error instanceof ChatToolError
                 ? error.message
                 : "Teamwork operation failed. Check the input.",
+            ),
+            isError: true,
+          };
+        }
+      },
+    },
+    {
+      name: "paws_agents",
+      description: agentToolDescription,
+      schema: z
+        .object({
+          action: z.enum(["read", "create", "update"]),
+          agentId: z.string().optional(),
+          name: z.string().min(1).max(80).optional(),
+          role: z.string().max(160).optional(),
+          description: z.string().max(2000).optional(),
+          sandbox: z.boolean().optional(),
+          selection: z
+            .object({
+              providerId: z.string(),
+              modelId: z.string(),
+              options: z.record(z.string(), z.string()),
+            })
+            .optional(),
+        })
+        .strict(),
+      async execute(value: unknown) {
+        try {
+          if (!turn.agentTool)
+            throw new ChatToolError("Agent management unavailable.");
+
+          return toolText(JSON.stringify(await turn.agentTool(value)));
+        } catch (error) {
+          return {
+            ...toolText(
+              error instanceof ChatToolError
+                ? error.message
+                : "Agent configuration failed. Check the input.",
             ),
             isError: true,
           };

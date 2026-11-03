@@ -1,4 +1,5 @@
 import { makeTeamworkService } from "./TeamworkService.ts";
+import { makeAgentManagementService } from "./AgentManagementService.ts";
 import { chatHistoryPage } from "./chatHistoryPaging.ts";
 import { makeMemoryService } from "./MemoryService.ts";
 import { memoryHttp } from "./memoryHttp.ts";
@@ -81,6 +82,13 @@ export function createServer(
       ...turn,
       teamworkTool: (input) =>
         teamwork.tool(turn.agentId, input, turn.conversationId, turn.requestId),
+      agentTool: (input) =>
+        agentManagement.tool(
+          turn.agentId,
+          input,
+          turn.conversationId === turn.agentId &&
+            !teamwork.isConversation(turn.requestId),
+        ),
       routineTool: (input) =>
         routines.tool(
           turn.agentId,
@@ -119,6 +127,31 @@ export function createServer(
       } catch {
         return undefined;
       }
+    },
+    (agentId) =>
+      routines.conversations.list().filter((conversation) => {
+        try {
+          return routines.getRun(conversation.agentId).agentId === agentId;
+        } catch {
+          return false;
+        }
+      }),
+  );
+  const agentManagement = makeAgentManagementService(
+    agents,
+    chat,
+    (id) =>
+      !chat.busy(id) &&
+      !routines.busy(id) &&
+      !teamwork.busy(id) &&
+      !agents.changing(id),
+    (id) => {
+      chat.invalidateEnvironment(id);
+      routines.invalidateEnvironment(id);
+      teamwork.invalidateEnvironment(id);
+    },
+    () => {
+      void broadcast().catch(() => {});
     },
   );
   const snapshot = () =>

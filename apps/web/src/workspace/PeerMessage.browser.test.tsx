@@ -263,3 +263,30 @@ it("shows failed replies as needing attention instead of pretending to keep wait
     .element(page.getByRole("link", { name: "Joker" }))
     .toHaveAttribute("href", "#agent-joker");
 });
+
+it("renders transferred files inside the expandable exchange using the viewing agent's download route", async () => {
+  const id = "a".repeat(64);
+  await using _screen = await render(
+    <History
+      messages={[
+        {
+          ...reply,
+          attachments: [
+            {
+              id,
+              name: "review.pdf",
+              mediaType: "application/pdf",
+              size: 2048,
+            },
+          ],
+        },
+      ]}
+    />,
+  );
+  await page.getByText("Update from", { exact: true }).click();
+  const download = page.getByRole("link", { name: "review.pdf 2 KB" });
+  await expect.element(download).toBeVisible();
+  expect(download.element().getAttribute("href")).toBe(
+    `/api/agents/ada/chat/attachments/${id}`,
+  );
+});

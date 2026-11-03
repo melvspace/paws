@@ -10,9 +10,15 @@ import {
   type ProviderSnapshot,
   type PeerMessageOrigin,
   type AgentReplyWait,
+  type ChatAttachment,
+  type Conversation,
 } from "@paws/contracts";
 import { ChatToolError, type RunChatTurn } from "@paws/provider-core";
 import { ChatError, makeChatService } from "./ChatService.ts";
+import {
+  copyChatAttachments,
+  saveWorkspaceAttachments,
+} from "./chatAttachments.ts";
 
 const terminal = (task: TeamTask) =>
   task.status === "done" || task.status === "cancelled";
@@ -26,6 +32,19 @@ function requiredText(value: string | undefined, limit = 16000) {
   return text;
 }
 
+function attachmentSnapshots(files: readonly ChatAttachment[]) {
+  const unique = [...new Map(files.map((file) => [file.id, file])).values()];
+
+  if (
+    unique.length > 4 ||
+    unique.reduce((size, file) => size + (file.size ?? 0), 0) >
+      128 * 1024 * 1024
+  )
+    throw new ChatError(400, "Return up to 4 files totalling 128 MB or less.");
+
+  return unique.map(({ path: _path, ...file }) => file);
+}
+
 export function makeTeamworkService(
   root: string,
   providers: () => readonly ProviderSnapshot[],
@@ -36,6 +55,7 @@ export function makeTeamworkService(
   returnService: (
     conversationId: string,
   ) => ReturnType<typeof makeChatService> | undefined = () => undefined,
+  activity: (agentId: string) => readonly Conversation[] = () => [],
 ) {
   const db = new DatabaseSync(join(root, "state.sqlite"));
   db.exec("PRAGMA journal_mode = WAL");
@@ -149,6 +169,7 @@ export function makeTeamworkService(
         event.error ?? event.text,
         undefined,
         origin(event, "sent"),
+        event.attachments,
       );
 
       if (!event.returnToConversationId)
@@ -157,6 +178,9 @@ export function makeTeamworkService(
           event.error ?? event.text,
           undefined,
           origin(event, "received"),
+          ["running", "delivered"].includes(event.delivery)
+            ? event.attachments
+            : undefined,
         );
       const task = currentTask(event);
 
@@ -182,14 +206,15 @@ export function makeTeamworkService(
     const task = currentTask(event);
 
     return (
-      !event.taskId ||
-      Boolean(
-        task &&
-        !terminal(task) &&
-        task.revision === event.taskRevision &&
-        (task.status === "review" ? task.reviewerId : task.ownerId) ===
-          event.toAgentId,
-      )
+      event.delivery !== "cancelled" &&
+      (!event.taskId ||
+        Boolean(
+          task &&
+          !terminal(task) &&
+          task.revision === event.taskRevision &&
+          (task.status === "review" ? task.reviewerId : task.ownerId) ===
+            event.toAgentId,
+        ))
     );
   };
   const conversations = makeChatService(
@@ -240,7 +265,10 @@ export function makeTeamworkService(
 
   // External side effects may already have happened; interrupted work needs an explicit retry.
   for (const event of events()) {
-    if (replyReceived(event) && event.delivery !== "delivered") {
+    if (
+      replyReceived(event) &&
+      !["delivered", "cancelled"].includes(event.delivery)
+    ) {
       writeEvent({ ...event, delivery: "delivered", error: undefined });
       trace(findEvent(event.id));
     } else if (event.delivery === "running")
@@ -284,12 +312,30 @@ export function makeTeamworkService(
           "No model is available for this agent. Connect a provider, then retry the message.",
         );
 
+      await copyChatAttachments(
+        root,
+        event.fromAgentId!,
+        event.toAgentId!,
+        event.attachments ?? [],
+      );
+
+      if (findEvent(event.id).delivery === "cancelled") return;
+
       writeEvent({ ...event, delivery: "running", error: undefined });
+      trace(findEvent(event.id));
       onChange();
       const target = deliveryService(event);
       const conversationId = event.returnToConversationId ?? event.id;
+      const attachments = await target.importAttachments(
+        conversationId,
+        event.attachments ?? [],
+      );
+
+      if (findEvent(event.id).delivery === "cancelled") return;
+
       const input = {
         requestId: event.id,
+        attachmentIds: attachments.map((file) => file.id),
         selection,
         mode: "queue" as const,
         text: event.returnToConversationId
@@ -298,9 +344,7 @@ export function makeTeamworkService(
       };
       const outcome = await Effect.runPromise(
         Effect.result(
-          event.returnToConversationId
-            ? target.sendPeer(conversationId, input, origin(event, "received"))
-            : target.send(conversationId, input),
+          target.sendPeer(conversationId, input, origin(event, "received")),
         ),
       );
 
@@ -328,22 +372,29 @@ export function makeTeamworkService(
             "Execution needs attention. Inspect the conversation and resolve any requested input in the agent’s main chat before retrying.",
         );
 
+      if (findEvent(event.id).delivery === "cancelled") return;
+
       writeEvent({
         ...findEvent(event.id),
         delivery: "delivered",
         error: undefined,
       });
-      const response = conversation.messages
-        .filter(
-          (message) =>
-            message.role === "assistant" &&
-            message.id.startsWith(`${event.id}:`),
-        )
+      const output = conversation.messages.filter(
+        (message) =>
+          message.role === "assistant" && message.id.startsWith(`${event.id}:`),
+      );
+      const response = output
         .map((message) => message.text || message.card?.text || "")
         .filter(Boolean)
         .join("\n\n");
-      await finishRequest(event, response);
+      await finishRequest(
+        event,
+        response,
+        output.flatMap((message) => message.attachments ?? []),
+      );
     } catch (error) {
+      if (findEvent(event.id).delivery === "cancelled") return;
+
       if (replyReceived(event)) {
         writeEvent({
           ...findEvent(event.id),
@@ -374,12 +425,20 @@ export function makeTeamworkService(
     }
   }
 
-  async function finishRequest(event: TeamEvent, response: string) {
+  async function finishRequest(
+    event: TeamEvent,
+    response: string,
+    attachments: readonly ChatAttachment[] = [],
+  ) {
+    if (findEvent(event.id).delivery === "cancelled") return;
     const task = currentTask(event);
+    const resultText =
+      response || (attachments.length ? "Files attached." : "");
     const delegated = events().some(
       (item) =>
         item.fromAgentId === event.toAgentId &&
         item.expectsReply !== false &&
+        !["cancelled", "skipped"].includes(item.delivery) &&
         item.originConversationId ===
           (event.returnToConversationId ?? event.id) &&
         item.id !== event.id &&
@@ -392,7 +451,7 @@ export function makeTeamworkService(
       task &&
       task.status === "assigned" &&
       task.ownerId === event.toAgentId &&
-      response
+      resultText
     ) {
       const result = await Effect.runPromise(
         Effect.result(
@@ -402,10 +461,12 @@ export function makeTeamworkService(
               action: "submit",
               taskId: task.id,
               revision: task.revision,
-              text: response.slice(0, 16000),
+              text: resultText.slice(0, 16000),
             },
             event.id,
             event.id,
+            undefined,
+            attachments,
           ),
         ),
       );
@@ -428,16 +489,32 @@ export function makeTeamworkService(
       return;
     if (updated && !terminal(updated)) return;
 
-    const text = updated?.summary || response;
+    const text = updated?.summary || resultText;
 
     if (!text) return;
 
-    queueReply(request, event.toAgentId!, text);
+    const submitted =
+      updated &&
+      events().findLast(
+        (item) => item.taskId === updated.id && item.kind === "submitted",
+      );
+    queueReply(
+      request,
+      event.toAgentId!,
+      text,
+      attachments.length ? attachments : submitted?.attachments,
+    );
   }
 
-  function queueReply(request: TeamEvent, senderId: string, text: string) {
+  function queueReply(
+    request: TeamEvent,
+    senderId: string,
+    text: string,
+    attachments?: readonly ChatAttachment[],
+  ) {
     if (
       !request.fromAgentId ||
+      findEvent(request.id).delivery === "cancelled" ||
       request.expectsReply === false ||
       events().some((event) => event.replyToMessageId === request.id)
     )
@@ -453,6 +530,11 @@ export function makeTeamworkService(
       fromAgentId: senderId,
       toAgentId: request.fromAgentId,
       text: text.slice(0, 16000),
+      ...(attachments?.length
+        ? {
+            attachments: attachmentSnapshots(attachments),
+          }
+        : {}),
       expectsReply: false,
       ...(parentTask && !terminal(parentTask)
         ? { taskId: parentTask.id, taskRevision: parentTask.revision }
@@ -491,6 +573,235 @@ export function makeTeamworkService(
     }
   }
 
+  async function interrupt(actor: string, input: TeamworkRequest) {
+    const recipient = member(input.toAgentId ?? "");
+    const messages = events();
+    const requested = input.eventId ? findEvent(input.eventId) : undefined;
+
+    if (
+      requested &&
+      (requested.fromAgentId !== actor ||
+        requested.toAgentId !== recipient.id ||
+        requested.kind === "reply")
+    )
+      throw new ChatError(
+        403,
+        "Interrupt only your own requests to this agent.",
+      );
+
+    const selected = messages.filter(
+      (event) =>
+        event.fromAgentId === actor &&
+        event.toAgentId === recipient.id &&
+        event.kind !== "reply" &&
+        (!requested || event.id === requested.id) &&
+        ["queued", "running", "delivered"].includes(event.delivery) &&
+        (event.delivery !== "delivered" || event.expectsReply !== false) &&
+        !messages.some(
+          (reply) =>
+            reply.replyToMessageId === event.id &&
+            (reply.delivery === "delivered" || replyReceived(reply)),
+        ),
+    );
+    const cancelled = new Set(selected.map((event) => event.id));
+    const stopped = new Set<string>();
+
+    for (let previous = -1; previous !== cancelled.size;) {
+      previous = cancelled.size;
+
+      for (const event of messages) {
+        if (
+          (event.originConversationId &&
+            cancelled.has(event.originConversationId)) ||
+          (event.replyToMessageId && cancelled.has(event.replyToMessageId)) ||
+          (event.returnToConversationId &&
+            cancelled.has(event.returnToConversationId))
+        )
+          cancelled.add(event.id);
+      }
+    }
+
+    // Mark the full request tree before aborting, so completion cannot enqueue a late reply.
+    for (const event of messages) {
+      if (!cancelled.has(event.id)) continue;
+
+      const settled = messages.some(
+        (reply) =>
+          reply.replyToMessageId === event.id &&
+          (reply.delivery === "delivered" || replyReceived(reply)),
+      );
+
+      if (
+        !selected.some((request) => request.id === event.id) &&
+        !["queued", "running"].includes(event.delivery) &&
+        (event.delivery !== "delivered" ||
+          event.expectsReply === false ||
+          settled)
+      )
+        continue;
+
+      stopped.add(event.id);
+
+      writeEvent({
+        ...event,
+        delivery: "cancelled",
+        error: "Cancelled by the requesting agent.",
+      });
+      trace(findEvent(event.id));
+      const task = currentTask(event);
+
+      if (task && !terminal(task))
+        writeTask({
+          ...task,
+          status: "cancelled",
+          revision: task.revision + 1,
+          summary: "Cancelled by the requesting agent.",
+          updatedAt: new Date().toISOString(),
+        });
+    }
+
+    onChange();
+
+    // Peer requests have dedicated conversations; never stop user or routine conversations.
+    await Promise.all(
+      messages
+        .filter(
+          (event) => stopped.has(event.id) && !event.returnToConversationId,
+        )
+        .map((event) => conversations.stop(event.id)),
+    );
+  }
+
+  function roster() {
+    const messages = events();
+    const waits = replyWaits();
+
+    return db
+      .prepare("SELECT data FROM agents ORDER BY rowid")
+      .all()
+      .map((row) =>
+        Schema.decodeUnknownSync(Agent)(JSON.parse(String(row.data))),
+      )
+      .map((agent) => {
+        const chats = [
+          ...main.list().filter((chat) => chat.agentId === agent.id),
+          ...activity(agent.id),
+        ];
+        const incoming = messages.filter(
+          (event) => event.toAgentId === agent.id,
+        );
+        const openWaits = waits.filter(
+          (wait) =>
+            wait.agentId === agent.id &&
+            ["queued", "working", "waiting"].includes(wait.status),
+        );
+        const selection = main.get(agent.id).selection;
+        const available = providers().some(
+          (provider) =>
+            provider.config.enabled &&
+            provider.status === "ready" &&
+            (selection
+              ? provider.config.id === selection.providerId &&
+                provider.models.some((model) => model.id === selection.modelId)
+              : provider.models.length),
+        );
+        const running =
+          executions.has(agent.id) ||
+          chats.some((chat) => chat.status === "running");
+
+        return {
+          id: agent.id,
+          name: agent.name,
+          role: agent.role ?? "",
+          description: agent.description ?? "",
+          availability: changing(agent.id)
+            ? "changing"
+            : !available
+              ? "unavailable"
+              : running
+                ? "working"
+                : openWaits.length
+                  ? "waiting"
+                  : "idle",
+          queuedMessages:
+            incoming.filter((event) => event.delivery === "queued").length +
+            chats.reduce((count, chat) => count + (chat.queue?.length ?? 0), 0),
+          openWaits: openWaits.map(
+            ({ requestId, toAgentId, toName, status }) => ({
+              requestId,
+              toAgentId,
+              toName,
+              status,
+            }),
+          ),
+          lastActivityAt:
+            [
+              ...incoming.map((event) => event.createdAt),
+              ...chats.flatMap((chat) =>
+                chat.messages.map((message) => message.createdAt),
+              ),
+            ]
+              .sort()
+              .at(-1) ?? null,
+        };
+      });
+  }
+
+  function replyWaits(): AgentReplyWait[] {
+    const messages = events();
+    const waits: AgentReplyWait[] = [];
+
+    for (const request of messages) {
+      if (
+        !request.fromAgentId ||
+        !request.toAgentId ||
+        request.expectsReply === false ||
+        request.delivery === "cancelled" ||
+        !["message", "delegated"].includes(request.kind) ||
+        messages.some((event) => event.retryOf === request.id)
+      )
+        continue;
+
+      const reply = messages.find(
+        (event) => event.replyToMessageId === request.id,
+      );
+      const status =
+        reply && (reply.delivery === "delivered" || replyReceived(reply))
+          ? "done"
+          : request.delivery === "failed" ||
+              request.delivery === "skipped" ||
+              reply?.delivery === "failed"
+            ? "failed"
+            : request.delivery === "interrupted" ||
+                reply?.delivery === "interrupted"
+              ? "interrupted"
+              : request.delivery === "queued"
+                ? "queued"
+                : request.delivery === "running"
+                  ? "working"
+                  : "waiting";
+      waits.push({
+        agentId: request.fromAgentId,
+        requestId: request.id,
+        toAgentId: request.toAgentId,
+        toName: agentName(request.toAgentId),
+        batchId:
+          request.originRequestId ?? request.originConversationId ?? request.id,
+        status,
+      });
+    }
+
+    const openBatches = new Set(
+      waits
+        .filter((wait) => wait.status !== "done")
+        .map((wait) => `${wait.agentId}:${wait.batchId}`),
+    );
+
+    return waits.filter((wait) =>
+      openBatches.has(`${wait.agentId}:${wait.batchId}`),
+    );
+  }
+
   const execute = Effect.fn("TeamworkService.execute")(
     (
       actor: string,
@@ -498,9 +809,10 @@ export function makeTeamworkService(
       sourceEventId?: string,
       originConversationId?: string,
       originRequestId?: string,
+      resultAttachments?: readonly ChatAttachment[],
     ) =>
-      Effect.try({
-        try: () => {
+      Effect.tryPromise({
+        try: async () => {
           if (closed) throw new ChatError(503, "Server is shutting down.");
 
           const input = Schema.decodeUnknownSync(TeamworkRequest, {
@@ -509,18 +821,65 @@ export function makeTeamworkService(
           member(actor);
 
           if (input.action === "list")
-            return {
-              ...list(actor),
-              members: db
-                .prepare("SELECT data FROM agents ORDER BY rowid")
-                .all()
-                .map((row) =>
-                  Schema.decodeUnknownSync(Agent)(JSON.parse(String(row.data))),
-                )
-                .map(({ id, name }) => ({ id, name })),
-            };
+            return { ...list(actor), members: roster() };
+
+          if (input.action === "interrupt") {
+            await interrupt(actor, input);
+
+            return list(actor);
+          }
+
+          if (
+            input.toAgentIds &&
+            (input.action !== "message" ||
+              input.toAgentId ||
+              input.replyToMessageId)
+          )
+            throw new ChatError(
+              400,
+              "Use toAgentIds only for a new message, without toAgentId or replyToMessageId.",
+            );
+
+          const recipients = input.toAgentIds ?? [input.toAgentId ?? null];
+
+          if (
+            !recipients.length ||
+            recipients.length > 32 ||
+            new Set(recipients).size !== recipients.length
+          )
+            throw new ChatError(400, "Choose 1–32 unique recipients.");
+
+          if (input.action === "message") {
+            for (const id of recipients) {
+              member(id ?? "");
+
+              if (id === actor)
+                throw new ChatError(400, "Choose another agent to message.");
+            }
+          }
+
+          if (input.attachments?.length && input.action === "retry")
+            throw new ChatError(
+              400,
+              "A retry reuses its original file snapshots.",
+            );
+
+          const attachments =
+            resultAttachments ??
+            (await saveWorkspaceAttachments(
+              root,
+              actor,
+              input.attachments ?? [],
+            ));
+          member(actor);
+
+          if (closed) throw new ChatError(503, "Server is shutting down.");
 
           const source = sourceEventId ? findEvent(sourceEventId) : undefined;
+
+          if (source?.delivery === "cancelled")
+            throw new ChatError(409, "This peer request was cancelled.");
+
           const depth = source ? (source.depth ?? 0) + 1 : 0;
           const rootEventId = source?.rootEventId ?? source?.id;
 
@@ -528,13 +887,19 @@ export function makeTeamworkService(
             source &&
             (depth > 8 ||
               events().filter((event) => event.rootEventId === rootEventId)
-                .length >= 40)
+                .length +
+                recipients.length >
+                40)
           )
             throw new ChatError(
               429,
               "Teamwork chain limit reached. Report progress and wait for user guidance.",
             );
 
+          const previousIds = new Set(events().map((event) => event.id));
+          const batchId =
+            originRequestId ??
+            (recipients.length > 1 ? randomUUID() : undefined);
           db.exec("BEGIN IMMEDIATE");
 
           try {
@@ -588,193 +953,217 @@ export function makeTeamworkService(
                 createdAt: new Date().toISOString(),
               });
             } else {
-              const now = new Date().toISOString();
-              let task: TeamTask | undefined;
-              let kind: TeamEvent["kind"] = "message";
-              let recipient = input.toAgentId ?? null;
-              const text = requiredText(input.text);
+              for (const recipientId of recipients) {
+                const now = new Date().toISOString();
+                let task: TeamTask | undefined;
+                let kind: TeamEvent["kind"] = "message";
+                let recipient = recipientId;
+                const text = requiredText(input.text);
 
-              if (input.action === "delegate") {
-                member(recipient ?? "");
-                if (recipient === actor)
-                  throw new ChatError(
-                    400,
-                    "Choose another agent to delegate to.",
-                  );
-                if (input.reviewerId) member(input.reviewerId);
+                if (input.action === "delegate") {
+                  member(recipient ?? "");
+                  if (recipient === actor)
+                    throw new ChatError(
+                      400,
+                      "Choose another agent to delegate to.",
+                    );
+                  if (input.reviewerId) member(input.reviewerId);
 
-                if (recipient === input.reviewerId)
-                  throw new ChatError(
-                    400,
-                    "The reviewer must be different from the task owner.",
-                  );
+                  if (recipient === input.reviewerId)
+                    throw new ChatError(
+                      400,
+                      "The reviewer must be different from the task owner.",
+                    );
 
-                task = {
-                  id: randomUUID(),
-                  title: requiredText(input.title, 160),
-                  description: text,
-                  ownerId: recipient!,
-                  ...(input.reviewerId ? { reviewerId: input.reviewerId } : {}),
-                  createdBy: actor,
-                  status: "assigned",
-                  revision: 1,
-                  summary: "",
-                  createdAt: now,
-                  updatedAt: now,
-                };
-                kind = "delegated";
-              } else if (input.action !== "message") {
-                task = tasks().find((item) => item.id === input.taskId);
+                  task = {
+                    id: randomUUID(),
+                    title: requiredText(input.title, 160),
+                    description: text,
+                    ownerId: recipient!,
+                    ...(input.reviewerId
+                      ? { reviewerId: input.reviewerId }
+                      : {}),
+                    createdBy: actor,
+                    status: "assigned",
+                    revision: 1,
+                    summary: "",
+                    createdAt: now,
+                    updatedAt: now,
+                  };
+                  kind = "delegated";
+                } else if (input.action !== "message") {
+                  task = tasks().find((item) => item.id === input.taskId);
 
-                if (!task) throw new ChatError(404, "Task not found.");
-                if (task.revision !== input.revision)
-                  throw new ChatError(
-                    409,
-                    "Task changed. Reload before acting on it.",
-                  );
-                if (terminal(task))
-                  throw new ChatError(409, "This task is already closed.");
+                  if (!task) throw new ChatError(404, "Task not found.");
+                  if (task.revision !== input.revision)
+                    throw new ChatError(
+                      409,
+                      "Task changed. Reload before acting on it.",
+                    );
+                  if (terminal(task))
+                    throw new ChatError(409, "This task is already closed.");
+                  if (
+                    actor &&
+                    actor !==
+                      (input.action === "review"
+                        ? task.reviewerId
+                        : task.ownerId)
+                  )
+                    throw new ChatError(
+                      403,
+                      "Only the assigned owner or reviewer can perform this action.",
+                    );
+
+                  task = {
+                    ...task,
+                    summary: text,
+                    revision: task.revision + 1,
+                    updatedAt: now,
+                  };
+
+                  if (input.action === "review") {
+                    if (task.status !== "review" || !input.verdict)
+                      throw new ChatError(
+                        409,
+                        "Submit work before reviewing it; choose a verdict.",
+                      );
+
+                    kind =
+                      input.verdict === "approve"
+                        ? "approved"
+                        : "changes_requested";
+                    task = {
+                      ...task,
+                      status: input.verdict === "approve" ? "done" : "assigned",
+                    };
+                    recipient =
+                      input.verdict === "approve" ? null : task.ownerId;
+                  } else if (input.action === "submit") {
+                    if (task.status === "review")
+                      throw new ChatError(
+                        409,
+                        "This task is already in review.",
+                      );
+
+                    if (task.reviewerId) member(task.reviewerId);
+                    task = {
+                      ...task,
+                      status: task.reviewerId ? "review" : "done",
+                    };
+                    kind = "submitted";
+                    recipient = task.reviewerId ?? null;
+                  } else if (input.action === "handoff") {
+                    member(recipient ?? "");
+
+                    if (
+                      recipient === task.ownerId ||
+                      recipient === task.reviewerId
+                    )
+                      throw new ChatError(
+                        400,
+                        "Choose a new owner different from the reviewer.",
+                      );
+
+                    task = { ...task, ownerId: recipient!, status: "assigned" };
+                    kind = "handoff";
+                  } else {
+                    kind = input.action === "block" ? "blocked" : "cancelled";
+                    task = { ...task, status: kind };
+                    recipient = null;
+                  }
+                } else {
+                  member(recipient ?? "");
+
+                  if (recipient === actor)
+                    throw new ChatError(400, "Choose a teammate to message.");
+                }
+
                 if (
-                  actor &&
-                  actor !==
-                    (input.action === "review" ? task.reviewerId : task.ownerId)
+                  recipient &&
+                  events().filter(
+                    (event) =>
+                      event.toAgentId === recipient &&
+                      ["queued", "running"].includes(event.delivery),
+                  ).length >= 20
+                )
+                  throw new ChatError(
+                    429,
+                    "This agent’s communication queue is full. Wait for delivery before sending more work.",
+                  );
+
+                if (task) writeTask(task);
+
+                const original = input.replyToMessageId
+                  ? findEvent(input.replyToMessageId)
+                  : undefined;
+
+                if (original?.delivery === "cancelled")
+                  throw new ChatError(409, "This peer request was cancelled.");
+
+                if (
+                  original &&
+                  (original.toAgentId !== actor ||
+                    original.fromAgentId !== recipient)
                 )
                   throw new ChatError(
                     403,
-                    "Only the assigned owner or reviewer can perform this action.",
+                    "Reply only to a message sent to you by this recipient.",
                   );
-
-                task = {
-                  ...task,
-                  summary: text,
-                  revision: task.revision + 1,
-                  updatedAt: now,
-                };
-
-                if (input.action === "review") {
-                  if (task.status !== "review" || !input.verdict)
-                    throw new ChatError(
-                      409,
-                      "Submit work before reviewing it; choose a verdict.",
-                    );
-
-                  kind =
-                    input.verdict === "approve"
-                      ? "approved"
-                      : "changes_requested";
-                  task = {
-                    ...task,
-                    status: input.verdict === "approve" ? "done" : "assigned",
-                  };
-                  recipient = input.verdict === "approve" ? null : task.ownerId;
-                } else if (input.action === "submit") {
-                  if (task.status === "review")
-                    throw new ChatError(409, "This task is already in review.");
-
-                  if (task.reviewerId) member(task.reviewerId);
-                  task = {
-                    ...task,
-                    status: task.reviewerId ? "review" : "done",
-                  };
-                  kind = "submitted";
-                  recipient = task.reviewerId ?? null;
-                } else if (input.action === "handoff") {
-                  member(recipient ?? "");
-
-                  if (
-                    recipient === task.ownerId ||
-                    recipient === task.reviewerId
+                if (
+                  original &&
+                  events().some(
+                    (event) => event.replyToMessageId === original.id,
                   )
-                    throw new ChatError(
-                      400,
-                      "Choose a new owner different from the reviewer.",
-                    );
+                )
+                  throw new ChatError(409, "This message already has a reply.");
 
-                  task = { ...task, ownerId: recipient!, status: "assigned" };
-                  kind = "handoff";
-                } else {
-                  kind = input.action === "block" ? "blocked" : "cancelled";
-                  task = { ...task, status: kind };
-                  recipient = null;
-                }
-              } else {
-                member(recipient ?? "");
+                const parent =
+                  original &&
+                  events().find(
+                    (item) => item.id === original.originConversationId,
+                  );
+                const parentTask = parent && currentTask(parent);
 
-                if (recipient === actor)
-                  throw new ChatError(400, "Choose a teammate to message.");
+                writeEvent({
+                  id: randomUUID(),
+                  ...(parentTask && !terminal(parentTask)
+                    ? {
+                        taskId: parentTask.id,
+                        taskRevision: parentTask.revision,
+                      }
+                    : {}),
+                  kind: original ? "reply" : kind,
+                  expectsReply: original
+                    ? false
+                    : (input.expectsReply ??
+                      (kind === "message" || kind === "delegated")),
+                  ...(original
+                    ? {
+                        replyToMessageId: original.id,
+                        returnToConversationId:
+                          original.originConversationId ??
+                          original.fromAgentId!,
+                      }
+                    : {}),
+                  ...(originConversationId ? { originConversationId } : {}),
+                  ...(batchId ? { originRequestId: batchId } : {}),
+                  ...(task
+                    ? { taskId: task.id, taskRevision: task.revision }
+                    : {}),
+                  ...(rootEventId ? { rootEventId } : {}),
+                  depth,
+                  fromAgentId: actor,
+                  toAgentId: recipient,
+                  text,
+                  ...(attachments.length
+                    ? {
+                        attachments: attachmentSnapshots(attachments),
+                      }
+                    : {}),
+                  delivery: recipient ? "queued" : "delivered",
+                  createdAt: now,
+                });
               }
-
-              if (
-                recipient &&
-                events().filter(
-                  (event) =>
-                    event.toAgentId === recipient &&
-                    ["queued", "running"].includes(event.delivery),
-                ).length >= 20
-              )
-                throw new ChatError(
-                  429,
-                  "This agent’s communication queue is full. Wait for delivery before sending more work.",
-                );
-
-              if (task) writeTask(task);
-
-              const original = input.replyToMessageId
-                ? findEvent(input.replyToMessageId)
-                : undefined;
-
-              if (
-                original &&
-                (original.toAgentId !== actor ||
-                  original.fromAgentId !== recipient)
-              )
-                throw new ChatError(
-                  403,
-                  "Reply only to a message sent to you by this recipient.",
-                );
-              if (
-                original &&
-                events().some((event) => event.replyToMessageId === original.id)
-              )
-                throw new ChatError(409, "This message already has a reply.");
-
-              const parent =
-                original &&
-                events().find(
-                  (item) => item.id === original.originConversationId,
-                );
-              const parentTask = parent && currentTask(parent);
-
-              writeEvent({
-                id: randomUUID(),
-                ...(parentTask && !terminal(parentTask)
-                  ? { taskId: parentTask.id, taskRevision: parentTask.revision }
-                  : {}),
-                kind: original ? "reply" : kind,
-                expectsReply: original
-                  ? false
-                  : (input.expectsReply ??
-                    (kind === "message" || kind === "delegated")),
-                ...(original
-                  ? {
-                      replyToMessageId: original.id,
-                      returnToConversationId:
-                        original.originConversationId ?? original.fromAgentId!,
-                    }
-                  : {}),
-                ...(originConversationId ? { originConversationId } : {}),
-                ...(originRequestId ? { originRequestId } : {}),
-                ...(task
-                  ? { taskId: task.id, taskRevision: task.revision }
-                  : {}),
-                ...(rootEventId ? { rootEventId } : {}),
-                depth,
-                fromAgentId: actor,
-                toAgentId: recipient,
-                text,
-                delivery: recipient ? "queued" : "delivered",
-                createdAt: now,
-              });
             }
 
             db.exec("COMMIT");
@@ -784,9 +1173,9 @@ export function makeTeamworkService(
             throw error;
           }
 
-          const latest = events().at(-1);
-
-          if (latest) trace(latest);
+          for (const event of events()) {
+            if (!previousIds.has(event.id)) trace(event);
+          }
 
           onChange();
           queueMicrotask(pump);
@@ -813,6 +1202,15 @@ export function makeTeamworkService(
       requestId?: string,
     ) {
       const sourceId = requestId ?? conversationId;
+
+      if (
+        sourceId &&
+        events().some(
+          (event) => event.id === sourceId && event.delivery === "cancelled",
+        )
+      )
+        throw new ChatToolError("This peer request was cancelled.");
+
       const outcome = await Effect.runPromise(
         Effect.result(
           execute(
@@ -856,63 +1254,14 @@ export function makeTeamworkService(
           conversations.invalidateEnvironment(event.id);
       }
     },
-    replyWaits(): AgentReplyWait[] {
-      const messages = events();
-      const waits: AgentReplyWait[] = [];
-
-      for (const request of messages) {
-        if (
-          !request.fromAgentId ||
-          !request.toAgentId ||
-          request.expectsReply === false ||
-          !["message", "delegated"].includes(request.kind) ||
-          messages.some((event) => event.retryOf === request.id)
-        )
-          continue;
-
-        const reply = messages.find(
-          (event) => event.replyToMessageId === request.id,
-        );
-        const status =
-          reply && (reply.delivery === "delivered" || replyReceived(reply))
-            ? "done"
-            : request.delivery === "failed" ||
-                request.delivery === "skipped" ||
-                reply?.delivery === "failed"
-              ? "failed"
-              : request.delivery === "interrupted" ||
-                  reply?.delivery === "interrupted"
-                ? "interrupted"
-                : request.delivery === "queued"
-                  ? "queued"
-                  : request.delivery === "running"
-                    ? "working"
-                    : "waiting";
-        waits.push({
-          agentId: request.fromAgentId,
-          requestId: request.id,
-          toAgentId: request.toAgentId,
-          toName: agentName(request.toAgentId),
-          batchId:
-            request.originRequestId ??
-            request.originConversationId ??
-            request.id,
-          status,
-        });
-      }
-
-      const openBatches = new Set(
-        waits
-          .filter((wait) => wait.status !== "done")
-          .map((wait) => `${wait.agentId}:${wait.batchId}`),
-      );
-
-      return waits.filter((wait) =>
-        openBatches.has(`${wait.agentId}:${wait.batchId}`),
-      );
-    },
+    replyWaits,
+    roster,
     activeAgentIds: () => [...executions.keys()],
-    busy: (id: string) => executions.has(id),
+    busy: (id: string) =>
+      executions.has(id) ||
+      events().some(
+        (event) => event.toAgentId === id && event.delivery === "queued",
+      ),
     async removeAgent(id: string) {
       let changed = false;
 

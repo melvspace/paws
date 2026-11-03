@@ -167,6 +167,7 @@ for await (const line of createInterface({input:process.stdin})) {
       expect.arrayContaining([
         expect.objectContaining({ name: "paws_routine" }),
         expect.objectContaining({ name: "paws_teamwork" }),
+        expect.objectContaining({ name: "paws_agents" }),
       ]),
     );
     expect(
