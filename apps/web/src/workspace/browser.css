@@ -1,0 +1,103 @@
+.browser-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.browser-tabs {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.browser-tab {
+  display: flex;
+  align-items: center;
+  max-width: 200px;
+  border-right: 1px solid var(--border);
+}
+.browser-tab[data-active="true"] {
+  background: var(--muted);
+}
+.browser-tab > button:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--background);
+  max-width: none;
+  margin: 0;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.browser-tabs > .ui-button,
+.browser-toolbar > .ui-button {
+  border-radius: 4px;
+  min-height: 28px;
+  padding: 4px 6px;
+}
+.browser-toolbar input {
+  flex: 1;
+  min-width: 100px;
+  width: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--background);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.browser-control-status {
+  padding: 4px 10px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.browser-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #202020;
+}
+.browser-stage img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+}
+.browser-stage img[data-controlling="true"] {
+  touch-action: none;
+  cursor: crosshair;
+}
+.browser-stage img:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.browser-notice {
+  padding: 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.browser-notice[role="alert"] {
+  color: var(--destructive);
+}
+.browser-empty {
+  padding: 28px 16px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  text-align: center;
+}

@@ -113,7 +113,7 @@ it("opens another agent's settings and only offers implemented surfaces", async 
     .not.toBeInTheDocument();
   await expect
     .element(page.getByRole("button", { name: "Add sidebar tab" }))
-    .toBeDisabled();
+    .toBeEnabled();
   await expect
     .element(page.getByRole("button", { name: "Toggle terminal drawer" }))
     .not.toBeInTheDocument();
@@ -122,9 +122,12 @@ it("opens another agent's settings and only offers implemented surfaces", async 
     .element(page.getByRole("heading", { name: "Open a surface" }))
     .toBeVisible();
   const surfaces = document.querySelector(".surface-picker")!;
-  expect(surfaces.querySelectorAll("button")).toHaveLength(1);
-  expect(surfaces.textContent).toBe("Open a surfaceAgent settings");
+  expect(surfaces.querySelectorAll("button")).toHaveLength(2);
+  expect(surfaces.textContent).toBe("Open a surfaceBrowserAgent settings");
   await page.getByRole("button", { name: "Add sidebar tab" }).click();
+  await expect
+    .element(page.getByRole("menuitem", { name: "Browser", exact: true }))
+    .toBeVisible();
   await expect
     .element(page.getByRole("menuitem", { name: "Files", exact: true }))
     .not.toBeInTheDocument();

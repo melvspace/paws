@@ -1,3 +1,4 @@
+import { BrowserPanel } from "./BrowserPanel.tsx";
 import { Button } from "../components/ui/button.tsx";
 // Adapted from T3 Code ChatRightPanel, RightPanelSheet, and RightPanelTabs (MIT).
 import {
@@ -9,7 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Dialog, DialogPopup } from "../components/ui/dialog.tsx";
-import { PlusIcon, SettingsIcon, XIcon } from "lucide-react";
+import { PlusIcon, SettingsIcon, GlobeIcon, XIcon } from "lucide-react";
 import { Menu } from "@base-ui/react/menu";
 import { MenuPopup } from "../components/ui/menu.tsx";
 import "./workspace.css";
@@ -30,8 +31,9 @@ interface ChatRightPanelProps {
   controls: ReactNode;
   onClose: () => void;
   children?: ReactNode;
-  onTabChange?: (tab: "settings") => void;
-  onTabClose?: (tab: "settings") => Promise<boolean>;
+  browserOpen?: boolean;
+  onTabChange?: (tab: "settings" | "browser") => void;
+  onTabClose?: (tab: "settings" | "browser") => Promise<boolean>;
 }
 
 export function ChatRightPanel(props: ChatRightPanelProps) {
@@ -49,20 +51,28 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     },
     [contentHost],
   );
-  const activeTab = props.children ? "settings" : null;
-  const tabs: readonly "settings"[] = activeTab ? [activeTab] : [];
-  const availableTabs = (["settings"] as const).filter(
+  const activeTab = props.children
+    ? "settings"
+    : props.browserOpen
+      ? "browser"
+      : null;
+  const tabs: readonly ("settings" | "browser")[] = [
+    ...(props.children ? ["settings" as const] : []),
+    ...(props.browserOpen ? ["browser" as const] : []),
+  ];
+  const availableTabs = (["settings", "browser"] as const).filter(
     (tab) => !tabs.includes(tab),
   );
   const panels = {
+    browser: { label: "Browser", Icon: GlobeIcon },
     settings: { label: "Agent settings", Icon: SettingsIcon },
   };
 
-  function selectTab(tab: "settings") {
+  function selectTab(tab: "settings" | "browser") {
     props.onTabChange?.(tab);
   }
 
-  async function closeTab(tab: "settings") {
+  async function closeTab(tab: "settings" | "browser") {
     await props.onTabClose?.(tab);
   }
 
@@ -194,9 +204,28 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
         role={activeTab ? "tabpanel" : undefined}
         aria-labelledby={activeTab ? `${tabId}-${activeTab}` : undefined}
       >
-        {props.children || (
+        {props.children}
+        {props.browserOpen && (
+          <div hidden={activeTab !== "browser"} style={{ height: "100%" }}>
+            <BrowserPanel
+              agentId={props.agentId}
+              active={props.open && activeTab === "browser"}
+            />
+          </div>
+        )}
+        {!activeTab && (
           <div className="surface-picker" aria-label="Open a surface">
             <h2>Open a surface</h2>
+            {props.onTabChange && (
+              <Button
+                variant="ghost"
+                className="surface-picker-option"
+                onClick={() => selectTab("browser")}
+              >
+                <GlobeIcon size={20} aria-hidden />
+                <span>Browser</span>
+              </Button>
+            )}
             {props.onTabChange && (
               <Button
                 variant="ghost"
@@ -229,7 +258,9 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
           sheet
           id="workspace-sidebar"
           className="right-panel-sheet"
-          aria-label={props.children ? "Agent settings" : "Workspace surfaces"}
+          aria-label={
+            activeTab ? panels[activeTab].label : "Workspace surfaces"
+          }
         >
           <div className="right-panel-body" ref={attachContent} />
         </DialogPopup>
@@ -237,7 +268,9 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
         <aside
           id="workspace-sidebar"
           className="workspace-sidebar"
-          aria-label={props.children ? "Agent settings" : "Workspace surfaces"}
+          aria-label={
+            activeTab ? panels[activeTab].label : "Workspace surfaces"
+          }
           hidden={!props.open}
           data-maximized={props.maximized}
           style={{ "--panel-size": `${size}px` } as CSSProperties}

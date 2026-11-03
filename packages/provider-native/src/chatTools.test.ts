@@ -147,3 +147,51 @@ it("advertises peer files, broadcast and interruption, and routes safe agent man
   ).not.toContain("PRIVATE_STORAGE_PATH");
   expect(calls[0]).toEqual({ action: "create", name: "Reviewer" });
 });
+
+it("exposes browser control and preserves screenshot and takeover results", async () => {
+  const browserTool = async (input: unknown) =>
+    input &&
+    typeof input === "object" &&
+    "action" in input &&
+    input.action === "screenshot"
+      ? {
+          content: [
+            { type: "image" as const, data: "png", mimeType: "image/png" },
+          ],
+        }
+      : {
+          content: [{ type: "text" as const, text: "The user has control" }],
+          isError: true,
+        };
+  const statuses: string[] = [];
+  const tool = chatTools(
+    {
+      agentId: "owner",
+      agentName: "Ada",
+      nativeThreadId: null,
+      text: "",
+      selection: { providerId: "provider", modelId: "model", options: {} },
+      signal: new AbortController().signal,
+      onThread() {},
+      onText() {},
+      onMessage() {},
+      onTool(name, status) {
+        statuses.push(`${name}:${status}`);
+      },
+      browserTool,
+    },
+    { execute: async () => "", deliverSecret: async () => "" },
+  ).find((entry) => entry.name === "paws_browser")!;
+  expect(await tool.execute({ action: "screenshot", tabId: "tab" })).toEqual({
+    content: [{ type: "image", data: "png", mimeType: "image/png" }],
+  });
+  expect(await tool.execute({ action: "click", tabId: "tab" })).toMatchObject({
+    isError: true,
+  });
+  expect(statuses).toEqual([
+    "paws_browser:running",
+    "paws_browser:completed",
+    "paws_browser:running",
+    "paws_browser:failed",
+  ]);
+});

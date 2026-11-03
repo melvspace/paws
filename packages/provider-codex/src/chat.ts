@@ -1,4 +1,5 @@
 import {
+  browserTool,
   memoryToolDescription,
   teamworkToolDescription,
   agentToolDescription,
@@ -435,6 +436,7 @@ async function runCodexTurnWithConnection(
                     : {
                         dynamicTools: [
                           messageTool,
+                          browserTool,
                           secretTool,
                           readAttachmentTool,
                           teamTool,
@@ -687,6 +689,7 @@ async function runCodexTurnWithConnection(
       if (
         call.threadId !== threadId ||
         ![
+          "paws_browser",
           "paws_send_message",
           "request_secret",
           "paws_read_attachment",
@@ -701,6 +704,40 @@ async function runCodexTurnWithConnection(
         throw new Error("Unknown tool.");
 
       try {
+        if (call.tool === "paws_browser") {
+          turn.signal.throwIfAborted();
+          const blocked = turn.onTool?.(call.tool, "running");
+
+          if (blocked)
+            return {
+              success: false,
+              contentItems: [{ type: "inputText", text: blocked }],
+            };
+          if (!turn.browserTool)
+            throw new ChatToolError("Browser unavailable.");
+
+          const result = await turn.browserTool(call.arguments);
+          const checkpoint = turn.onTool?.(
+            call.tool,
+            result.isError ? "failed" : "completed",
+          );
+
+          return {
+            success: !result.isError,
+            contentItems: [
+              ...result.content.map((item) =>
+                item.type === "image"
+                  ? {
+                      type: "inputImage",
+                      imageUrl: `data:${item.mimeType};base64,${item.data}`,
+                    }
+                  : { type: "inputText", text: item.text },
+              ),
+              ...(checkpoint ? [{ type: "inputText", text: checkpoint }] : []),
+            ],
+          };
+        }
+
         if (
           call.tool === "paws_memory" ||
           call.tool === "paws_mcp" ||
@@ -838,6 +875,23 @@ async function runCodexTurnWithConnection(
           ],
         };
       } catch (error) {
+        if (call.tool === "paws_browser") {
+          turn.onTool?.(call.tool, "failed");
+
+          return {
+            success: false,
+            contentItems: [
+              {
+                type: "inputText",
+                text:
+                  error instanceof ChatToolError
+                    ? error.message
+                    : "Browser operation failed. Inspect the current page before retrying.",
+              },
+            ],
+          };
+        }
+
         if (
           call.tool === "paws_memory" ||
           call.tool === "paws_mcp" ||

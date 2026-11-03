@@ -25,6 +25,9 @@ export interface ChatAttachmentFile {
 }
 
 export interface ChatTurn {
+  browserTool?(
+    input: unknown,
+  ): Promise<import("./browser.ts").BrowserToolResult>;
   workspace?: string;
   home?: string;
   teamworkTool?(input: unknown): Promise<unknown>;

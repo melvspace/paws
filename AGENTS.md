@@ -36,8 +36,7 @@ Default application data to `$HOME/.paws` (`PAWS_HOME` overrides it). Use tempor
 isolated roots for tests and `/tmp/codex/` for temporary harnesses and
 scripts. Never point tests at live application data or read provider credentials
 into logs. Stop only processes you started and tracked. Keep browser requests
-same-origin through the dev proxy. Local development is loopback-only; remote
-hosting requires authentication and origin enforcement first.
+same-origin through the dev proxy.
 
 Keep only the root README (essential top-level module READMEs are allowed).
 Write progress, handoffs, and summaries in chat. Add `docs/` content only when

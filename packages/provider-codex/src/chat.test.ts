@@ -412,3 +412,104 @@ for await (const line of createInterface({input:process.stdin})) {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it("routes browser calls and translates screenshots and takeover failures", async () => {
+  await mkdir("/tmp/codex", { recursive: true });
+  const root = await mkdtemp("/tmp/codex/paws-browser-protocol-");
+  const script = `${root}/provider.mjs`;
+  await writeFile(
+    script,
+    `
+import { createInterface } from 'node:readline';
+import { appendFileSync } from 'node:fs';
+const send = value => process.stdout.write(JSON.stringify(value)+'\\n');
+for await (const line of createInterface({ input: process.stdin })) {
+  const m = JSON.parse(line);
+  if (m.id === 'screenshot' || m.id === 'blocked') {
+    appendFileSync(${JSON.stringify(`${root}/results`)}, JSON.stringify(m.result)+'\\n');
+    if (m.id === 'screenshot') send({ id: 'blocked', method: 'item/tool/call', params: { threadId: 'thread', callId: 'blocked', tool: 'paws_browser', arguments: { action: 'click', tabId: 'tab' } } });
+    else send({ method: 'turn/completed', params: { threadId: 'thread', turn: { id: 'turn', status: 'completed' } } });
+    continue;
+  }
+  if (m.method === 'initialized') continue;
+  if (m.method === 'thread/start' && !m.params.dynamicTools.some(t => t.name === 'paws_browser')) process.exit(7);
+  send({ id: m.id, result: m.method === 'thread/start' ? { thread: { id: 'thread' } } : m.method === 'turn/start' ? { turn: { id: 'turn' } } : {} });
+  if (m.method === 'turn/start') send({ id: 'screenshot', method: 'item/tool/call', params: { threadId: 'thread', callId: 'screenshot', tool: 'paws_browser', arguments: { action: 'screenshot', tabId: 'tab' } } });
+}
+`,
+  );
+  const calls: unknown[] = [];
+  const statuses: string[] = [];
+
+  try {
+    await runCodexTurn(
+      {
+        command: process.execPath,
+        args: [script],
+        cwd: root,
+        signal: AbortSignal.timeout(5000),
+      },
+      {
+        agentId: "agent",
+        agentName: "Ada",
+        nativeThreadId: null,
+        text: "Browse",
+        selection: { providerId: "codex", modelId: "model", options: {} },
+        signal: AbortSignal.timeout(5000),
+        onThread() {},
+        onText() {},
+        onMessage() {},
+        onTool(name, status) {
+          statuses.push(`${name}:${status}`);
+        },
+        async browserTool(input) {
+          calls.push(input);
+
+          return calls.length === 1
+            ? {
+                content: [
+                  { type: "image", data: "png", mimeType: "image/png" },
+                ],
+              }
+            : {
+                content: [{ type: "text", text: "The user has control" }],
+                isError: true,
+              };
+        },
+      },
+      async () => ({
+        accessToken: "test",
+        chatgptAccountId: "test",
+        chatgptPlanType: "plus",
+      }),
+    );
+    expect(calls).toEqual([
+      { action: "screenshot", tabId: "tab" },
+      { action: "click", tabId: "tab" },
+    ]);
+    const results = (await readFile(`${root}/results`, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(results).toEqual([
+      {
+        success: true,
+        contentItems: [
+          { type: "inputImage", imageUrl: "data:image/png;base64,png" },
+        ],
+      },
+      {
+        success: false,
+        contentItems: [{ type: "inputText", text: "The user has control" }],
+      },
+    ]);
+    expect(statuses).toEqual([
+      "paws_browser:running",
+      "paws_browser:completed",
+      "paws_browser:running",
+      "paws_browser:failed",
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -23,13 +23,14 @@ function executeHost(
   workspace: string,
   home: string,
   signal: AbortSignal,
+  timeoutMs: number,
 ) {
   return new Promise<string>((resolve, reject) => {
     const child = spawn("/bin/bash", ["-lc", command], {
       cwd: workspace,
       env: { PATH: process.env.PATH, HOME: home, CODEX_HOME: `${home}/.codex` },
       detached: true,
-      signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -346,9 +347,21 @@ export async function leaseToolRuntime(
         ],
       };
     },
-    async execute(command: string, signal: AbortSignal) {
+    async execute(
+      command: string,
+      signal: AbortSignal,
+      options: { timeoutMs?: number } = {},
+    ) {
+      const timeoutMs = options.timeoutMs ?? 120_000;
+
       if (!name)
-        return executeHost(command, layout.workspace, paths.home, signal);
+        return executeHost(
+          command,
+          layout.workspace,
+          paths.home,
+          signal,
+          timeoutMs,
+        );
 
       const taskPath = `/tmp/paws-process-${randomUUID()}`;
       let completed = false;
@@ -383,7 +396,7 @@ export async function leaseToolRuntime(
               HOME: paths.home,
               CODEX_HOME: `${paths.home}/.codex`,
             },
-            signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
+            signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
             maxBuffer: 256 * 1024,
           },
         );

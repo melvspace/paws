@@ -83,6 +83,7 @@ export function AgentWorkspace({
     viewportHeight: 800,
   });
   const [maximized, setMaximized] = useState(false);
+  const [browserOpen, setBrowserOpen] = useState(false);
   const settingsFlush = useRef<(() => Promise<void>) | null>(null);
   const flush = beforeLeave ?? settingsFlush;
   const [state, setState] = useState(() =>
@@ -483,6 +484,7 @@ export function AgentWorkspace({
       </div>
       <ChatRightPanel
         agentId={agent.id}
+        browserOpen={browserOpen}
         open={rightPanelOpen}
         sheet={sheet}
         maximized={rightPanelMaximized}
@@ -490,7 +492,13 @@ export function AgentWorkspace({
         viewportWidth={bounds.viewportWidth}
         controls={controls}
         onClose={() => void closeRightPanel()}
-        onTabClose={async () => {
+        onTabClose={async (tab) => {
+          if (tab === "browser") {
+            setBrowserOpen(false);
+
+            return true;
+          }
+
           if (!settingsOpen) return true;
 
           try {
@@ -507,7 +515,23 @@ export function AgentWorkspace({
             return false;
           }
         }}
-        onTabChange={() => onSettings()}
+        onTabChange={(tab) => {
+          if (tab === "settings") onSettings();
+          else
+            void (async () => {
+              try {
+                if (document.activeElement instanceof HTMLElement)
+                  document.activeElement.blur();
+
+                await flush.current?.();
+                onSettingsClosed?.();
+                setBrowserOpen(true);
+                setState((current) => ({ ...current, sidebarOpen: true }));
+              } catch {
+                // Failed edits remain in the settings panel.
+              }
+            })();
+        }}
       >
         {settingsOpen && (
           <AgentSettingsPanel

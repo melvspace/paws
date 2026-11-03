@@ -17,6 +17,7 @@
     "@paws/shared": "workspace:*",
     "cron-parser": "^5.10.3",
     "effect": "catalog:",
+    "playwright": "1.60.0",
     "ws": "catalog:",
     "yaml": "^2.9.1"
   },

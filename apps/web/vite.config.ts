@@ -4,7 +4,7 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import tailwind from "@tailwindcss/vite";
 
 const proxy = {
-  "/api": "http://127.0.0.1:4310",
+  "/api": { target: "http://127.0.0.1:4310", ws: true },
   "/ws": { target: "ws://127.0.0.1:4310", ws: true },
 };
 
