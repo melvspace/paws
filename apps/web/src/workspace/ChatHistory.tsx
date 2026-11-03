@@ -1,3 +1,4 @@
+import { PeerExchange, peerCounterpart } from "./PeerMessage.tsx";
 import { elementScroll, useVirtualizer } from "@tanstack/react-virtual";
 import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { Form } from "@base-ui/react/form";
@@ -34,7 +35,12 @@ type TimelineRow =
       key: string;
       time: NonNullable<ReturnType<typeof messageTime>>;
     }
-  | { kind: "message"; key: string; messageIndex: number };
+  | {
+      kind: "message";
+      key: string;
+      messageIndex: number;
+      messageIndices: number[];
+    };
 
 function toolProgress(activity: NonNullable<Conversation["toolActivity"]>) {
   const labels: Record<string, string> = {
@@ -293,23 +299,41 @@ export function ChatHistory({
       !heldIds.has(message.id),
   );
   const times = messages.map((message) => messageTime(message.createdAt));
-  const rows = messages.flatMap((message, index): TimelineRow[] => {
+  const rows: TimelineRow[] = [];
+
+  for (const [index, message] of messages.entries()) {
     const time = times[index];
-    const row: TimelineRow = {
-      kind: "message",
-      key: `message:${message.id}`,
-      messageIndex: index,
-    };
+    const previousRow = rows.at(-1);
+    const previous = index > 0 ? messages[index - 1] : undefined;
+    const counterpart = peerCounterpart(message, conversation?.agentId ?? "");
+
+    if (
+      counterpart &&
+      previous?.peer &&
+      previousRow?.kind === "message" &&
+      counterpart.id ===
+        peerCounterpart(previous, conversation?.agentId ?? "")?.id &&
+      time?.day === times[index - 1]?.day
+    ) {
+      previousRow.messageIndices.push(index);
+
+      continue;
+    }
 
     if (
       time &&
       time.day !== times[index - 1]?.day &&
       (index > 0 || !conversation?.historyCursor)
     )
-      return [{ kind: "day", key: `day:${message.id}`, time }, row];
+      rows.push({ kind: "day", key: `day:${message.id}`, time });
 
-    return [row];
-  });
+    rows.push({
+      kind: "message",
+      key: `message:${message.id}`,
+      messageIndex: index,
+      messageIndices: [index],
+    });
+  }
 
   const list = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
@@ -596,6 +620,37 @@ export function ChatHistory({
 
             const index = row.messageIndex;
             const message = messages[index]!;
+            if (message.peer)
+              return (
+                <div
+                  key={row.key}
+                  data-index={rowIndex}
+                  data-message-id={message.id}
+                  ref={virtual ? virtualizer.measureElement : undefined}
+                  className="chat-message-row"
+                  style={style}
+                >
+                  {row.messageIndices
+                    .flatMap(
+                      (index) =>
+                        anchoredHandoffs.get(messages[index]!.id) ?? [],
+                    )
+                    .map((handoff) => (
+                      <ContextHandoff
+                        key={handoff.id}
+                        handoff={handoff}
+                        providers={providers}
+                      />
+                    ))}
+                  <PeerExchange
+                    messages={row.messageIndices.map(
+                      (index) => messages[index]!,
+                    )}
+                    viewerId={conversation!.agentId}
+                  />
+                </div>
+              );
+
             // Earlier routine deliveries included this harness-owned prefix in text.
             // Present those records cleanly without changing their stored history.
             const legacyOrigin =
@@ -636,7 +691,7 @@ export function ChatHistory({
                 >
                   {time.label}
                 </time>
-                {message.role === "user" && (
+                {message.role === "user" && !message.peer && (
                   <span
                     className="chat-message-send-state"
                     role="status"

@@ -9,10 +9,12 @@ export function AgentSidebarSummary({
   agent,
   conversation,
   animated,
+  working = false,
 }: {
   agent: Agent;
   conversation: Conversation | undefined;
   animated: boolean;
+  working?: boolean;
 }) {
   const unread = conversation?.unreadCount ?? 0;
   const lastMessage = conversation?.messages.at(-1);
@@ -31,7 +33,7 @@ export function AgentSidebarSummary({
           size={40}
           animated={animated}
           activity={
-            conversation?.status === "running"
+            working || conversation?.status === "running"
               ? "working"
               : (conversation?.status ?? "idle")
           }

@@ -86,12 +86,29 @@ export const ChatHandoff = Schema.Struct({
   status: Schema.Literals(["pending", "completed", "failed"]),
 });
 export type ChatHandoff = typeof ChatHandoff.Type;
+export const PeerMessageOrigin = Schema.Struct({
+  eventId: Schema.String,
+  expectsReply: Schema.optional(Schema.Boolean),
+  replyToMessageId: Schema.optional(Schema.String),
+  requestText: Schema.optional(Schema.String),
+  requestAuthor: Schema.optional(Schema.String),
+  fromAgentId: Schema.String,
+  fromName: Schema.String,
+  toAgentId: Schema.String,
+  toName: Schema.String,
+  kind: Schema.String,
+  direction: Schema.Literals(["sent", "received"]),
+  delivery: Schema.String,
+});
+export type PeerMessageOrigin = typeof PeerMessageOrigin.Type;
+
 export const ChatMessage = Schema.Struct({
   id: Schema.String,
   role: Schema.Literals(["user", "assistant"]),
   text: Schema.String,
   createdAt: Schema.String,
   model: Schema.optional(ChatModelReference),
+  peer: Schema.optional(PeerMessageOrigin),
   routine: Schema.optional(
     Schema.Struct({
       id: Schema.String,

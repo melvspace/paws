@@ -111,6 +111,7 @@ export function Dashboard() {
   const sidebar = (
     <AgentSidebar
       agents={snapshot.agents}
+      workingAgentIds={snapshot.teamworkActiveAgentIds ?? []}
       teams={snapshot.teams ?? []}
       selectedId={agent?.id ?? null}
       connected={connected}

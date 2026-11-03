@@ -6,6 +6,7 @@ import {
   ChatToolError,
   teamToolDescription,
   memoryToolDescription,
+  teamworkToolDescription,
   type ChatTurn,
 } from "@paws/provider-core";
 
@@ -21,6 +22,50 @@ export const toolText = (text: string) => ({
 
 export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
   const entries = [
+    {
+      name: "paws_teamwork",
+      description: teamworkToolDescription,
+      schema: z.object({
+        action: z.enum([
+          "list",
+          "message",
+          "delegate",
+          "handoff",
+          "submit",
+          "review",
+          "block",
+          "cancel",
+          "retry",
+        ]),
+        taskId: z.string().optional(),
+        eventId: z.string().optional(),
+        revision: z.number().optional(),
+        toAgentId: z.string().optional(),
+        expectsReply: z.boolean().optional(),
+        replyToMessageId: z.string().optional(),
+        reviewerId: z.string().optional(),
+        title: z.string().optional(),
+        text: z.string().optional(),
+        verdict: z.enum(["approve", "request_changes"]).optional(),
+      }),
+      async execute(value: unknown) {
+        if (!turn.teamworkTool)
+          throw new ChatToolError("Teamwork unavailable.");
+
+        try {
+          return toolText(JSON.stringify(await turn.teamworkTool(value)));
+        } catch (error) {
+          return {
+            ...toolText(
+              error instanceof ChatToolError
+                ? error.message
+                : "Teamwork operation failed. Check the input.",
+            ),
+            isError: true,
+          };
+        }
+      },
+    },
     {
       name: "paws_routine",
       description:

@@ -364,6 +364,7 @@ function TeamDetails({
                   disabled={
                     pending ||
                     !connected ||
+                    snapshot.teamworkActiveAgentIds?.includes(agent.id) ||
                     conversations.some(
                       (conversation) =>
                         conversation.agentId === agent.id &&

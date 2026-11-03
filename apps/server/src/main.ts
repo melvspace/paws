@@ -1,3 +1,4 @@
+import { makeTeamworkService } from "./TeamworkService.ts";
 import { chatHistoryPage } from "./chatHistoryPaging.ts";
 import { makeMemoryService } from "./MemoryService.ts";
 import { memoryHttp } from "./memoryHttp.ts";
@@ -35,7 +36,7 @@ import {
 import { makeAgentService } from "./AgentService.ts";
 import { makeProviderService } from "./ProviderService.ts";
 import { providerHttp } from "./providerHttp.ts";
-import { makeChatService } from "./ChatService.ts";
+import { ChatError, makeChatService } from "./ChatService.ts";
 import { makeChatRunner } from "./chatRunner.ts";
 import { chatHttp } from "./chatHttp.ts";
 import { ChatExecutionError, type RunChatTurn } from "@paws/provider-core";
@@ -48,9 +49,10 @@ export function createServer(
     discoverProviders?: Parameters<typeof makeProviderService>[1];
   } = {},
 ) {
+  let teamworkRevision = 0;
   const agents = makeAgentService(
     root,
-    (id) => !chat.busy(id) && !routines?.busy(id),
+    (id) => !chat.busy(id) && !routines?.busy(id) && !teamwork?.busy(id),
     async (id) => {
       await managedChat.closeAgent(id);
     },
@@ -59,6 +61,7 @@ export function createServer(
     void broadcast().catch(() => {});
   });
   let routines: ReturnType<typeof makeRoutineService>;
+  let teamwork: ReturnType<typeof makeTeamworkService>;
   const managedChat = makeChatRunner(root, providers);
   const runChat = options.runChat ?? managedChat;
   const execute = serializeAgentExecution(async (turn) => {
@@ -67,16 +70,23 @@ export function createServer(
         "Agent environment is changing. Retry shortly.",
       );
 
+    teamwork?.validateExecution(
+      turn.requestId ?? turn.conversationId,
+      turn.agentId,
+    );
     await runChat(turn);
   });
   const run: RunChatTurn = (turn) =>
     execute({
       ...turn,
+      teamworkTool: (input) =>
+        teamwork.tool(turn.agentId, input, turn.conversationId, turn.requestId),
       routineTool: (input) =>
         routines.tool(
           turn.agentId,
           input,
-          turn.conversationId !== turn.agentId
+          turn.conversationId !== turn.agentId &&
+            !teamwork?.isConversation(turn.conversationId)
             ? turn.conversationId
             : undefined,
         ),
@@ -92,9 +102,31 @@ export function createServer(
     () => {},
     options.routineLimits ?? routineLimits,
   );
+  teamwork = makeTeamworkService(
+    root,
+    providers.list,
+    run,
+    chat,
+    () => {
+      teamworkRevision++;
+      void broadcast().catch(() => {});
+    },
+    agents.changing,
+    (id) => {
+      try {
+        routines.getRun(id);
+        return routines.conversations;
+      } catch {
+        return undefined;
+      }
+    },
+  );
   const snapshot = () =>
     Effect.runPromise(agents.list()).then(async (items) => ({
       agents: items,
+      teamworkRevision,
+      peerWaits: teamwork.replyWaits(),
+      teamworkActiveAgentIds: teamwork.activeAgentIds(),
       providers: providers.list(),
       teams: await Effect.runPromise(agents.listTeams()),
       conversations: chat
@@ -288,6 +320,7 @@ export function createServer(
 
         const removed = await Effect.runPromise(
           agents.remove(agentId, async () => {
+            await teamwork.removeAgent(agentId);
             await routines.removeAgent(agentId);
             await chat.remove(agentId);
           }),
@@ -360,6 +393,7 @@ export function createServer(
           const moved = await Effect.runPromise(agents.moveTeam(moveId, input));
           chat.invalidateEnvironment(moveId);
           routines.invalidateEnvironment(moveId);
+          teamwork.invalidateEnvironment(moveId);
           await broadcast();
           response.end(JSON.stringify(moved));
 
@@ -446,6 +480,7 @@ export function createServer(
         if (updateId && input.sandbox !== undefined) {
           chat.invalidateEnvironment(updateId);
           routines.invalidateEnvironment(updateId);
+          teamwork.invalidateEnvironment(updateId);
         }
 
         await broadcast();
@@ -456,10 +491,13 @@ export function createServer(
       }
 
       response.writeHead(404).end(JSON.stringify({ error: "Not found" }));
-    } catch {
-      response.writeHead(400).end(
+    } catch (error) {
+      response.writeHead(error instanceof ChatError ? error.status : 400).end(
         JSON.stringify({
-          error: "Unable to process request. Check the submitted fields.",
+          error:
+            error instanceof ChatError
+              ? error.message
+              : "Unable to process request. Check the submitted fields.",
         }),
       );
     }
@@ -513,6 +551,7 @@ export function createServer(
     providers,
     chat,
     routines,
+    teamwork,
     close: async () => {
       for (const client of sockets.clients) {
         client.terminate();
@@ -521,6 +560,7 @@ export function createServer(
       sockets.close();
       server.close();
       webhookServer.close();
+      await teamwork.close();
       await routines.close();
       await chat.close();
       await managedChat.close();
