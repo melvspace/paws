@@ -322,6 +322,13 @@
   height: 28px;
   padding: 6px;
 }
+.right-panel-settings {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
 .right-panel-content {
   display: flex;
   flex: 1;

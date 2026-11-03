@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -40,9 +40,11 @@ function browserPoint(
 export function BrowserPanel({
   agentId,
   active,
+  compact = false,
 }: {
   agentId: string;
   active: boolean;
+  compact?: boolean;
 }) {
   const [state, setState] = useState<BrowserState | null>(null);
   const [status, setStatus] = useState<
@@ -163,11 +165,19 @@ export function BrowserPanel({
     frame?.tabId,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = stage.current;
     const client = connection.current;
 
-    if (!node || !client || !tab || !active || status !== "connected") return;
+    if (
+      compact ||
+      !node ||
+      !client ||
+      !tab ||
+      !active ||
+      status !== "connected"
+    )
+      return;
 
     let previous = "";
     const measure = () => {
@@ -193,7 +203,7 @@ export function BrowserPanel({
     measure();
 
     return () => observer.disconnect();
-  }, [active, status, tab?.id, tab?.generation]);
+  }, [active, compact, status, tab?.id, tab?.generation]);
 
   function send(message: BrowserClientMessage) {
     setError(null);
@@ -213,119 +223,139 @@ export function BrowserPanel({
   }
 
   return (
-    <section className="browser-panel" aria-label="Browser">
-      <div className="browser-tabs" aria-label="Browser tabs">
-        {state?.tabs.map((item) => (
-          <div
-            key={item.id}
-            className="browser-tab"
-            data-active={item.id === tab?.id}
-          >
-            <Button
-              variant="ghost"
-              onClick={() => send({ type: "watch", tabId: item.id })}
-              aria-pressed={item.id === tab?.id}
+    <section
+      className="browser-panel"
+      aria-label="Browser"
+      data-compact={compact || undefined}
+    >
+      <div className="browser-chrome" hidden={compact}>
+        <div className="browser-tabs" aria-label="Browser tabs">
+          {state?.tabs.map((item) => (
+            <div
+              key={item.id}
+              className="browser-tab"
+              data-active={item.id === tab?.id}
             >
-              {item.title || "New tab"}
-            </Button>
+              <Button
+                variant="ghost"
+                onClick={() => send({ type: "watch", tabId: item.id })}
+                aria-pressed={item.id === tab?.id}
+              >
+                {item.title || "New tab"}
+              </Button>
+              <Button
+                variant="ghost"
+                aria-label={`Close ${item.title || "new tab"}`}
+                disabled={item.id !== state.controllerTabId}
+                onClick={() =>
+                  send({
+                    type: "action",
+                    generation: item.generation,
+                    input: { action: "close", tabId: item.id },
+                  })
+                }
+              >
+                <XIcon size={12} aria-hidden />
+              </Button>
+            </div>
+          ))}
+          <Button
+            variant="ghost"
+            aria-label="New browser tab"
+            disabled={status !== "connected"}
+            onClick={() => action({ action: "open" })}
+          >
+            <PlusIcon size={16} aria-hidden />
+          </Button>
+        </div>
+        <form
+          className="browser-toolbar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const value = address.trim();
+
+            if (!value) return;
+
+            const url = /^[a-z][a-z\d+.-]*:/i.test(value)
+              ? value
+              : `https://${value}`;
+            action(
+              tab
+                ? { action: "navigate", tabId: tab.id, url }
+                : { action: "open", url },
+            );
+          }}
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            aria-label="Browser back"
+            disabled={!controlling}
+            onClick={() => action({ action: "back", tabId: tab?.id })}
+          >
+            <ArrowLeftIcon size={14} aria-hidden />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            aria-label="Browser forward"
+            disabled={!controlling}
+            onClick={() => action({ action: "forward", tabId: tab?.id })}
+          >
+            <ArrowRightIcon size={14} aria-hidden />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            aria-label="Reload browser"
+            disabled={!controlling}
+            onClick={() => action({ action: "reload", tabId: tab?.id })}
+          >
+            <RotateCwIcon size={14} aria-hidden />
+          </Button>
+          <input
+            aria-label="Browser address"
+            value={address}
+            disabled={status !== "connected" || (!!tab && !controlling)}
+            onFocus={() => {
+              addressFocused.current = true;
+            }}
+            onBlur={() => {
+              addressFocused.current = false;
+            }}
+            onChange={(event) => setAddress(event.target.value)}
+          />
+          {tab && (
             <Button
-              variant="ghost"
-              aria-label={`Close ${item.title || "new tab"}`}
-              disabled={item.id !== state.controllerTabId}
+              type="button"
+              variant="outline"
+              disabled={status !== "connected"}
               onClick={() =>
                 send({
-                  type: "action",
-                  generation: item.generation,
-                  input: { action: "close", tabId: item.id },
+                  type: controlling ? "releaseControl" : "takeControl",
+                  tabId: tab.id,
                 })
               }
             >
-              <XIcon size={12} aria-hidden />
+              {controlling ? "Return control" : "Take control"}
             </Button>
-          </div>
-        ))}
-        <Button
-          variant="ghost"
-          aria-label="New browser tab"
-          disabled={status !== "connected"}
-          onClick={() => action({ action: "open" })}
-        >
-          <PlusIcon size={16} aria-hidden />
-        </Button>
+          )}
+        </form>
       </div>
-      <form
-        className="browser-toolbar"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const value = address.trim();
-
-          if (!value) return;
-
-          const url = /^[a-z][a-z\d+.-]*:/i.test(value)
-            ? value
-            : `https://${value}`;
-          action(
-            tab
-              ? { action: "navigate", tabId: tab.id, url }
-              : { action: "open", url },
-          );
-        }}
-      >
+      {compact && tab && status === "connected" && (
         <Button
-          type="button"
-          variant="ghost"
-          aria-label="Browser back"
-          disabled={!controlling}
-          onClick={() => action({ action: "back", tabId: tab?.id })}
+          className="browser-floating-control"
+          variant="outline"
+          onClick={() =>
+            send({
+              type: controlling ? "releaseControl" : "takeControl",
+              tabId: tab.id,
+            })
+          }
         >
-          <ArrowLeftIcon size={14} aria-hidden />
+          {controlling ? "Return control" : "Take control"}
         </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          aria-label="Browser forward"
-          disabled={!controlling}
-          onClick={() => action({ action: "forward", tabId: tab?.id })}
-        >
-          <ArrowRightIcon size={14} aria-hidden />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          aria-label="Reload browser"
-          disabled={!controlling}
-          onClick={() => action({ action: "reload", tabId: tab?.id })}
-        >
-          <RotateCwIcon size={14} aria-hidden />
-        </Button>
-        <input
-          aria-label="Browser address"
-          value={address}
-          disabled={status !== "connected" || (!!tab && !controlling)}
-          onFocus={() => {
-            addressFocused.current = true;
-          }}
-          onBlur={() => {
-            addressFocused.current = false;
-          }}
-          onChange={(event) => setAddress(event.target.value)}
-        />
-        {tab && (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={status !== "connected"}
-            onClick={() =>
-              send({
-                type: controlling ? "releaseControl" : "takeControl",
-                tabId: tab.id,
-              })
-            }
-          >
-            {controlling ? "Return control" : "Take control"}
-          </Button>
-        )}
-      </form>
+      )}
       {error && (
         <div className="browser-notice" role="alert">
           {error}
@@ -344,7 +374,7 @@ export function BrowserPanel({
           </Button>
         </div>
       )}
-      {status === "connected" && tab && (
+      {!compact && status === "connected" && tab && (
         <div className="browser-control-status" role="status">
           {tab.loading
             ? "Loading…"

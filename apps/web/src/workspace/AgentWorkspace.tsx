@@ -3,7 +3,11 @@ import { AgentAvatar } from "../AgentAvatar.tsx";
 import { defaultAgentAvatar } from "@paws/contracts";
 import { useComposerAttachments } from "./useComposerAttachments.ts";
 import { useAtomValue } from "@effect/atom-react";
-import { agentsAtom, providersAtom } from "@paws/client-runtime";
+import {
+  agentsAtom,
+  providersAtom,
+  connectBrowser,
+} from "@paws/client-runtime";
 import { modelKey, normalizeModelOptions } from "@paws/provider-core";
 import { useModelPreferences } from "./modelPreferences.ts";
 import { availableModels } from "./models.ts";
@@ -84,6 +88,51 @@ export function AgentWorkspace({
   });
   const [maximized, setMaximized] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
+  const [browserReveal, setBrowserReveal] = useState(0);
+
+  useEffect(() => {
+    let disposed = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let client: ReturnType<typeof connectBrowser>;
+    let known = new Set<string>();
+
+    function connect() {
+      client = connectBrowser(
+        agent.id,
+        (message) => {
+          if (disposed || message.type !== "state") return;
+
+          const tabs = new Set(message.tabs.map((tab) => tab.id));
+
+          if (message.tabs.some((tab) => !known.has(tab.id))) {
+            setBrowserOpen(true);
+            setBrowserReveal((value) => value + 1);
+          } else if (tabs.size === 0 && known.size > 0) {
+            setBrowserOpen(false);
+          }
+
+          known = tabs;
+        },
+        (connected) => {
+          if (!disposed && !connected) {
+            client.close();
+            clearTimeout(retry);
+            retry = setTimeout(connect, 2000);
+          }
+        },
+        true,
+      );
+    }
+
+    connect();
+
+    return () => {
+      disposed = true;
+      clearTimeout(retry);
+      client.close();
+    };
+  }, [agent.id]);
+
   const settingsFlush = useRef<(() => Promise<void>) | null>(null);
   const flush = beforeLeave ?? settingsFlush;
   const [state, setState] = useState(() =>
@@ -485,6 +534,7 @@ export function AgentWorkspace({
       <ChatRightPanel
         agentId={agent.id}
         browserOpen={browserOpen}
+        browserReveal={browserReveal}
         open={rightPanelOpen}
         sheet={sheet}
         maximized={rightPanelMaximized}

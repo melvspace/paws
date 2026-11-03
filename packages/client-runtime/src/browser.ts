@@ -8,11 +8,14 @@ export function connectBrowser(
   agentId: string,
   receive: (message: BrowserServerMessage) => void,
   connection: (connected: boolean) => void,
+  observe = false,
 ) {
   const url = new URL(
     `/api/agents/${encodeURIComponent(agentId)}/browser/stream`,
     window.location.href,
   );
+  if (observe) url.searchParams.set("observe", "1");
+
   url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(url);
   let disposed = false;

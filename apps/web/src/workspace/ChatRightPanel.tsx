@@ -1,8 +1,10 @@
+import { FloatingBrowser } from "./FloatingBrowser.tsx";
 import { BrowserPanel } from "./BrowserPanel.tsx";
 import { Button } from "../components/ui/button.tsx";
 // Adapted from T3 Code ChatRightPanel, RightPanelSheet, and RightPanelTabs (MIT).
 import {
   useCallback,
+  useEffect,
   useId,
   useState,
   type CSSProperties,
@@ -32,6 +34,7 @@ interface ChatRightPanelProps {
   onClose: () => void;
   children?: ReactNode;
   browserOpen?: boolean;
+  browserReveal?: number;
   onTabChange?: (tab: "settings" | "browser") => void;
   onTabClose?: (tab: "settings" | "browser") => Promise<boolean>;
 }
@@ -51,11 +54,40 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     },
     [contentHost],
   );
-  const activeTab = props.children
-    ? "settings"
-    : props.browserOpen
+  const [selectedTab, setSelectedTab] = useState<"settings" | "browser">(
+    "settings",
+  );
+  const hasSettings = !!props.children;
+
+  useEffect(() => {
+    if (hasSettings) setSelectedTab("settings");
+  }, [hasSettings]);
+
+  useEffect(() => {
+    if (props.browserOpen) setSelectedTab("browser");
+  }, [props.browserOpen, props.browserReveal]);
+
+  const activeTab =
+    selectedTab === "browser" && props.browserOpen
       ? "browser"
-      : null;
+      : hasSettings
+        ? "settings"
+        : props.browserOpen
+          ? "browser"
+          : null;
+  const floating = !!props.browserOpen && !props.open;
+  const [browserHost] = useState(() => {
+    const host = document.createElement("div");
+    host.className = "browser-view-host";
+
+    return host;
+  });
+  const attachBrowser = useCallback(
+    (host: HTMLDivElement | null) => {
+      host?.append(browserHost);
+    },
+    [browserHost],
+  );
   const tabs: readonly ("settings" | "browser")[] = [
     ...(props.children ? ["settings" as const] : []),
     ...(props.browserOpen ? ["browser" as const] : []),
@@ -69,6 +101,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
   };
 
   function selectTab(tab: "settings" | "browser") {
+    setSelectedTab(tab);
     props.onTabChange?.(tab);
   }
 
@@ -204,14 +237,15 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
         role={activeTab ? "tabpanel" : undefined}
         aria-labelledby={activeTab ? `${tabId}-${activeTab}` : undefined}
       >
-        {props.children}
-        {props.browserOpen && (
-          <div hidden={activeTab !== "browser"} style={{ height: "100%" }}>
-            <BrowserPanel
-              agentId={props.agentId}
-              active={props.open && activeTab === "browser"}
-            />
-          </div>
+        <div className="right-panel-settings" hidden={activeTab !== "settings"}>
+          {props.children}
+        </div>
+        {!floating && props.browserOpen && (
+          <div
+            hidden={activeTab !== "browser"}
+            className="browser-view-host"
+            ref={attachBrowser}
+          />
         )}
         {!activeTab && (
           <div className="surface-picker" aria-label="Open a surface">
@@ -253,6 +287,24 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
       }}
     >
       {createPortal(content, contentHost)}
+      {props.browserOpen &&
+        createPortal(
+          <BrowserPanel
+            agentId={props.agentId}
+            compact={floating}
+            active={floating || (props.open && activeTab === "browser")}
+          />,
+          browserHost,
+        )}
+      {floating && (
+        <FloatingBrowser
+          agentId={props.agentId}
+          onDock={() => selectTab("browser")}
+          onClose={() => void closeTab("browser")}
+        >
+          <div className="browser-view-host" ref={attachBrowser} />
+        </FloatingBrowser>
+      )}
       {props.sheet ? (
         <DialogPopup
           sheet

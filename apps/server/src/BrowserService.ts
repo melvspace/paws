@@ -59,6 +59,7 @@ interface Tab {
   buttons: Set<"left" | "right" | "middle">;
 }
 interface Session {
+  agentId: string;
   closed: boolean;
   context: BrowserContext;
   close(): Promise<void>;
@@ -75,6 +76,7 @@ export function makeBrowserService(
 ) {
   const sessions = new Map<string, Promise<Session>>();
   const closing = new Set<string>();
+  const observers = new Map<string, Set<(state: BrowserState) => void>>();
   let stopped = false;
 
   function enqueue<T>(session: Session, operation: () => Promise<T>) {
@@ -113,6 +115,9 @@ export function makeBrowserService(
   }
 
   function publish(session: Session) {
+    for (const receive of observers.get(session.agentId) ?? [])
+      receive(state(session));
+
     for (const viewer of session.viewers) viewer.send(state(session, viewer));
   }
 
@@ -331,6 +336,7 @@ export function makeBrowserService(
         let cleanup: Promise<void> | undefined;
         const session: Session = {
           ...runtime,
+          agentId,
           closed: false,
           close() {
             cleanup ??= runtime.close();
@@ -352,7 +358,10 @@ export function makeBrowserService(
             void adopt(session, page).catch(() => page.close().catch(() => {}));
           });
           session.context.on("close", () => {
-            if (sessions.get(agentId) === pending) sessions.delete(agentId);
+            if (sessions.get(agentId) === pending) {
+              sessions.delete(agentId);
+              publishEmpty(agentId);
+            }
 
             for (const viewer of session.viewers) viewer.disconnect();
 
@@ -368,7 +377,10 @@ export function makeBrowserService(
       });
       sessions.set(agentId, pending);
       void pending.catch(() => {
-        if (sessions.get(agentId) === pending) sessions.delete(agentId);
+        if (sessions.get(agentId) === pending) {
+          sessions.delete(agentId);
+          publishEmpty(agentId);
+        }
       });
     }
 
@@ -773,10 +785,50 @@ export function makeBrowserService(
     };
   }
 
+  function publishEmpty(agentId: string) {
+    for (const receive of observers.get(agentId) ?? [])
+      receive({
+        type: "state",
+        tabs: [],
+        selectedTabId: null,
+        controllerTabId: null,
+        ...viewport,
+      });
+  }
+
+  async function observe(
+    agentId: string,
+    receive: (state: BrowserState) => void,
+  ) {
+    let listeners = observers.get(agentId);
+
+    if (!listeners) {
+      listeners = new Set();
+      observers.set(agentId, listeners);
+    }
+
+    listeners.add(receive);
+    const session = await sessions.get(agentId)?.catch(() => undefined);
+
+    if (session && !session.closed) receive(state(session));
+    else publishEmpty(agentId);
+
+    return {
+      input: async (_input: unknown) => {},
+      async detach() {
+        listeners.delete(receive);
+
+        if (listeners.size === 0 && observers.get(agentId) === listeners)
+          observers.delete(agentId);
+      },
+    };
+  }
+
   async function closeAgent(agentId: string) {
     closing.add(agentId);
     const pending = sessions.get(agentId);
     sessions.delete(agentId);
+    publishEmpty(agentId);
 
     try {
       const session = await pending?.catch(() => undefined);
@@ -799,6 +851,7 @@ export function makeBrowserService(
     tool: (agentId: string, input: unknown, signal: AbortSignal) =>
       Effect.runPromise(tool(agentId, input, signal)),
     attach,
+    observe,
     closeAgent,
     async close() {
       stopped = true;

@@ -101,3 +101,103 @@
   color: var(--muted-foreground);
   text-align: center;
 }
+
+.browser-view-host {
+  height: 100%;
+  min-height: 0;
+}
+.floating-browser {
+  position: fixed;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  width: min(640px, calc(100vw - 32px));
+  height: min(480px, calc(100dvh - 32px));
+  min-width: min(320px, calc(100vw - 32px));
+  min-height: 240px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  resize: both;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--background);
+  box-shadow: 0 12px 40px #0004;
+}
+.floating-browser > .browser-view-host {
+  flex: 1;
+}
+.floating-browser-titlebar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.floating-browser-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 24px;
+  color: var(--muted-foreground);
+}
+.floating-browser-titlebar > button {
+  padding: 4px;
+  min-height: 24px;
+  opacity: 0;
+  pointer-events: none;
+}
+.floating-browser-titlebar:hover,
+.floating-browser-titlebar:focus-within {
+  border-color: var(--border);
+  background: var(--background);
+  box-shadow: 0 2px 8px #0002;
+}
+.floating-browser-titlebar:hover > button,
+.floating-browser-titlebar:focus-within > button {
+  opacity: 1;
+  pointer-events: auto;
+}
+.browser-chrome {
+  flex-shrink: 0;
+}
+.browser-chrome[hidden] {
+  display: none;
+}
+.browser-panel[data-compact] {
+  position: relative;
+}
+.browser-floating-control {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  opacity: 0;
+  pointer-events: none;
+}
+.browser-panel[data-compact]:hover > .browser-floating-control,
+.browser-panel[data-compact]:focus-within > .browser-floating-control {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .floating-browser-titlebar {
+    border-color: var(--border);
+    background: var(--background);
+  }
+  .floating-browser-titlebar > button,
+  .browser-floating-control {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

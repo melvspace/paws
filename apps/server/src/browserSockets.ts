@@ -15,7 +15,7 @@ export function browserSockets(
   });
   server.on("upgrade", (request, socket, head) => {
     const match = /^\/api\/agents\/([^/]+)\/browser\/stream$/.exec(
-      request.url ?? "",
+      (request.url ?? "").split("?")[0]!,
     );
 
     if (!match) {
@@ -45,18 +45,27 @@ export function browserSockets(
           );
 
           // Attach a receiver before launch completes so initial input is retained.
-          const attached = browsers.attach(
-            match[1]!,
-            (message) => {
-              if (
-                client.readyState === 1 &&
-                (message.type !== "frame" ||
-                  client.bufferedAmount < 2 * 1024 * 1024)
-              )
-                client.send(JSON.stringify(message));
-            },
-            () => client.close(1001, "Browser closed"),
-          );
+          const observe =
+            new URL(request.url!, "http://localhost").searchParams.get(
+              "observe",
+            ) === "1";
+          const attached = observe
+            ? browsers.observe(match[1]!, (message) => {
+                if (client.readyState === 1)
+                  client.send(JSON.stringify(message));
+              })
+            : browsers.attach(
+                match[1]!,
+                (message) => {
+                  if (
+                    client.readyState === 1 &&
+                    (message.type !== "frame" ||
+                      client.bufferedAmount < 2 * 1024 * 1024)
+                  )
+                    client.send(JSON.stringify(message));
+                },
+                () => client.close(1001, "Browser closed"),
+              );
           const failed = (error: unknown) => {
             if (client.readyState === 1)
               client.send(

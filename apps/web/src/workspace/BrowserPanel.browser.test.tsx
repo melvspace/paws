@@ -268,3 +268,33 @@ it("forwards hover movement and releases input when a drag ends outside the imag
     generation: 7,
   });
 });
+
+it("scales the floating page without resizing its browser viewport and hides navigation chrome", async () => {
+  bridge.send.mockClear();
+  await using _screen = await render(
+    <div style={{ width: 480, height: 320 }}>
+      <BrowserPanel agentId="agent" active compact />
+    </div>,
+  );
+  bridge.receive(state);
+  bridge.receive({
+    type: "frame",
+    tabId: "tab",
+    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+  });
+  const image = page.getByRole("img", { name: "Browser page interaction" });
+  await expect.element(image).toBeVisible();
+  expect(getComputedStyle(image.element()).objectFit).toBe("contain");
+  await expect
+    .element(document.querySelector<HTMLElement>(".browser-chrome")!)
+    .not.toBeVisible();
+  expect(
+    bridge.send.mock.calls.some(([message]) => message.type === "resize"),
+  ).toBe(false);
+  await image.hover();
+  await page.getByRole("button", { name: "Take control", exact: true }).click();
+  expect(bridge.send).toHaveBeenCalledWith({
+    type: "takeControl",
+    tabId: "tab",
+  });
+});

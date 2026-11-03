@@ -743,3 +743,36 @@ it("completes control cleanup when releasing a held key opens a page dialog", as
     await f.close();
   }
 }, 30000);
+
+it("observes agent browser sessions without launching or streaming and cleans up subscriptions", async () => {
+  const f = await fixture();
+  const events: BrowserState[] = [];
+  const otherEvents: BrowserState[] = [];
+  const observer = await f.browsers.observe(f.agent.id, (state) =>
+    events.push(state),
+  );
+  const other = await f.browsers.observe(f.other.id, (state) =>
+    otherEvents.push(state),
+  );
+
+  try {
+    expect(f.launch).not.toHaveBeenCalled();
+    expect(events.at(-1)?.tabs).toEqual([]);
+    await f.tool({ action: "open", url: f.url });
+    expect(events.at(-1)?.tabs.some((tab) => tab.url === f.url + "/")).toBe(
+      true,
+    );
+    expect(events.at(-1)?.selectedTabId).toBeNull();
+    expect(otherEvents).toHaveLength(1);
+    await f.browsers.closeAgent(f.agent.id);
+    expect(events.at(-1)?.tabs).toEqual([]);
+    await observer.detach();
+    const count = events.length;
+    await f.tool({ action: "list" });
+    expect(events).toHaveLength(count);
+  } finally {
+    await observer.detach();
+    await other.detach();
+    await f.close();
+  }
+});
