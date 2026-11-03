@@ -217,3 +217,54 @@ it("waits for browser startup before enabling new tabs or showing an empty brows
     .element(page.getByRole("button", { name: "New browser tab" }))
     .toBeEnabled();
 });
+
+it("forwards hover movement and releases input when a drag ends outside the image", async () => {
+  bridge.send.mockClear();
+  await using _screen = await render(
+    <div style={{ width: 800, height: 600 }}>
+      <BrowserPanel agentId="agent" active />
+    </div>,
+  );
+  bridge.receive({
+    ...state,
+    controllerTabId: "tab",
+    tabs: [{ ...state.tabs[0]!, owner: "human", generation: 7 }],
+  });
+  bridge.receive({
+    type: "frame",
+    tabId: "tab",
+    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+  });
+  await expect.element(page.getByRole("img")).toBeVisible();
+  const image = document.querySelector<HTMLImageElement>(".browser-stage img")!;
+  const rect = image.getBoundingClientRect();
+  image.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      buttons: 0,
+    }),
+  );
+  expect(bridge.send).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      type: "pointer",
+      phase: "move",
+      tabId: "tab",
+      generation: 7,
+    }),
+  );
+  image.dispatchEvent(
+    new PointerEvent("pointerup", {
+      bubbles: true,
+      clientX: rect.right + 50,
+      clientY: rect.bottom + 50,
+      button: 0,
+    }),
+  );
+  expect(bridge.send).toHaveBeenLastCalledWith({
+    type: "resetInput",
+    tabId: "tab",
+    generation: 7,
+  });
+});

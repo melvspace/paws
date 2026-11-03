@@ -468,9 +468,15 @@ export function BrowserPanel({
                           ? "middle"
                           : "left",
                   });
+                else
+                  send({
+                    type: "resetInput",
+                    tabId: tab.id,
+                    generation: tab.generation,
+                  });
               }}
               onPointerMove={(event) => {
-                if (!controlling || !event.buttons) return;
+                if (!controlling) return;
 
                 const position = point(event);
 

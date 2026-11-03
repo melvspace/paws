@@ -327,17 +327,20 @@ it("adopts new tabs and popups once and makes page dialogs answerable", async ()
       selector: 'role=button[name="Popup"]',
     });
     await vi.waitFor(() => expect(latestState(events).tabs).toHaveLength(3));
-    await f.tool({
+    const confirming = f.tool({
       action: "click",
       tabId,
       selector: 'role=button[name="Confirm"]',
     });
-    expect(
-      latestState(events).tabs.find((tab) => tab.id === tabId)?.dialog,
-    ).toEqual({ type: "confirm", message: "Continue?" });
+    await vi.waitFor(() =>
+      expect(
+        latestState(events).tabs.find((tab) => tab.id === tabId)?.dialog,
+      ).toEqual({ type: "confirm", message: "Continue?" }),
+    );
     expect(
       (await f.tool({ action: "dialog", tabId, accept: true })).isError,
     ).toBeUndefined();
+    expect((await confirming).isError).toBeUndefined();
     expect(
       latestState(events).tabs.find((tab) => tab.id === tabId)?.dialog,
     ).toBeNull();
@@ -424,6 +427,179 @@ it("opens Google by default and fits the viewport of the controlling viewer", as
       height: 1400,
     });
     await one.detach();
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
+it("preserves agent navigation and form input when the first viewer attaches", async () => {
+  const f = await fixture();
+
+  try {
+    await f.tool({ action: "list" });
+    const runtime = await f.launch.mock.results[0]!.value;
+    const page = runtime.context.pages()[0]!;
+    const listed = await f.tool({ action: "list" });
+    const content = listed.content[0];
+
+    if (content?.type !== "text") throw new Error("Expected browser state.");
+
+    const tabId = JSON.parse(content.text).tabs[0].id;
+    await f.tool({ action: "navigate", tabId, url: f.url });
+    await f.tool({ action: "fill", tabId, selector: "#name", text: "Draft" });
+    const viewer = await f.browsers.attach(
+      f.agent.id,
+      () => {},
+      () => {},
+    );
+    await f.tool({ action: "list" });
+    expect(page.url()).toBe(`${f.url}/`);
+    expect(await page.locator("#name").inputValue()).toBe("Draft");
+    await viewer.detach();
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
+it("answers human-click dialogs without waiting behind the blocked input", async () => {
+  const f = await fixture();
+  const events: BrowserServerMessage[] = [];
+
+  try {
+    const viewer = await f.browsers.attach(
+      f.agent.id,
+      (event) => events.push(event),
+      () => {},
+    );
+    const tabId = latestState(events).tabs[0]!.id;
+    await f.tool({ action: "navigate", tabId, url: f.url });
+    await viewer.input({ type: "takeControl", tabId });
+    const generation = latestState(events).tabs[0]!.generation;
+    const runtime = await f.launch.mock.results[0]!.value;
+    const page = runtime.context.pages()[0]!;
+    const button = await page
+      .getByRole("button", { name: "Confirm" })
+      .boundingBox();
+
+    if (!button) throw new Error("Missing confirm button.");
+
+    await viewer.input({
+      type: "pointer",
+      tabId,
+      generation,
+      phase: "down",
+      button: "left",
+      x: button.x + 5,
+      y: button.y + 5,
+    });
+    const clicked = viewer.input({
+      type: "pointer",
+      tabId,
+      generation,
+      phase: "up",
+      button: "left",
+      x: button.x + 5,
+      y: button.y + 5,
+    });
+    await vi.waitFor(() =>
+      expect(latestState(events).tabs[0]!.dialog).not.toBeNull(),
+    );
+    await expect(
+      viewer.input({
+        type: "action",
+        generation: generation - 1,
+        input: { action: "dialog", tabId, accept: true },
+      }),
+    ).rejects.toThrow("Control changed");
+    expect(
+      (await f.tool({ action: "dialog", tabId, accept: true })).isError,
+    ).toBe(true);
+    const answered = viewer.input({
+      type: "action",
+      generation,
+      input: { action: "dialog", tabId, accept: true },
+    });
+    let completed = false;
+    void Promise.all([clicked, answered]).then(
+      () => {
+        completed = true;
+      },
+      () => {},
+    );
+    await vi.waitFor(() => expect(completed).toBe(true));
+    expect(latestState(events).tabs[0]!.dialog).toBeNull();
+    await viewer.detach();
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
+it("types Unicode characters from a controlling viewer without invalid key errors", async () => {
+  const f = await fixture();
+  const events: BrowserServerMessage[] = [];
+
+  try {
+    const viewer = await f.browsers.attach(
+      f.agent.id,
+      (event) => events.push(event),
+      () => {},
+    );
+    const tabId = latestState(events).tabs[0]!.id;
+    await f.tool({ action: "navigate", tabId, url: f.url });
+    const runtime = await f.launch.mock.results[0]!.value;
+    const page = runtime.context.pages()[0]!;
+    await page.locator("#name").focus();
+    await viewer.input({ type: "takeControl", tabId });
+    const generation = latestState(events).tabs[0]!.generation;
+
+    for (const key of ["é", "й", "あ", "😀"]) {
+      await viewer.input({
+        type: "key",
+        tabId,
+        generation,
+        key,
+        phase: "down",
+      });
+      await viewer.input({ type: "key", tabId, generation, key, phase: "up" });
+    }
+
+    expect(await page.locator("#name").inputValue()).toBe("éйあ😀");
+    await viewer.detach();
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
+it("returns page dialogs to sequential agent key actions before they are answered", async () => {
+  const f = await fixture();
+  const events: BrowserServerMessage[] = [];
+
+  try {
+    const viewer = await f.browsers.attach(
+      f.agent.id,
+      (event) => events.push(event),
+      () => {},
+    );
+    const tabId = latestState(events).tabs[0]!.id;
+    await f.tool({ action: "navigate", tabId, url: f.url });
+    const runtime = await f.launch.mock.results[0]!.value;
+    await runtime.context
+      .pages()[0]!
+      .getByRole("button", { name: "Confirm" })
+      .focus();
+    let result: Awaited<ReturnType<typeof f.tool>> | undefined;
+    const pressed = f
+      .tool({ action: "press", tabId, key: "Enter" })
+      .then((value) => {
+        result = value;
+      });
+    await vi.waitFor(() => expect(result).toBeDefined());
+    expect(JSON.stringify(result)).toContain("Continue?");
+    expect(
+      (await f.tool({ action: "dialog", tabId, accept: true })).isError,
+    ).toBeUndefined();
+    await pressed;
+    await viewer.detach();
   } finally {
     await f.close();
   }

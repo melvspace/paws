@@ -228,6 +228,7 @@ export function makeBrowserService(
     page.on("framenavigated", (frame) => {
       if (frame !== page.mainFrame()) return;
 
+      tab.homePending = false;
       tab.loading = true;
       publish(session);
     });
@@ -477,10 +478,32 @@ export function makeBrowserService(
             ? getTab(session, input.tabId).generation
             : undefined;
 
+          // Dialogs unblock in-flight input, so they cannot wait behind it.
+          if (input.action === "dialog")
+            return await action(session, input, undefined, generation);
+
           return await enqueue(session, async () => {
             signal.throwIfAborted();
 
-            return action(session, input, undefined, generation);
+            const tab = input.tabId ? getTab(session, input.tabId) : undefined;
+
+            if (!tab) return action(session, input, undefined, generation);
+
+            let reportDialog = () => {};
+            const dialog = new Promise<BrowserToolResult>((resolve) => {
+              reportDialog = () => resolve(textResult(state(session)));
+            });
+            tab.page.on("dialog", reportDialog);
+
+            try {
+              // Return the dialog to sequential tool callers while CDP input waits.
+              return await Promise.race([
+                action(session, input, undefined, generation),
+                dialog,
+              ]);
+            } finally {
+              tab.page.off("dialog", reportDialog);
+            }
           });
         } catch (error) {
           return {
@@ -525,11 +548,13 @@ export function makeBrowserService(
 
         if (selected?.homePending) {
           selected.homePending = false;
-          void enqueue(session, () =>
-            selected.page.goto(browserHomeUrl, {
+          void enqueue(session, async () => {
+            if (selected.page.url() !== "about:blank") return;
+
+            await selected.page.goto(browserHomeUrl, {
               waitUntil: "domcontentloaded",
-            }),
-          ).catch(() => {
+            });
+          }).catch(() => {
             if (!session.closed && session.viewers.has(viewer))
               send({
                 type: "error",
@@ -552,6 +577,13 @@ export function makeBrowserService(
         })(value);
 
         if (detached) return;
+
+        // A page dialog can block the queued input that opened it.
+        if (message.type === "action" && message.input.action === "dialog") {
+          await action(session, message.input, viewer, message.generation);
+
+          return;
+        }
 
         // Revoke pending agent and stale viewer work before waiting for in-flight work.
         if (
@@ -629,7 +661,14 @@ export function makeBrowserService(
                 await page.mouse.up({ button: message.button });
               }
             } else if (message.type === "key") {
-              if (message.phase === "down") {
+              const printableUnicode =
+                [...message.key].length === 1 &&
+                (message.key.codePointAt(0) ?? 0) > 127;
+
+              if (printableUnicode) {
+                if (message.phase === "down")
+                  await page.keyboard.insertText(message.key);
+              } else if (message.phase === "down") {
                 tab.keys.add(message.key);
                 await page.keyboard.down(message.key);
               } else {
