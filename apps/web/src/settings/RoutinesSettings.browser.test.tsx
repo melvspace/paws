@@ -1822,3 +1822,49 @@ it("shows accessible field errors and submits only after required values and fil
     requests.mockRestore();
   }
 });
+
+it("directs remote webhook configuration to the owning machine", async () => {
+  const originalUrl = window.location.href;
+  const url = new URL(originalUrl);
+  url.searchParams.set("environment", "remote-machine");
+  window.history.replaceState(null, "", url);
+  const routine: Routine = {
+    ...routineListFixture(),
+    trigger: { kind: "webhook", filters: { combinator: "and", rules: [] } },
+  };
+  const requests = vi
+    .spyOn(window, "fetch")
+    .mockImplementation(async (input) => {
+      if (String(input).endsWith("/routine-preview")) return Response.json([]);
+      if (String(input).endsWith("/webhook"))
+        return Response.json({ endpoint: `/hooks/routines/${routine.id}` });
+
+      return Response.json({ routines: [routine], runs: [], events: [] });
+    });
+
+  try {
+    await using _screen = await render(<RoutinesPanel onDismiss={() => {}} />);
+    await page.getByRole("button", { name: "Digest", exact: true }).click();
+    await expect
+      .element(
+        page.getByText(
+          "Open Paws on the owning machine to copy its webhook URL.",
+        ),
+      )
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("textbox", { name: "Webhook URL", exact: true }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(
+        page.getByRole("button", { name: "Copy webhook URL", exact: true }),
+      )
+      .not.toBeInTheDocument();
+    expect(
+      requests.mock.calls.some(([input]) => String(input).endsWith("/webhook")),
+    ).toBe(false);
+  } finally {
+    requests.mockRestore();
+    window.history.replaceState(null, "", originalUrl);
+  }
+});
