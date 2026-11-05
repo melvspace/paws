@@ -1,4 +1,6 @@
 import { makeBrowserService } from "./BrowserService.ts";
+import { webAssets } from "./webAssets.ts";
+import { startCompanion } from "./companion.ts";
 import { browserSockets } from "./browserSockets.ts";
 import { makeTeamworkService } from "./TeamworkService.ts";
 import { peerMessageHttp } from "./peerMessageHttp.ts";
@@ -52,6 +54,7 @@ export function createServer(
     routineLimits?: typeof routineLimits;
     discoverProviders?: Parameters<typeof makeProviderService>[1];
     launchBrowser?: Parameters<typeof makeBrowserService>[1];
+    webRoot?: string;
   } = {},
 ) {
   let teamworkRevision = 0;
@@ -229,6 +232,8 @@ export function createServer(
     }
 
     try {
+      if (await webAssets(request, response, options.webRoot)) return;
+
       if (await memoryHttp(request, response, makeMemoryService(root))) return;
 
       if (await routineHttp(request, response, routines)) return;
@@ -654,10 +659,27 @@ if (
   const root = process.env.PAWS_HOME ?? Path.join(homedir(), ".paws");
   const app = createServer(root, {
     routineLimits: configuredRoutineLimits(process.env.PAWS_ROUTINE_LIMITS),
+    ...(process.env.PAWS_WEB_ROOT
+      ? { webRoot: process.env.PAWS_WEB_ROOT }
+      : {}),
   });
-  app.server.listen(4310, "127.0.0.1", () =>
-    console.log("Paws server: http://127.0.0.1:4310"),
-  );
+  app.server.on("error", () => {
+    console.error("Paws could not start. Port 4310 may already be in use.");
+    process.exit(1);
+  });
+  const companion = await startCompanion(process.env);
+  const host = process.env.PAWS_HOST ?? "127.0.0.1";
+  app.server.listen(4310, host, () => {
+    console.log(`Paws server: http://${host}:4310`);
+    process.send?.({ type: "ready" });
+  });
+
+  const close = () => {
+    companion?.stop();
+    void app.close();
+  };
+  process.once("disconnect", close);
+
   if (process.env.PAWS_WEBHOOK_PORT) {
     const port = Number(process.env.PAWS_WEBHOOK_PORT);
 
@@ -675,6 +697,6 @@ if (
       void app.providers.refresh(provider.config.id);
     }
   }
-  process.once("SIGINT", app.close);
-  process.once("SIGTERM", app.close);
+  process.once("SIGINT", close);
+  process.once("SIGTERM", close);
 }

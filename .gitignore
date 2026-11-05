@@ -6,3 +6,9 @@ dist/
 .env.*
 !.env.example
 *.tsbuildinfo
+release/
+**/.gradle/
+apps/mobile/**/build/
+apps/mobile/local.properties
+*.keystore
+*.jks

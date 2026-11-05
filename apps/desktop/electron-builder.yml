@@ -1,0 +1,29 @@
+appId: dev.paws.desktop
+productName: Paws
+icon: ../../assets/icon.png
+directories:
+  output: ../../release/desktop
+files:
+  - src/main.mjs
+  - package.json
+extraResources:
+  - from: dist
+    to: runtime
+asar: true
+artifactName: Paws-${version}-${os}-${arch}.${ext}
+mac:
+  category: public.app-category.developer-tools
+  target: dmg
+linux:
+  executableName: paws
+  syncDesktopName: true
+  maintainer: Paws contributors
+  category: Development
+  target:
+    - AppImage
+    - deb
+win:
+  target: nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

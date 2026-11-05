@@ -1,0 +1,43 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'dev.paws.companion'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'dev.paws.companion'
+        minSdk 26
+        targetSdk 36
+        versionName "0.1.0" // x-release-please-version
+        def parts = versionName.split('\\.').collect { it.toInteger() }
+        versionCode parts[0] * 1000000 + parts[1] * 1000 + parts[2]
+    }
+
+    signingConfigs {
+        debug {
+            if (System.getenv('ANDROID_DEBUG_KEYSTORE_FILE')) {
+                storeFile file(System.getenv('ANDROID_DEBUG_KEYSTORE_FILE'))
+                storePassword System.getenv('ANDROID_DEBUG_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_DEBUG_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_DEBUG_KEY_PASSWORD')
+            }
+        }
+
+        release {
+            if (System.getenv('ANDROID_KEYSTORE_FILE')) {
+                storeFile file(System.getenv('ANDROID_KEYSTORE_FILE'))
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+        }
+    }
+}

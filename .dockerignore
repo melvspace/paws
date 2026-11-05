@@ -1,0 +1,15 @@
+.git
+.github
+**/node_modules
+**/dist
+**/build
+**/.gradle
+**/.vite-plus
+**/coverage
+release
+.paws
+.env
+.env.*
+**/*.jks
+**/*.keystore
+apps/mobile/local.properties

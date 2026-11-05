@@ -1,13 +1,21 @@
 {
   "name": "@paws/desktop",
+  "version": "0.1.0",
   "private": true,
+  "description": "Paws desktop agent workspace",
+  "homepage": "https://github.com/melvspace/paws",
+  "license": "MIT",
+  "author": "Paws contributors",
   "type": "module",
   "main": "src/main.mjs",
   "scripts": {
     "dev": "electron .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "package": "node build.mjs && electron-builder --publish never"
   },
   "devDependencies": {
-    "electron": "44.10.0"
-  }
+    "electron": "44.10.0",
+    "electron-builder": "^26.18.0"
+  },
+  "desktopName": "paws.desktop"
 }

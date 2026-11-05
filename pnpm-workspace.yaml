@@ -5,6 +5,7 @@ packages:
 allowBuilds:
   "@tsc-rs/typescript": true
   electron: false
+  electron-winstaller: false
 
 catalog:
   effect: 4.0.5
@@ -31,6 +32,8 @@ peerDependencyRules:
     vite: "1.4.0"
 
 permissions:
+  react-querybuilder:
+    skills: false
   "@tanstack/react-router":
     skills: false
   "@tanstack/router-plugin":

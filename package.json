@@ -1,5 +1,6 @@
 {
   "name": "paws",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,7 +14,10 @@
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
     "check": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
-    "runtime:build": "docker build -f packages/runtime/docker/Dockerfile.team -t paws-team-runtime:1 packages/runtime/docker"
+    "runtime:build": "docker build -f packages/runtime/docker/Dockerfile.team -t paws-team-runtime:1 packages/runtime/docker",
+    "build:desktop": "pnpm build && pnpm --filter @paws/desktop package",
+    "build:server": "node scripts/build-server.mjs",
+    "build:image": "docker build -t paws:local ."
   },
   "devDependencies": {
     "@types/node": "catalog:",
