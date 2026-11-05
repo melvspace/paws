@@ -1,0 +1,235 @@
+name: Build apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit or tag to build (blank uses the selected branch)
+        type: string
+        default: ""
+      release-tag:
+        description: Existing draft release to finish (blank creates test artifacts)
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
+      release-tag:
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - run: node scripts/check-release.mjs
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+      - run: pnpm --filter @paws/web exec playwright install --with-deps chromium
+      - run: pnpm check
+
+  desktop:
+    needs: check
+    name: Desktop ${{ matrix.os }} ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x64
+          - os: windows-2025
+            arch: x64
+          - os: macos-15
+            arch: arm64
+          - os: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          architecture: ${{ matrix.arch }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Electron runtime
+        run: pnpm --filter @paws/desktop exec node node_modules/electron/install.js
+      - name: Build installers
+        run: pnpm build:desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Smoke test packaged backend
+        run: node scripts/smoke-package.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            release/desktop/*.dmg
+            release/desktop/*.AppImage
+            release/desktop/*.deb
+            release/desktop/*.exe
+
+  android:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Prepare debug signing
+        if: inputs.release-tag == '' && github.event_name != 'pull_request'
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_DEBUG_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$KEYSTORE" ]]; then
+            exit 0
+          fi
+
+          if [[ -z "$STORE_PASSWORD" || -z "$KEY_ALIAS" || -z "$KEY_PASSWORD" ]]; then
+            echo "::error::Configure all four Android debug signing secrets."
+            exit 1
+          fi
+
+          umask 077
+          printf '%s' "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/paws-debug.jks"
+          echo "ANDROID_DEBUG_KEYSTORE_FILE=$RUNNER_TEMP/paws-debug.jks" >> "$GITHUB_ENV"
+      - name: Prepare release signing
+        if: inputs.release-tag != ''
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -z "$KEYSTORE" || -z "$STORE_PASSWORD" || -z "$KEY_ALIAS" || -z "$KEY_PASSWORD" ]]; then
+            echo "::error::Configure all four Android signing secrets before publishing a release."
+            exit 1
+          fi
+
+          umask 077
+          printf '%s' "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/paws.jks"
+          echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/paws.jks" >> "$GITHUB_ENV"
+      - name: Build APK
+        working-directory: apps/mobile
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ inputs.release-tag != '' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+          ANDROID_KEY_ALIAS: ${{ inputs.release-tag != '' && secrets.ANDROID_KEY_ALIAS || '' }}
+          ANDROID_KEY_PASSWORD: ${{ inputs.release-tag != '' && secrets.ANDROID_KEY_PASSWORD || '' }}
+          ANDROID_DEBUG_KEYSTORE_PASSWORD: ${{ inputs.release-tag == '' && github.event_name != 'pull_request' && secrets.ANDROID_DEBUG_KEYSTORE_PASSWORD || '' }}
+          ANDROID_DEBUG_KEY_ALIAS: ${{ inputs.release-tag == '' && github.event_name != 'pull_request' && secrets.ANDROID_DEBUG_KEY_ALIAS || '' }}
+          ANDROID_DEBUG_KEY_PASSWORD: ${{ inputs.release-tag == '' && github.event_name != 'pull_request' && secrets.ANDROID_DEBUG_KEY_PASSWORD || '' }}
+        run: |
+          if [[ -n "$RELEASE_TAG" ]]; then
+            ./gradlew --no-daemon lintRelease assembleRelease
+          else
+            ./gradlew --no-daemon lintDebug assembleDebug
+          fi
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/paws.jks" "$RUNNER_TEMP/paws-debug.jks"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          if-no-files-found: error
+          path: apps/mobile/app/build/outputs/apk/**/*.apk
+
+  container:
+    needs: [check, desktop, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: docker/setup-buildx-action@v4
+      - name: Build server image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: paws:ci
+          cache-from: type=gha,scope=paws-server
+          cache-to: type=gha,mode=max,scope=paws-server
+      - name: Smoke test server image
+        run: node scripts/smoke-image.mjs paws:ci
+      - name: Log in to GHCR
+        if: inputs.release-tag != ''
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish tested image
+        if: inputs.release-tag != ''
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker tag paws:ci "$image:${RELEASE_TAG#v}"
+          docker tag paws:ci "$image:latest"
+          docker push "$image:${RELEASE_TAG#v}"
+          docker push "$image:latest"
+
+  publish:
+    needs: [desktop, android, container]
+    if: inputs.release-tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: |
+          mv artifacts/app-release.apk "artifacts/Paws-${RELEASE_TAG}-android.apk"
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          gh release upload "$RELEASE_TAG" ./* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false
