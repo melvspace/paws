@@ -1,7 +1,8 @@
 name: CI
 on: [push, pull_request]
 permissions:
-  contents: read
+  # Allow the reusable publisher; its build jobs restrict themselves to read.
+  contents: write
   packages: write
 
 concurrency:

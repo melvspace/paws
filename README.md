@@ -176,10 +176,12 @@ installers, a signed Android APK, and SHA256 checksums. The tested container ima
 is published to GHCR before the GitHub Release becomes public. Android version codes are
 derived from `major * 1000000 + minor * 1000 + patch`; keep minor and patch below 1000. CI changes should use `ci:` commits.
 
-Enable **Allow GitHub Actions to create and approve pull requests** in the
-repository's Actions settings. Set `RELEASE_PLEASE_TOKEN` to a GitHub App token
-or suitable personal access token if release PRs must trigger other CI workflows;
-PRs created with the default `GITHUB_TOKEN` do not trigger them automatically.
+Release Please authenticates as a GitHub App so its release PRs trigger CI.
+Install the app on this repository with **Contents: read and write** and
+**Pull requests: read and write**, then configure `RELEASE_APP_ID` with its numeric
+App ID and `RELEASE_APP_PRIVATE_KEY` with the complete PEM private key. The workflow
+mints a short-lived installation token scoped to this repository; no personal
+access token is required.
 
 Release APK builds require these repository secrets:
 
