@@ -1,3 +1,4 @@
+import { environmentPath } from "@paws/client-runtime";
 import { useState } from "react";
 import { DownloadIcon, FileIcon } from "lucide-react";
 import type { ChatAttachment } from "@paws/contracts";
@@ -12,7 +13,9 @@ export function MessageAttachment({
 }) {
   const preview = /^(image|audio|video)\//.test(attachment.mediaType);
   const [failed, setFailed] = useState(false);
-  const url = `/api/agents/${encodeURIComponent(agentId)}/chat/attachments/${attachment.id}`;
+  const url = environmentPath(
+    `/api/agents/${encodeURIComponent(agentId)}/chat/attachments/${attachment.id}`,
+  );
   const size =
     attachment.size === undefined
       ? ""

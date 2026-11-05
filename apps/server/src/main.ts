@@ -1,3 +1,4 @@
+import { makeEnvironmentHttp } from "./environmentHttp.ts";
 import { makeBrowserService } from "./BrowserService.ts";
 import { webAssets } from "./webAssets.ts";
 import { startCompanion } from "./companion.ts";
@@ -55,6 +56,8 @@ export function createServer(
     discoverProviders?: Parameters<typeof makeProviderService>[1];
     launchBrowser?: Parameters<typeof makeBrowserService>[1];
     webRoot?: string;
+    environmentPort?: number;
+    environmentNetworking?: boolean;
   } = {},
 ) {
   let teamworkRevision = 0;
@@ -232,6 +235,8 @@ export function createServer(
     }
 
     try {
+      if (await environments.http(request, response)) return;
+
       if (await webAssets(request, response, options.webRoot)) return;
 
       if (await memoryHttp(request, response, makeMemoryService(root))) return;
@@ -576,6 +581,25 @@ export function createServer(
           .end(JSON.stringify({ error: "Unable to process webhook request." }));
     }
   });
+  const environments = makeEnvironmentHttp(root, server, {
+    ...(options.environmentPort !== undefined
+      ? { port: options.environmentPort }
+      : {}),
+    ...(options.environmentNetworking !== undefined
+      ? { networking: options.environmentNetworking }
+      : {}),
+  });
+  server.on("upgrade", (request, socket, head) => {
+    if (!request.url?.startsWith("/api/environments/")) return;
+
+    if (!isAllowedRequestOrigin(request.headers)) {
+      socket.destroy();
+
+      return;
+    }
+
+    environments.upgrade(request, socket, head);
+  });
   const sockets = new WebSocketServer({ noServer: true });
   const browserStream = browserSockets(
     server,
@@ -632,6 +656,8 @@ export function createServer(
     routines,
     teamwork,
     close: async () => {
+      await environments.close();
+
       for (const client of sockets.clients) {
         client.terminate();
       }
@@ -658,6 +684,7 @@ if (
 ) {
   const root = process.env.PAWS_HOME ?? Path.join(homedir(), ".paws");
   const app = createServer(root, {
+    environmentNetworking: true,
     routineLimits: configuredRoutineLimits(process.env.PAWS_ROUTINE_LIMITS),
     ...(process.env.PAWS_WEB_ROOT
       ? { webRoot: process.env.PAWS_WEB_ROOT }

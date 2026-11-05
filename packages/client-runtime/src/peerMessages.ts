@@ -1,3 +1,4 @@
+import { environmentFetch } from "./transport.ts";
 import { Schema } from "effect";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import { PeerRetryResult } from "@paws/contracts";
@@ -27,7 +28,7 @@ export function retryPeerMessage(
   update({ status: "retrying" });
   const request = Promise.resolve().then(async () => {
     try {
-      const response = await fetch(
+      const response = await environmentFetch(
         `/api/agents/${encodeURIComponent(agentId)}/peer-messages/${encodeURIComponent(eventId)}/retry`,
         { method: "POST" },
       );

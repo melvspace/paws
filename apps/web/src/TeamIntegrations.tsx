@@ -1,3 +1,4 @@
+import { activeEnvironmentId, environmentFetch } from "@paws/client-runtime";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   ChevronRightIcon,
@@ -175,7 +176,7 @@ function IntegrationEditor({
                 "Enter an environment variable for this credential.",
               );
 
-            const response = await fetch(
+            const response = await environmentFetch(
               `/api/teams/${encodeURIComponent(teamId)}/integrations/${encodeURIComponent(draftRef.current.id)}/credentials`,
               {
                 method: "POST",
@@ -381,22 +382,26 @@ function IntegrationEditor({
           {existing && draft.kind === "mcp-http" && (
             <div className="settings-row">
               <span>Authentication</span>
-              <Button
-                variant="outline"
-                disabled={pending || disabled}
-                onClick={(event) => {
-                  if (pending || disabled) event.preventDefault();
-                }}
-                render={
-                  <a
-                    href={`/api/teams/${encodeURIComponent(teamId)}/integrations/${encodeURIComponent(initial.id)}/authorize`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  />
-                }
-              >
-                Sign in
-              </Button>
+              {activeEnvironmentId() ? (
+                <span>Open Paws on the owning machine to sign in.</span>
+              ) : (
+                <Button
+                  variant="outline"
+                  disabled={pending || disabled}
+                  onClick={(event) => {
+                    if (pending || disabled) event.preventDefault();
+                  }}
+                  render={
+                    <a
+                      href={`/api/teams/${encodeURIComponent(teamId)}/integrations/${encodeURIComponent(initial.id)}/authorize`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    />
+                  }
+                >
+                  Sign in
+                </Button>
+              )}
             </div>
           )}
           <div className="settings-row">

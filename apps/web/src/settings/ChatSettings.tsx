@@ -43,18 +43,10 @@ export function ChatSettings() {
                     setMessageDisplay(value);
                 }}
               >
-                <MenuRadioItem
-                  value="whole"
-                  className="ui-menu-radio-item"
-                  closeOnClick
-                >
+                <MenuRadioItem value="whole" closeOnClick>
                   Whole messages
                 </MenuRadioItem>
-                <MenuRadioItem
-                  value="streaming"
-                  className="ui-menu-radio-item"
-                  closeOnClick
-                >
+                <MenuRadioItem value="streaming" closeOnClick>
                   Streaming
                 </MenuRadioItem>
               </MenuRadioGroup>

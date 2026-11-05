@@ -51,14 +51,15 @@ it("shows the hint only while the composer is empty, including after multiline e
     const input = page.getByRole("textbox", { name: "Message Ada" });
     const hint = () => getComputedStyle(input.element(), "::before").content;
 
-    expect(hint()).toBe('"Ask anything. $ skills, / commands"');
+    await expect.poll(hint).toBe('"Ask anything. $ skills, / commands"');
     await input.fill("Check next sprint tasks");
-    expect(hint()).toBe("none");
+    await expect.poll(hint).toBe("none");
     await userEvent.keyboard("{End}{Shift>}{Enter}{/Shift}check");
     expect(input.element().textContent).toContain("check");
-    expect(hint()).toBe("none");
+    await expect.poll(hint).toBe("none");
     await input.fill("");
-    expect(hint()).toBe('"Ask anything. $ skills, / commands"');
+    await expect.element(input).toHaveTextContent("");
+    await expect.poll(hint).toBe('"Ask anything. $ skills, / commands"');
   } finally {
     fetch.mockRestore();
   }

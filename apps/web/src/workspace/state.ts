@@ -1,3 +1,4 @@
+import { activeEnvironmentId } from "@paws/client-runtime";
 import { Schema } from "effect";
 import { ChatAttachment } from "@paws/contracts";
 import type { Agent } from "@paws/contracts";
@@ -27,13 +28,19 @@ export function selectedAgent(agents: readonly Agent[], hash: string) {
   return agents.find((agent) => agent.id === id) ?? agents[0] ?? null;
 }
 
+function workspaceKey(agentId: string) {
+  const environment = activeEnvironmentId();
+
+  return `paws.workspace.${environment ? `${environment}.` : ""}${agentId}`;
+}
+
 export function readWorkspace(
   storage: Pick<Storage, "getItem">,
   agentId: string,
 ): WorkspaceState {
   try {
     const value: unknown = JSON.parse(
-      storage.getItem(`paws.workspace.${agentId}`) ?? "null",
+      storage.getItem(workspaceKey(agentId)) ?? "null",
     );
 
     if (!value || typeof value !== "object") {
@@ -71,7 +78,7 @@ export function writeWorkspace(
   state: WorkspaceState,
 ) {
   try {
-    storage.setItem(`paws.workspace.${agentId}`, JSON.stringify(state));
+    storage.setItem(workspaceKey(agentId), JSON.stringify(state));
   } catch {
     // Keep the workspace usable when storage is unavailable or full.
   }

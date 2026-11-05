@@ -27,8 +27,12 @@ import { appAtomRegistry } from "../lib/atomRegistry.ts";
 import { ProviderIcon } from "../providers/ProviderIcon.tsx";
 import { Button } from "../components/ui/button.tsx";
 import { Input } from "../components/ui/input.tsx";
-import { Menu, MenuTrigger, MenuPopup } from "../components/ui/menu.tsx";
-import { Menu as BaseMenu } from "@base-ui/react/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuTrigger,
+  MenuPopup,
+} from "../components/ui/menu.tsx";
 import { ProviderModels } from "./ProviderModels.tsx";
 import { SensitiveText } from "../components/ui/sensitive-text.tsx";
 import {
@@ -474,9 +478,8 @@ export function ProviderSettings() {
       </MenuTrigger>
       <MenuPopup aria-label="Add provider">
         {providerDrivers.map((driver) => (
-          <BaseMenu.Item
+          <MenuItem
             key={driver.id}
-            className="ui-menu-radio-item"
             onClick={() =>
               void perform(async () => {
                 const provider = await changeProvider(
@@ -499,7 +502,7 @@ export function ProviderSettings() {
           >
             <ProviderIcon driver={driver.id} />
             {driver.name}
-          </BaseMenu.Item>
+          </MenuItem>
         ))}
       </MenuPopup>
     </Menu>

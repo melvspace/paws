@@ -1,0 +1,255 @@
+.environment-settings {
+  width: 100%;
+  margin-inline: auto;
+  font-size: 13px;
+  line-height: 20px;
+}
+.environment-settings h3 {
+  margin: 24px 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.environment-rows {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.environment-rows > * + * {
+  border-top: 1px solid var(--border);
+}
+.environment-rows > p {
+  margin: 0;
+  padding: 16px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.environment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 12px 16px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 400;
+}
+.environment-row > span,
+.environment-row > label {
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 400;
+}
+.environment-row > input {
+  width: min(100%, 280px);
+  min-width: 0;
+  height: 32px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-weight: 400;
+}
+.environment-row small,
+.environment-pairing-controls small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.environment-settings .ui-button-ghost {
+  flex-shrink: 0;
+  padding: 6px 8px;
+  min-height: 32px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.environment-settings .ui-button-ghost:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.environment-addresses,
+.environment-pairing {
+  align-items: flex-start;
+}
+.environment-addresses > span,
+.environment-pairing > span {
+  padding-top: 4px;
+}
+.environment-address-list {
+  width: min(100%, 360px);
+  max-height: 100px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  list-style: none;
+  padding: 4px 0;
+  margin: 0;
+  color: var(--muted-foreground);
+}
+.environment-address-list code {
+  font-size: 12px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.environment-pairing-controls {
+  width: min(100%, 360px);
+}
+.environment-pairing-controls input {
+  width: 100%;
+  height: 32px;
+  padding: 6px 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 400;
+}
+.environment-pairing-controls > .ui-button {
+  margin-left: -8px;
+}
+.environment-feedback {
+  margin: 12px 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--muted-foreground);
+}
+.environment-feedback[role="alert"] {
+  color: var(--foreground);
+}
+@media (max-width: 640px) {
+  .environment-row {
+    flex-wrap: wrap;
+    gap: 8px 16px;
+  }
+  .environment-row > input,
+  .environment-address-list,
+  .environment-pairing-controls {
+    width: 100%;
+  }
+}
+
+.environment-page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.environment-page-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+.environment-page-heading h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+.environment-machines {
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  list-style: none;
+  overflow: hidden;
+}
+.environment-machines > li + li {
+  border-top: 1px solid var(--border);
+}
+.environment-machine {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  min-height: 64px;
+  padding: 12px 16px;
+}
+.environment-machine-icon {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.environment-machine-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.environment-machine-name {
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.environment-machine-meta {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+.environment-machine[data-dimmed] > .environment-machine-icon,
+.environment-machine[data-dimmed] > .environment-machine-copy {
+  opacity: 0.6;
+}
+.environment-machine-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+.environment-settings .environment-more {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+}
+.environment-machine-actions .ui-switch[data-checked] {
+  background: var(--primary);
+}
+.environment-machine-actions .ui-switch[data-checked] .ui-switch-thumb {
+  background: var(--primary-foreground);
+}
+.environment-entry-details {
+  grid-column: 2 / -1;
+  min-width: 0;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.environment-entry-details .environment-row {
+  padding: 0;
+  min-height: 32px;
+}
+.environment-connection-details {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: var(--muted-foreground);
+}
+.environment-connection-details code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .environment-page-heading {
+    flex-wrap: wrap;
+    gap: 8px 16px;
+  }
+  .environment-machine {
+    column-gap: 8px;
+    padding-inline: 12px;
+  }
+}

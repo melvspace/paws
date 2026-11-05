@@ -20,6 +20,7 @@ import {
 } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  activeEnvironmentId,
   agentsAtom,
   loadRoutines,
   saveRoutine,
@@ -634,14 +635,16 @@ function RoutineEditor({
   const [preview, setPreview] = useState<readonly string[]>([]);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
+  const remoteEnvironment = !!activeEnvironmentId();
   const webhookUrlId = useId();
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookError, setWebhookError] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
-  const webhookDisplayUrl = webhookUrl
-    ? new URL(webhookUrl, window.location.origin).href
-    : "";
+  const webhookDisplayUrl =
+    !remoteEnvironment && webhookUrl
+      ? new URL(webhookUrl, window.location.origin).href
+      : "";
   const webhookId =
     routine?.trigger.kind === "webhook" ? routine.id : undefined;
 
@@ -650,7 +653,7 @@ function RoutineEditor({
     setWebhookUrl("");
     setWebhookError(null);
 
-    if (webhookId) {
+    if (webhookId && !remoteEnvironment) {
       void routineRequest(
         `${routinePath(agentId, webhookId)}/webhook`,
         "GET",
@@ -672,7 +675,7 @@ function RoutineEditor({
     }
 
     return () => controller.abort();
-  }, [agentId, webhookId]);
+  }, [agentId, webhookId, remoteEnvironment]);
 
   useEffect(() => {
     if (copiedAt === null) return;
@@ -1179,42 +1182,52 @@ function RoutineEditor({
         )}
         {routine && draft.trigger.kind === "webhook" && (
           <div className="settings-row">
-            <label htmlFor={webhookUrlId}>Webhook URL</label>
+            {remoteEnvironment ? (
+              <span>Webhook URL</span>
+            ) : (
+              <label htmlFor={webhookUrlId}>Webhook URL</label>
+            )}
             <div className="routine-webhook-controls">
-              <div
-                className="routine-webhook-url"
-                data-copied={copiedAt !== null}
-              >
-                <Input
-                  id={webhookUrlId}
-                  readOnly
-                  value={webhookDisplayUrl}
-                  aria-busy={!webhookUrl && !webhookError}
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={
-                    copiedAt !== null
-                      ? "Copied webhook URL"
-                      : "Copy webhook URL"
-                  }
-                  title={copiedAt !== null ? "Copied" : "Copy webhook URL"}
-                  disabled={!webhookDisplayUrl}
-                  onClick={() => void copyWebhookUrl()}
+              {remoteEnvironment ? (
+                <span>
+                  Open Paws on the owning machine to copy its webhook URL.
+                </span>
+              ) : (
+                <div
+                  className="routine-webhook-url"
+                  data-copied={copiedAt !== null}
                 >
-                  {copiedAt !== null ? (
-                    <CheckIcon size={14} aria-hidden />
-                  ) : (
-                    <CopyIcon size={14} aria-hidden />
+                  <Input
+                    id={webhookUrlId}
+                    readOnly
+                    value={webhookDisplayUrl}
+                    aria-busy={!webhookUrl && !webhookError}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={
+                      copiedAt !== null
+                        ? "Copied webhook URL"
+                        : "Copy webhook URL"
+                    }
+                    title={copiedAt !== null ? "Copied" : "Copy webhook URL"}
+                    disabled={!webhookDisplayUrl}
+                    onClick={() => void copyWebhookUrl()}
+                  >
+                    {copiedAt !== null ? (
+                      <CheckIcon size={14} aria-hidden />
+                    ) : (
+                      <CopyIcon size={14} aria-hidden />
+                    )}
+                  </Button>
+                  {copiedAt !== null && (
+                    <span className="routine-copy-feedback" role="status">
+                      Copied
+                    </span>
                   )}
-                </Button>
-                {copiedAt !== null && (
-                  <span className="routine-copy-feedback" role="status">
-                    Copied
-                  </span>
-                )}
-              </div>
+                </div>
+              )}
               <Button
                 variant="outline"
                 disabled={!connected || pending}

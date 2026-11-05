@@ -1,3 +1,5 @@
+import { subscribeSnapshot } from "./snapshots.ts";
+import { environmentFetch } from "./transport.ts";
 import { Schema } from "effect";
 import { conversationsAtom, mergeConversation } from "./chat.ts";
 import { providersAtom } from "./providers.ts";
@@ -22,70 +24,42 @@ export function connectAgents(
   registry: AtomRegistry.AtomRegistry,
   url: string,
 ) {
-  let disposed = false;
-  let retry: ReturnType<typeof setTimeout> | undefined;
-  let socket: WebSocket;
+  let previousSnapshot: Snapshot | undefined;
+  const disconnect = subscribeSnapshot(url, (state) => {
+    registry.set(agentsAtom, state);
+    const { snapshot } = state;
 
-  function connect() {
-    socket = new WebSocket(url);
-    socket.onmessage = (event) => {
-      try {
-        const snapshot = Schema.decodeUnknownSync(Snapshot)(
-          JSON.parse(event.data),
-        );
+    if (snapshot === previousSnapshot) return;
 
-        if (!disposed) {
-          registry.set(agentsAtom, { snapshot, connected: true, error: null });
+    previousSnapshot = snapshot;
 
-          if (snapshot.conversations)
-            registry.update(conversationsAtom, (current) =>
-              snapshot.conversations!.map((next) =>
-                mergeConversation(
-                  current.find((item) => item.agentId === next.agentId),
-                  next,
-                ),
-              ),
-            );
+    if (snapshot.conversations) {
+      registry.update(conversationsAtom, (current) =>
+        snapshot.conversations!.map((next) =>
+          mergeConversation(
+            current.find((item) => item.agentId === next.agentId),
+            next,
+          ),
+        ),
+      );
+    }
 
-          if (snapshot.providers) {
-            registry.set(providersAtom, {
-              providers: snapshot.providers,
-              error: null,
-            });
-          }
-        }
-      } catch {
-        if (!disposed) {
-          registry.update(agentsAtom, (state) => ({
-            ...state,
-            error: "The server sent an invalid agent list.",
-          }));
-        }
-      }
-    };
-    socket.onclose = () => {
-      if (!disposed) {
-        registry.update(agentsAtom, (state) => ({
-          ...state,
-          connected: false,
-        }));
-        retry = setTimeout(connect, 2000);
-      }
-    };
-  }
-
-  connect();
+    if (snapshot.providers) {
+      registry.set(providersAtom, {
+        providers: snapshot.providers,
+        error: null,
+      });
+    }
+  });
 
   return () => {
-    disposed = true;
-    clearTimeout(retry);
-    socket.close();
+    disconnect();
     registry.update(agentsAtom, (state) => ({ ...state, connected: false }));
   };
 }
 
 export async function createAgent(input: CreateAgent) {
-  const response = await fetch("/api/agents", {
+  const response = await environmentFetch("/api/agents", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -101,11 +75,14 @@ export async function createAgent(input: CreateAgent) {
 }
 
 export async function updateAgent(id: string, input: UpdateAgent) {
-  const response = await fetch(`/api/agents/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
+  const response = await environmentFetch(
+    `/api/agents/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
 
   if (!response.ok) {
     throw new Error(
@@ -117,9 +94,12 @@ export async function updateAgent(id: string, input: UpdateAgent) {
 }
 
 export async function deleteAgent(id: string) {
-  const response = await fetch(`/api/agents/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  });
+  const response = await environmentFetch(
+    `/api/agents/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+    },
+  );
 
   if (!response.ok && response.status !== 404) {
     throw new Error("Could not delete agent. Please try again.");
@@ -136,7 +116,7 @@ export async function saveTeam(
     | import("@paws/contracts").UpdateTeam,
   id?: string,
 ) {
-  const response = await fetch(
+  const response = await environmentFetch(
     id ? `/api/teams/${encodeURIComponent(id)}` : "/api/teams",
     {
       method: id ? "PATCH" : "POST",
@@ -154,9 +134,12 @@ export async function saveTeam(
 }
 
 export async function deleteTeam(id: string) {
-  const response = await fetch(`/api/teams/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  });
+  const response = await environmentFetch(
+    `/api/teams/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+    },
+  );
 
   if (!response.ok && response.status !== 404)
     throw new Error(
@@ -170,12 +153,17 @@ export async function moveAgentTeam(
   id: string,
   fromTeamId: string | null,
   toTeamId: string | null,
+  environmentId?: string | null,
 ) {
-  const response = await fetch(`/api/agents/${encodeURIComponent(id)}/move`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fromTeamId, toTeamId }),
-  });
+  const response = await environmentFetch(
+    `/api/agents/${encodeURIComponent(id)}/move`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fromTeamId, toTeamId }),
+    },
+    environmentId,
+  );
 
   if (!response.ok)
     throw new Error(
@@ -186,7 +174,7 @@ export async function moveAgentTeam(
 }
 
 export async function getTeam(id: string) {
-  const response = await fetch("/api/agents");
+  const response = await environmentFetch("/api/agents");
 
   if (!response.ok) throw new Error("Could not reload team. Try again.");
 
@@ -203,3 +191,7 @@ export * from "./memories.ts";
 export * from "./peerMessages.ts";
 
 export * from "./browser.ts";
+
+export * from "./environments.ts";
+
+export * from "./environmentRosters.ts";

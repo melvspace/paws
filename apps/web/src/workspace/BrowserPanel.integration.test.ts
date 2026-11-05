@@ -92,7 +92,10 @@ it("opens a real browser tab from the workspace plus button through the dev prox
       });
     });
     page.setDefaultTimeout(4000);
-    await page.goto(`http://127.0.0.1:${port.port}/#agent-${agent.id}`);
+    // A cold Vite module graph can take longer than an interaction on CI.
+    await page.goto(`http://127.0.0.1:${port.port}/#agent-${agent.id}`, {
+      timeout: 15000,
+    });
     await page
       .getByRole("button", { name: "Toggle right panel", exact: true })
       .click();

@@ -14,8 +14,12 @@ import {
 import { createPortal } from "react-dom";
 import { Dialog, DialogPopup } from "../components/ui/dialog.tsx";
 import { PlusIcon, SettingsIcon, GlobeIcon, XIcon } from "lucide-react";
-import { Menu } from "@base-ui/react/menu";
-import { MenuPopup } from "../components/ui/menu.tsx";
+import {
+  Menu,
+  MenuTrigger,
+  MenuItem,
+  MenuPopup,
+} from "../components/ui/menu.tsx";
 import "./workspace.css";
 import { usePanelSize } from "./hooks/usePanelSize.ts";
 import {
@@ -205,32 +209,28 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
           })}
         </div>
         {props.onTabChange && (
-          <Menu.Root>
-            <Menu.Trigger
+          <Menu>
+            <MenuTrigger
               render={<Button className="sidebar-icon-button" />}
               aria-label="Add sidebar tab"
               title="Add tab"
               disabled={availableTabs.length === 0}
             >
               <PlusIcon size={16} aria-hidden />
-            </Menu.Trigger>
+            </MenuTrigger>
             <MenuPopup aria-label="Add sidebar tab">
               {availableTabs.map((tab) => {
                 const { label, Icon } = panels[tab];
 
                 return (
-                  <Menu.Item
-                    key={tab}
-                    className="ui-menu-radio-item"
-                    onClick={() => selectTab(tab)}
-                  >
+                  <MenuItem key={tab} onClick={() => selectTab(tab)}>
                     <Icon size={14} aria-hidden />
                     {label}
-                  </Menu.Item>
+                  </MenuItem>
                 );
               })}
             </MenuPopup>
-          </Menu.Root>
+          </Menu>
         )}
         {props.controls}
         {props.sheet && (
