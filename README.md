@@ -161,9 +161,13 @@ verified on a physical phone or emulator.
 
 ### Releases and CI
 
-Pushes and PRs run `pnpm check`, build desktop installers, build a debug-signed
-Android APK, and build and smoke-test the container image. You can also run
-**Build apps** manually in GitHub Actions.
+Code PRs and pushes to `main` run `pnpm check`, build desktop installers, build a
+debug-signed Android APK, and build and smoke-test the container image. Branch
+pushes do not duplicate PR runs. Trusted release-bot PRs receive lightweight
+version checks after verifying that only versions and the generated changelog
+changed. Release-only merges also skip duplicate builds in CI; the release
+workflow runs the full checks and signed builds. You can also run **Build apps**
+manually in GitHub Actions. Generated `CHANGELOG.md` is excluded from formatting.
 The build checks formatting, lint,
 types, unit and browser tests, and the production web build before packaging.
 Every desktop runner smoke-tests the packaged backend using an isolated data root.

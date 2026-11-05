@@ -1,5 +1,8 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 permissions:
   # Allow the reusable publisher; its build jobs restrict themselves to read.
   contents: write
@@ -10,6 +13,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  classify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      metadata: ${{ steps.classify.outputs.metadata || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: node --test scripts/release-metadata.test.mjs
+      - id: classify
+        if: >-
+          (github.event_name == 'pull_request' &&
+          github.event.pull_request.user.type == 'Bot' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          startsWith(github.head_ref, 'release-please--')) ||
+          github.event_name == 'push'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/release-metadata.mjs
+
+  release-metadata:
+    needs: classify
+    if: needs.classify.outputs.metadata == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: node scripts/check-release.mjs
+
   apps:
+    needs: classify
+    if: needs.classify.outputs.metadata != 'true'
     uses: ./.github/workflows/build-apps.yml
     secrets: inherit
