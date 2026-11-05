@@ -1,3 +1,4 @@
+import { environmentFetch, environmentPath } from "@paws/client-runtime";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   ChevronRightIcon,
@@ -175,7 +176,7 @@ function IntegrationEditor({
                 "Enter an environment variable for this credential.",
               );
 
-            const response = await fetch(
+            const response = await environmentFetch(
               `/api/teams/${encodeURIComponent(teamId)}/integrations/${encodeURIComponent(draftRef.current.id)}/credentials`,
               {
                 method: "POST",
@@ -389,7 +390,9 @@ function IntegrationEditor({
                 }}
                 render={
                   <a
-                    href={`/api/teams/${encodeURIComponent(teamId)}/integrations/${encodeURIComponent(initial.id)}/authorize`}
+                    href={environmentPath(
+                      `/api/teams/${encodeURIComponent(teamId)}/integrations/${encodeURIComponent(initial.id)}/authorize`,
+                    )}
                     target="_blank"
                     rel="noopener noreferrer"
                   />

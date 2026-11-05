@@ -1,3 +1,4 @@
+import { environmentFetch, environmentPath } from "@paws/client-runtime";
 import { UploadIcon, ArrowLeftIcon, FolderIcon, FileIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./components/ui/button.tsx";
@@ -35,7 +36,9 @@ export function TeamFiles({
     const abort = new AbortController();
     setLoading(true);
     setError("");
-    void fetch(`${base}/${encodeURIComponent(path)}`, { signal: abort.signal })
+    void environmentFetch(`${base}/${encodeURIComponent(path)}`, {
+      signal: abort.signal,
+    })
       .then(async (response) => {
         if (!response.ok) throw new Error("Could not load shared files.");
 
@@ -58,7 +61,10 @@ export function TeamFiles({
     setError("");
 
     try {
-      const response = await fetch(url(file), { method: "PUT", body });
+      const response = await environmentFetch(url(file), {
+        method: "PUT",
+        body,
+      });
 
       if (!response.ok)
         throw new Error(
@@ -113,7 +119,7 @@ export function TeamFiles({
                     {entry.name}
                   </Button>
                 ) : (
-                  <a href={url(file)} download={entry.name}>
+                  <a href={environmentPath(url(file))} download={entry.name}>
                     <FileIcon size={16} />
                     {entry.name}
                   </a>

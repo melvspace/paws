@@ -14,6 +14,8 @@ export function browserSockets(
     maxPayload: 64 * 1024,
   });
   server.on("upgrade", (request, socket, head) => {
+    if (request.url?.startsWith("/api/environments/")) return;
+
     const match = /^\/api\/agents\/([^/]+)\/browser\/stream$/.exec(
       (request.url ?? "").split("?")[0]!,
     );

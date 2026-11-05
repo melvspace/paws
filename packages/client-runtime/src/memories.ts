@@ -1,3 +1,4 @@
+import { environmentFetch } from "./transport.ts";
 import { Schema } from "effect";
 import { MemoryEntry, type MemoryRequest } from "@paws/contracts";
 
@@ -7,7 +8,7 @@ export async function memoryRequest(
   input?: MemoryRequest,
   signal?: AbortSignal,
 ) {
-  const response = await fetch(
+  const response = await environmentFetch(
     `/api/${kind}/${encodeURIComponent(ownerId)}/memories`,
     {
       method: input ? "POST" : "GET",

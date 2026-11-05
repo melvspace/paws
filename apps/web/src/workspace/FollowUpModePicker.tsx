@@ -32,18 +32,10 @@ export function FollowUpModePicker({
             if (mode === "steer" || mode === "queue") onChange(mode);
           }}
         >
-          <MenuRadioItem
-            value="steer"
-            className="ui-menu-radio-item"
-            closeOnClick
-          >
+          <MenuRadioItem value="steer" closeOnClick>
             Steer current turn
           </MenuRadioItem>
-          <MenuRadioItem
-            value="queue"
-            className="ui-menu-radio-item"
-            closeOnClick
-          >
+          <MenuRadioItem value="queue" closeOnClick>
             Queue for next turn
           </MenuRadioItem>
         </MenuRadioGroup>

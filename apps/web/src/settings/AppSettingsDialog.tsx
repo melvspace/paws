@@ -1,3 +1,4 @@
+import { EnvironmentSettings } from "./EnvironmentSettings.tsx";
 import { TeamsSettings } from "../TeamsSettings.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Button } from "../components/ui/button.tsx";
@@ -9,6 +10,8 @@ import {
   SearchIcon,
   XIcon,
   MessageSquareIcon,
+  ServerIcon,
+  ShieldCheckIcon,
 } from "lucide-react";
 import { ThemeSelect } from "../ThemeSelect.tsx";
 import {
@@ -28,7 +31,13 @@ export function AppSettingsDialog({
 }: {
   onDismiss: () => void;
   initialTeamId?: string | null;
-  initialPage?: "Appearance" | "Chat" | "Providers" | "Teams";
+  initialPage?:
+    | "Appearance"
+    | "Chat"
+    | "Providers"
+    | "Teams"
+    | "Environments"
+    | "Sharing & access";
 }) {
   const [page, setPage] = useState(initialPage);
   const beforeClose = useRef<(() => Promise<void>) | null>(null);
@@ -53,7 +62,31 @@ export function AppSettingsDialog({
         "providers models codex claude cursor grok fx opencode antigravity muse pi acp authentication",
       Icon: PlugIcon,
     },
+    {
+      name: "Environments" as const,
+      keywords:
+        "environments machines computers connections lan tailscale discovery pairing sharing",
+      Icon: ServerIcon,
+    },
+    {
+      name: "Sharing & access" as const,
+      keywords:
+        "sharing access permissions connections lan tailscale pairing security revoke",
+      Icon: ShieldCheckIcon,
+    },
   ].filter((item) => item.keywords.includes(query.trim().toLowerCase()));
+
+  async function navigateTo(next: typeof page) {
+    if (document.activeElement instanceof HTMLElement)
+      document.activeElement.blur();
+
+    try {
+      await beforeClose.current?.();
+      setPage(next);
+    } catch {
+      // The active editor retains the failed change.
+    }
+  }
 
   async function dismiss() {
     if (closing.current) return;
@@ -104,13 +137,16 @@ export function AppSettingsDialog({
               {name === "Providers" && (
                 <h3 className="settings-nav-section">Agents</h3>
               )}
+              {(name === "Environments" ||
+                (name === "Sharing & access" &&
+                  !pages.some((item) => item.name === "Environments"))) && (
+                <h3 className="settings-nav-section">Connections</h3>
+              )}
               <Button
                 className="settings-nav-item"
                 aria-current={page === name ? "page" : undefined}
                 onClick={() => {
-                  void Promise.resolve(beforeClose.current?.())
-                    .then(() => setPage(name))
-                    .catch(() => {});
+                  void navigateTo(name);
                 }}
               >
                 <Icon size={16} aria-hidden />
@@ -149,6 +185,13 @@ export function AppSettingsDialog({
                 </section>
               ) : page === "Chat" ? (
                 <ChatSettings />
+              ) : page === "Environments" || page === "Sharing & access" ? (
+                <EnvironmentSettings
+                  page={page}
+                  onSharing={() => {
+                    void navigateTo("Sharing & access");
+                  }}
+                />
               ) : page === "Teams" ? (
                 <TeamsSettings
                   beforeClose={beforeClose}

@@ -126,6 +126,39 @@ source and desktop defaults remain loopback. To use the Android companion,
 configure its origin and token file, mount that file privately, and publish port
 4311 on host loopback for an HTTPS reverse proxy. Keep port 4310 private.
 
+### Environments
+
+An environment is a Paws server on a computer with its own agents, teams,
+providers, and files. In **Settings → Sharing & access**, enable **Share on LAN
+and Tailscale** on the computer you want to access and create a pairing code. On
+another Paws computer, open **Settings → Environments**, choose **Discover**, and
+select **Pair** beside the machine. Enter its code in the Add environment dialog.
+Codes expire after five minutes and work once. You can also choose **Add
+environment** to enter an address manually, such as `http://192.168.1.10:4312`.
+
+The sidebar shows teams and agents from this computer and every linked
+environment, grouped by computer. Open an agent directly to work on its machine;
+pending settings flush before navigation. Each machine has its own creation menu.
+Running agents continue on their own computer. Offline machines keep their last
+roster visible while reconnecting. Drag agents between teams on the same machine.
+Revoke access under the sharing computer's connected computers list; forgetting
+a link only removes it from the current computer. Use each remote machine's
+switch in Settings → Environments to pause or resume its saved connection without
+pairing again. Paused machines leave the sidebar until enabled again.
+
+Sharing uses a separate authenticated listener on TCP **4312**. LAN discovery
+uses UDP **4313** and multicast `239.255.43.10`; allow these through your firewall.
+Tailscale discovery uses the installed `tailscale` CLI and probes online peers
+on port 4312. Discovery can be blocked by network isolation or tailnet ACLs;
+manual addresses work when the destination is reachable. In a container, these
+ports and multicast networking must be made reachable separately.
+
+Pairing grants access to agents, files, and provider operations. LAN connections
+use HTTP, so use a trusted network; Tailscale protects traffic over its encrypted
+network. Keep the primary API on port 4310 private. Sharing starts disabled;
+paired credentials stay in the server's private state directory and are never
+sent to the web client. The Android companion continues to use its HTTPS gateway.
+
 ### Android companion
 
 `apps/mobile` is an Android WebView companion using the same web UI. Agents and

@@ -793,3 +793,42 @@ select {
 .agent-create-dialog .agent-create-fields label {
   margin: 0;
 }
+
+.sidebar-environment + .sidebar-environment {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.sidebar-environment-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.sidebar-environment-heading > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-environment-heading small {
+  font-size: 12px;
+  font-weight: 400;
+}
+.sidebar-environment-heading .sidebar-icon-button {
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+}
+.sidebar-environment-heading .sidebar-icon-button svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}

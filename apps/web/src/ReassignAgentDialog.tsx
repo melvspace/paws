@@ -17,10 +17,12 @@ export function ReassignAgentDialog({
   connected,
   onClose,
   onMoved,
+  environmentId,
 }: {
   agent: Agent;
   destination: Team | null;
   connected: boolean;
+  environmentId?: string | null | undefined;
   onClose(): void;
   onMoved(): void;
 }) {
@@ -36,6 +38,7 @@ export function ReassignAgentDialog({
         agent.id,
         agent.teamId ?? null,
         destination?.id ?? null,
+        environmentId,
       );
       onMoved();
       onClose();

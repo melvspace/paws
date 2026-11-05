@@ -1,3 +1,4 @@
+import { environmentFetch } from "./transport.ts";
 import { Schema } from "effect";
 import {
   Conversation,
@@ -13,7 +14,7 @@ export async function routineRequest(
   input?: unknown,
   signal?: AbortSignal,
 ) {
-  const response = await fetch(path, {
+  const response = await environmentFetch(path, {
     method,
     signal: signal ?? null,
     ...(input !== undefined

@@ -1,3 +1,4 @@
+import { environmentSocketUrl } from "./transport.ts";
 import { Schema } from "effect";
 import {
   BrowserServerMessage,
@@ -11,7 +12,9 @@ export function connectBrowser(
   observe = false,
 ) {
   const url = new URL(
-    `/api/agents/${encodeURIComponent(agentId)}/browser/stream`,
+    environmentSocketUrl(
+      `/api/agents/${encodeURIComponent(agentId)}/browser/stream`,
+    ),
     window.location.href,
   );
   if (observe) url.searchParams.set("observe", "1");

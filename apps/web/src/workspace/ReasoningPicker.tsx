@@ -56,11 +56,9 @@ export function ReasoningPicker({
       <MenuPopup aria-label="Model options">
         {model.options.map((option, index) => (
           <Fragment key={option.id}>
-            {index > 0 && <MenuSeparator className="ui-menu-separator" />}
+            {index > 0 && <MenuSeparator />}
             <MenuGroup>
-              <MenuGroupLabel className="ui-menu-label">
-                {option.label}
-              </MenuGroupLabel>
+              <MenuGroupLabel>{option.label}</MenuGroupLabel>
               <MenuRadioGroup
                 value={selected[option.id]}
                 onValueChange={(next) => {
@@ -73,12 +71,7 @@ export function ReasoningPicker({
                 }}
               >
                 {option.choices.map((choice) => (
-                  <MenuRadioItem
-                    key={choice.id}
-                    value={choice.id}
-                    className="ui-menu-radio-item"
-                    closeOnClick
-                  >
+                  <MenuRadioItem key={choice.id} value={choice.id} closeOnClick>
                     {choice.label}
                     {choice.id === option.defaultValue && (
                       <span className="ui-menu-default-badge">Default</span>

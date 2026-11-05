@@ -1,3 +1,4 @@
+import { environmentFetch } from "./transport.ts";
 import { Schema } from "effect";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import {
@@ -15,7 +16,7 @@ export const providersAtom = Atom.make<{
 
 export async function loadProviders(registry: AtomRegistry.AtomRegistry) {
   try {
-    const response = await fetch("/api/providers");
+    const response = await environmentFetch("/api/providers");
 
     if (!response.ok) throw new Error("Could not load providers.");
 
@@ -40,7 +41,7 @@ export async function changeProvider(
     | UpdateProviderEnvironment
     | { driver: ProviderDriver },
 ) {
-  const response = await fetch(`/api/providers${path}`, {
+  const response = await environmentFetch(`/api/providers${path}`, {
     method,
     headers: { "Content-Type": "application/json" },
     ...(body ? { body: JSON.stringify(body) } : {}),

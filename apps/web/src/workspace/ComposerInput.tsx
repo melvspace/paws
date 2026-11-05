@@ -1,3 +1,4 @@
+import { environmentPath } from "@paws/client-runtime";
 import type { ChatAttachment } from "@paws/contracts";
 import { ChatImage } from "./ChatImage.tsx";
 // Adapted from T3 Code's Tiptap composer, skill chips and trigger picker (MIT).
@@ -459,7 +460,9 @@ export function ComposerInput({
             <div className="composer-file" key={file.id}>
               {file.mediaType.startsWith("image/") ? (
                 <ChatImage
-                  src={`/api/agents/${encodeURIComponent(agentId)}/chat/attachments/${file.id}`}
+                  src={environmentPath(
+                    `/api/agents/${encodeURIComponent(agentId)}/chat/attachments/${file.id}`,
+                  )}
                   alt={file.name}
                 />
               ) : (

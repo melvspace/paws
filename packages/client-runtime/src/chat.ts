@@ -1,3 +1,4 @@
+import { environmentFetch } from "./transport.ts";
 import { Atom } from "effect/reactivity";
 import { Schema } from "effect";
 import {
@@ -38,7 +39,7 @@ export async function chatRequest(
     | "compact"
     | "continue",
 ) {
-  const response = await fetch(
+  const response = await environmentFetch(
     `/api/agents/${encodeURIComponent(agentId)}/chat${typeof input === "string" ? `/${input}` : input && "action" in input ? "/queue" : input && "messageId" in input ? "/read" : ""}`,
     {
       method: input ? "POST" : "GET",
@@ -64,7 +65,7 @@ export async function chatRequest(
 }
 
 export async function loadAgentSkills(agentId: string, signal?: AbortSignal) {
-  const response = await fetch(
+  const response = await environmentFetch(
     `/api/agents/${encodeURIComponent(agentId)}/chat/skills`,
     { signal: signal ?? null },
   );
@@ -79,7 +80,7 @@ export async function uploadChatAttachment(
   file: File,
   signal: AbortSignal,
 ) {
-  const response = await fetch(
+  const response = await environmentFetch(
     `/api/agents/${encodeURIComponent(agentId)}/chat/uploads`,
     {
       method: "POST",
@@ -130,7 +131,7 @@ export function mergeConversation(
 }
 
 export async function loadChatHistory(agentId: string, cursor: string) {
-  const response = await fetch(
+  const response = await environmentFetch(
     `/api/agents/${encodeURIComponent(agentId)}/chat?before=${encodeURIComponent(cursor)}`,
   );
   const body: unknown = await response.json();
