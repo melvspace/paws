@@ -4,6 +4,7 @@ import { render } from "../test/render.tsx";
 import { agentsAtom } from "@paws/client-runtime";
 import { appAtomRegistry } from "./lib/atomRegistry.ts";
 import { AgentSidebar } from "./AgentSidebar.tsx";
+import { TeamIntegrations } from "./TeamIntegrations.tsx";
 import { AppSettingsDialog } from "./settings/AppSettingsDialog.tsx";
 import type { Agent, Team } from "@paws/contracts";
 
@@ -715,3 +716,48 @@ it("retries failed integration creation without treating its draft as a duplicat
     .toBeVisible();
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
+
+it.each([false, true])(
+  "offers integration sign-in only on the owning machine (remote: %s)",
+  async (remote) => {
+    const originalUrl = window.location.href;
+    const url = new URL(originalUrl);
+
+    if (remote) url.searchParams.set("environment", "remote-machine");
+    else url.searchParams.delete("environment");
+
+    window.history.replaceState(null, "", url);
+
+    try {
+      await using _screen = await render(
+        <TeamIntegrations
+          value={[{ id: "design", kind: "mcp-http", url: "https://mcp.test" }]}
+          onChange={async () => {}}
+          teamId="project-a"
+          disabled={false}
+        />,
+      );
+      await page.getByRole("button", { name: /design/ }).click();
+
+      if (remote) {
+        await expect
+          .element(page.getByRole("link", { name: "Sign in" }))
+          .not.toBeInTheDocument();
+        await expect
+          .element(
+            page.getByText("Open Paws on the owning machine to sign in."),
+          )
+          .toBeVisible();
+      } else {
+        await expect
+          .element(page.getByRole("link", { name: "Sign in" }))
+          .toHaveAttribute(
+            "href",
+            "/api/teams/project-a/integrations/design/authorize",
+          );
+      }
+    } finally {
+      window.history.replaceState(null, "", originalUrl);
+    }
+  },
+);

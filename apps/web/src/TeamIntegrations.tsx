@@ -1,4 +1,4 @@
-import { environmentFetch, environmentPath } from "@paws/client-runtime";
+import { activeEnvironmentId, environmentFetch } from "@paws/client-runtime";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   ChevronRightIcon,
@@ -382,24 +382,26 @@ function IntegrationEditor({
           {existing && draft.kind === "mcp-http" && (
             <div className="settings-row">
               <span>Authentication</span>
-              <Button
-                variant="outline"
-                disabled={pending || disabled}
-                onClick={(event) => {
-                  if (pending || disabled) event.preventDefault();
-                }}
-                render={
-                  <a
-                    href={environmentPath(
-                      `/api/teams/${encodeURIComponent(teamId)}/integrations/${encodeURIComponent(initial.id)}/authorize`,
-                    )}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  />
-                }
-              >
-                Sign in
-              </Button>
+              {activeEnvironmentId() ? (
+                <span>Open Paws on the owning machine to sign in.</span>
+              ) : (
+                <Button
+                  variant="outline"
+                  disabled={pending || disabled}
+                  onClick={(event) => {
+                    if (pending || disabled) event.preventDefault();
+                  }}
+                  render={
+                    <a
+                      href={`/api/teams/${encodeURIComponent(teamId)}/integrations/${encodeURIComponent(initial.id)}/authorize`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    />
+                  }
+                >
+                  Sign in
+                </Button>
+              )}
             </div>
           )}
           <div className="settings-row">

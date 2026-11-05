@@ -7,9 +7,17 @@ const { socket } = vi.hoisted(() => ({
 }));
 
 class FakeSocket extends EventEmitter {
-  send = vi.fn();
+  send = vi.fn(
+    (
+      _data: string | Buffer,
+      _port: number,
+      _address: string,
+      done: (error: Error | null) => void,
+    ) => done(null),
+  );
   close = vi.fn();
   addMembership = vi.fn();
+  setMulticastInterface = vi.fn();
   setMulticastTTL = vi.fn();
   setMulticastLoopback = vi.fn();
   bind(_port: number, _host: string, ready: () => void) {
@@ -27,6 +35,7 @@ vi.mock("node:dgram", () => ({
 vi.mock("node:os", () => ({
   networkInterfaces: () => ({
     lan: [{ address: "192.168.1.5", family: "IPv4", internal: false }],
+    secondLan: [{ address: "192.168.2.5", family: "IPv4", internal: false }],
   }),
 }));
 
@@ -127,4 +136,75 @@ it("probes online Tailscale peers, skips unrelated servers and reports discovery
   await vi.advanceTimersByTimeAsync(800);
   expect((await failed).warnings).toHaveLength(2);
   unavailable.close();
+});
+
+it("queries every eligible LAN interface", async () => {
+  vi.useFakeTimers();
+  const discovery = makeEnvironmentDiscovery(
+    () => identity,
+    () => undefined,
+    async () => ({ BackendState: "Running" }),
+  );
+  discovery.start();
+  const lan = socket.current!;
+  const finding = discovery.discover();
+  await vi.advanceTimersByTimeAsync(800);
+  await finding;
+  expect(lan.setMulticastInterface.mock.calls).toEqual([
+    ["192.168.1.5"],
+    ["192.168.2.5"],
+  ]);
+  expect(lan.send.mock.calls.map((call) => call.slice(0, 3))).toEqual([
+    ["paws-environment-query-v1", 4313, "239.255.43.10"],
+    ["paws-environment-query-v1", 4313, "239.255.43.10"],
+  ]);
+  expect(lan.setMulticastInterface.mock.invocationCallOrder[1]).toBeGreaterThan(
+    lan.send.mock.invocationCallOrder[0]!,
+  );
+  discovery.close();
+});
+
+it("continues an incomplete Tailscale scan on the next discovery", async () => {
+  vi.useFakeTimers();
+  const fetchMock = vi.fn(async (url: string) => {
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    if (url === "http://100.64.0.64:4312/identity") return Response.json(peer);
+
+    throw new Error("Peer does not run Paws");
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const discovery = makeEnvironmentDiscovery(
+    () => identity,
+    () => undefined,
+    async () => ({
+      BackendState: "Running",
+      Peer: {
+        peers: {
+          Online: true,
+          TailscaleIPs: Array.from(
+            { length: 64 },
+            (_, index) => `100.64.0.${index + 1}`,
+          ),
+        },
+      },
+    }),
+  );
+  const first = discovery.discover();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect((await first).warnings).toContain(
+    "Tailscale discovery is incomplete. Discover again to scan the remaining peers.",
+  );
+  expect(fetchMock).not.toHaveBeenCalledWith(
+    "http://100.64.0.64:4312/identity",
+    expect.anything(),
+  );
+  const second = discovery.discover();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect((await second).environments).toContainEqual({
+    ...peer,
+    source: "tailscale",
+    url: "http://100.64.0.64:4312",
+  });
+  discovery.close();
 });

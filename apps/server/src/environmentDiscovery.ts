@@ -67,6 +67,7 @@ export function makeEnvironmentDiscovery(
 ) {
   let socket: ReturnType<typeof createSocket> | undefined;
   let error: string | null = null;
+  let nextTailscaleIndex = 0;
   const peers = new Map<
     string,
     { value: DiscoveredEnvironment; seen: number }
@@ -160,10 +161,25 @@ export function makeEnvironmentDiscovery(
 
     if (error) warnings.push(error);
 
-    try {
-      socket?.send("paws-environment-query-v1", discoveryPort, group, () => {});
-    } catch {
-      warnings.push("LAN discovery is unavailable.");
+    const lan = socket;
+
+    if (lan) {
+      for (const url of localEnvironmentAddresses(1)) {
+        try {
+          lan.setMulticastInterface(new URL(url).hostname);
+          await new Promise<void>((resolve, reject) => {
+            lan.send(
+              "paws-environment-query-v1",
+              discoveryPort,
+              group,
+              (failure) => (failure ? reject(failure) : resolve()),
+            );
+          });
+        } catch {
+          if (!warnings.includes("LAN discovery is unavailable."))
+            warnings.push("LAN discovery is unavailable.");
+        }
+      }
     }
 
     const tailnet: DiscoveredEnvironment[] = [];
@@ -171,12 +187,15 @@ export function makeEnvironmentDiscovery(
       try {
         const addresses = tailscaleAddresses(await readTailscale());
         // Bound concurrency and time; never sweep the surrounding IP ranges.
-        let cursor = 0;
+        const startIndex = nextTailscaleIndex;
+        let scanned = 0;
         const deadline = Date.now() + 4000;
         await Promise.all(
           Array.from({ length: Math.min(8, addresses.length) }, async () => {
-            while (cursor < addresses.length && Date.now() < deadline) {
-              const address = addresses[cursor++]!;
+            while (scanned < addresses.length && Date.now() < deadline) {
+              const index = (startIndex + scanned++) % addresses.length;
+              const address = addresses[index]!;
+              nextTailscaleIndex = (index + 1) % addresses.length;
               const url = `http://${isIP(address) === 6 ? `[${address}]` : address}:4312`;
 
               try {
@@ -199,6 +218,11 @@ export function makeEnvironmentDiscovery(
             }
           }),
         );
+
+        if (scanned < addresses.length)
+          warnings.push(
+            "Tailscale discovery is incomplete. Discover again to scan the remaining peers.",
+          );
       } catch {
         warnings.push(
           "Tailscale discovery is unavailable. Install Tailscale and connect, or enter an address.",
