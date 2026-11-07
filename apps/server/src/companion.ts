@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
 import httpProxy from "http-proxy";
@@ -23,7 +23,20 @@ export function createCompanion(options: {
   const digest = (value: string) => createHash("sha256").update(value).digest();
   const tokenHash = digest(options.token);
   const session = tokenHash.toString("base64url");
+  const sign = (expires: string) =>
+    createHmac("sha256", options.token).update(expires).digest("base64url");
   const authenticated = (request: IncomingMessage) => {
+    const bearer = request.headers.authorization?.match(
+      /^Bearer ([0-9]{13})\.([A-Za-z0-9_-]{43})$/,
+    );
+
+    if (bearer) {
+      return (
+        Number(bearer[1]) > Date.now() &&
+        timingSafeEqual(digest(bearer[2]!), digest(sign(bearer[1]!)))
+      );
+    }
+
     const value = request.headers.cookie
       ?.split(";")
       .map((part) => part.trim())
@@ -62,7 +75,10 @@ export function createCompanion(options: {
       return;
     }
 
-    if (request.url === "/_companion/login" && request.method === "POST") {
+    if (
+      ["/_companion/login", "/_companion/session"].includes(request.url) &&
+      request.method === "POST"
+    ) {
       if (request.headers.origin !== options.origin) {
         response.writeHead(403).end();
 
@@ -95,6 +111,16 @@ export function createCompanion(options: {
         return;
       }
 
+      if (request.url === "/_companion/session") {
+        const expires = String(Date.now() + 86_400_000);
+        response.setHeader("Content-Type", "application/json");
+        response.end(
+          JSON.stringify({ session: `${expires}.${sign(expires)}` }),
+        );
+
+        return;
+      }
+
       response
         .writeHead(303, {
           Location: "/",
@@ -106,6 +132,15 @@ export function createCompanion(options: {
     }
 
     if (!authenticated(request)) {
+      if (request.headers.authorization) {
+        response.writeHead(401, { "Content-Type": "application/json" });
+        response.end(
+          JSON.stringify({ error: "Session expired. Connect again." }),
+        );
+
+        return;
+      }
+
       response
         .writeHead(request.method === "GET" ? 200 : 401, {
           "Content-Type": "text/html; charset=utf-8",

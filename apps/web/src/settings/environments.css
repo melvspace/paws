@@ -253,3 +253,17 @@
     padding-inline: 12px;
   }
 }
+
+.environment-pairing-qr {
+  margin: 20px 0;
+}
+.environment-pairing-qr svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+.environment-pairing-qr p {
+  color: var(--muted-foreground);
+  margin: 12px 0;
+}

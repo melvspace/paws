@@ -3,6 +3,7 @@ import {
   EnvironmentState,
   EnvironmentDiscovery,
   PairingCode,
+  PairingRequests,
   type PairEnvironment,
 } from "@paws/contracts";
 
@@ -76,3 +77,16 @@ export async function removeEnvironment(
 }
 
 export * from "./transport.ts";
+
+export async function loadPairingRequests() {
+  return Schema.decodeUnknownSync(PairingRequests)(await request("/requests"));
+}
+
+export async function decidePairingRequest(
+  id: string,
+  decision: "approve" | "deny",
+) {
+  return Schema.decodeUnknownSync(PairingRequests)(
+    await request("/requests", "POST", { id, decision }),
+  );
+}

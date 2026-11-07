@@ -12,3 +12,6 @@ apps/mobile/**/build/
 apps/mobile/local.properties
 *.keystore
 *.jks
+apps/mobile/android/
+apps/mobile/ios/
+apps/mobile/.expo/

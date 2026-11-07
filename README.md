@@ -157,13 +157,37 @@ Pairing grants access to agents, files, and provider operations. LAN connections
 use HTTP, so use a trusted network; Tailscale protects traffic over its encrypted
 network. Keep the primary API on port 4310 private. Sharing starts disabled;
 paired credentials stay in the server's private state directory and are never
-sent to the web client. The Android companion continues to use its HTTPS gateway.
+sent to the web client. The Android app uses its HTTPS gateway.
 
-### Android companion
+### Android app
 
-`apps/mobile` is an Android WebView companion using the same web UI. Agents and
-files remain on your computer. It requires Android 8 or newer and an HTTPS
-connection to an authenticated Paws gateway.
+`apps/mobile` is an Expo / React Native app, following T3 Code's mobile
+architecture. Its native screens cover team-grouped agents, agent creation,
+live chats, model options, queued and interrupted turns, interactive questions,
+file uploads and sharing, and autosaving agent settings. TypeScript contracts,
+conversation history merging, and remote API logic are shared with the other
+clients. Agents and files remain on your computer. Android 8 or newer is required.
+
+On your computer, open **Settings → Sharing & access** and enable **Share on LAN
+and Tailscale**. Connect your phone to the same Wi-Fi, open Paws, tap your
+computer under **Nearby computers**, and approve the matching code on the
+computer. No address or code entry is needed.
+
+Alternatively, click **Show pairing QR** on the computer and tap **Scan QR code**
+on the phone. Confirm the computer name to connect. QR codes expire after five
+minutes and can be used once. QR pairing also works over Tailscale when both
+devices are connected to the same tailnet. LAN discovery uses UDP multicast on
+port 4313; networks that block multicast can still use QR pairing. Camera access
+is requested only when you choose to scan. Nearby requests expire after two
+minutes, and access can be revoked under **Allowed devices**.
+
+Paired credentials are stored using Android Keystore-backed Expo SecureStore and
+survive app and server restarts. LAN pairing uses HTTP on a trusted network;
+Tailscale encrypts traffic between devices. **Settings → Disconnect** removes
+the phone's saved connection.
+
+The **Advanced connection** option supports an authenticated HTTPS gateway for
+networks where direct LAN or Tailscale access is unavailable.
 
 To enable the gateway, generate a private connection-token file:
 
@@ -177,20 +201,32 @@ Set `PAWS_COMPANION_ORIGIN` to your HTTPS origin, such as
 file's absolute path before starting Paws. These variables also work when
 launching the packaged desktop executable. The gateway listens only on
 `127.0.0.1:4311`; forward it through an HTTPS reverse proxy, such as Tailscale
-Serve. Forward WebSocket upgrades and preserve the browser's Origin header.
+Serve. Forward WebSocket upgrades and preserve the client's Origin header.
 Keep port 4310 private. In source builds, run `pnpm build` and also set
 `PAWS_WEB_ROOT` to the absolute path of `apps/web/dist`.
 
-Enter the HTTPS address in the Android app, then enter the token on its sign-in
-page. Sessions use secure, HttpOnly cookies. **Change computer / disconnect**
-clears the app's cookies. Rotate the token file and restart Paws to revoke all
-connections. Provider and MCP sign-in flows that require localhost should be
-completed on the computer.
+Under **Advanced connection**, enter the HTTPS gateway address and connection token.
+The app exchanges the token for a 24-hour session and stores it using Android
+Keystore-backed Expo SecureStore. The connection token is never saved.
+Disconnecting removes the saved gateway session. Rotate the token file and
+restart Paws to revoke all connections. Provider and MCP sign-in flows that
+require localhost should be completed on the computer.
 
-With Java 17 and the Android SDK installed, build a test APK using
-`cd apps/mobile && ./gradlew lintDebug assembleDebug` (`gradlew.bat` on Windows).
-The APK is under `app/build/outputs/apk/debug/`. The companion has not yet been
-verified on a physical phone or emulator.
+Install dependencies with `pnpm install`. Use `pnpm dev:mobile` to start Metro
+and `pnpm --filter @paws/mobile android` to build a development app. Native
+Android files are generated from the Expo config and signing plugin, rather
+than checked in. With Java 21 and the Android SDK installed, build a standalone
+test APK using:
+
+```sh
+pnpm --filter @paws/mobile prebuild
+cd apps/mobile/android
+./gradlew lintDebug assembleDebug
+```
+
+The APK is under `apps/mobile/android/app/build/outputs/apk/debug/`. Test APKs
+include the JavaScript bundle and run without Metro. Release builds use the
+same application ID and signing secrets as previous Paws APKs.
 
 ### Releases and CI
 

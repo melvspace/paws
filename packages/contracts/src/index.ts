@@ -71,3 +71,5 @@ export * from "./memories.ts";
 export * from "./browser.ts";
 
 export * from "./environments.ts";
+
+export * from "./pairing.ts";

@@ -9,7 +9,9 @@ function snapshot(version) {
       version,
       main: "src/main.mjs",
     }),
-    "apps/mobile/app/build.gradle": `android {\n    versionName "${version}" // x-release-please-version\n}\n`,
+    "apps/mobile/app.json": JSON.stringify({
+      expo: { version, android: { package: "dev.paws.companion" } },
+    }),
     ".release-please-manifest.json": JSON.stringify({ ".": version }),
   };
 }
@@ -39,7 +41,9 @@ test("rejects executable, configuration, and unrelated source changes", () => {
       });
     },
     (next) => {
-      next["apps/mobile/app/build.gradle"] += "\nexec { commandLine 'other' }";
+      next["apps/mobile/app.json"] = JSON.stringify({
+        expo: { version: "0.2.0", android: { package: "other" } },
+      });
     },
     (next) => {
       next["src/other.js"] = "code";

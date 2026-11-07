@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vite-plus/test";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { createServer, type Server } from "node:http";
 import { randomBytes } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
@@ -9,6 +9,8 @@ const sockets: WebSocket[] = [];
 const origin = "https://paws.example.test";
 
 afterEach(async () => {
+  vi.restoreAllMocks();
+
   for (const socket of sockets.splice(0)) socket.terminate();
 
   for (const server of servers.splice(0).reverse()) {
@@ -60,6 +62,7 @@ async function fixture() {
     companion,
     login,
     cookie,
+    token,
     requests: () => requests,
   };
 }
@@ -80,6 +83,90 @@ it("shuts down upgraded connections", async () => {
   );
   companion.stop();
   await closed;
+});
+
+it("issues expiring native sessions and strips credentials from HTTP and WebSocket requests", async () => {
+  const { gateway, token, targetUrl } = await fixture();
+  const login = await fetch(`${gateway}/_companion/session`, {
+    method: "POST",
+    headers: { origin },
+    body: new URLSearchParams({ token }),
+  });
+  expect(login.status).toBe(200);
+  expect(login.headers.get("set-cookie")).toBeNull();
+  expect(login.headers.get("cache-control")).toBe("no-store");
+  const { session } = await login.json();
+  const authorization = `Bearer ${session}`;
+  const response = await fetch(`${gateway}/api/agents`, {
+    method: "POST",
+    headers: { origin, authorization },
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ origin: targetUrl });
+  const socket = new WebSocket(gateway.replace("http:", "ws:") + "/ws", {
+    origin,
+    headers: { authorization },
+  });
+  sockets.push(socket);
+  const headers = await new Promise<string>((resolve, reject) => {
+    socket.once("error", reject);
+    socket.once("message", (data) => resolve(data.toString()));
+  });
+  expect(JSON.parse(headers).authorization).toBeUndefined();
+  socket.terminate();
+
+  for (const invalid of [
+    token,
+    session.replace(/.$/, "!"),
+    `9999999999999.${session.split(".")[1]}`,
+  ]) {
+    expect(
+      (
+        await fetch(gateway, {
+          headers: { authorization: `Bearer ${invalid}` },
+        })
+      ).status,
+    ).toBe(401);
+  }
+
+  expect(
+    (
+      await fetch(gateway, {
+        headers: { authorization, origin: "https://evil.test" },
+      })
+    ).status,
+  ).toBe(403);
+  vi.spyOn(Date, "now").mockReturnValue(Number(session.split(".")[0]) + 1);
+  expect((await fetch(gateway, { headers: { authorization } })).status).toBe(
+    401,
+  );
+});
+
+it("requires a valid token and matching origin to create a native session", async () => {
+  const { gateway, token, requests } = await fixture();
+
+  for (const headers of [{}, { origin: "https://evil.test" }]) {
+    expect(
+      (
+        await fetch(`${gateway}/_companion/session`, {
+          method: "POST",
+          headers,
+          body: new URLSearchParams({ token }),
+        })
+      ).status,
+    ).toBe(403);
+  }
+
+  expect(
+    (
+      await fetch(`${gateway}/_companion/session`, {
+        method: "POST",
+        headers: { origin },
+        body: new URLSearchParams({ token: "wrong" }),
+      })
+    ).status,
+  ).toBe(401);
+  expect(requests()).toBe(0);
 });
 
 it("reports an unavailable backend without exposing internal errors", async () => {

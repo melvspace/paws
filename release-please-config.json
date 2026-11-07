@@ -13,7 +13,11 @@
           "path": "apps/desktop/package.json",
           "jsonpath": "$.version"
         },
-        "apps/mobile/app/build.gradle"
+        {
+          "type": "json",
+          "path": "apps/mobile/app.json",
+          "jsonpath": "$.expo.version"
+        }
       ]
     }
   }

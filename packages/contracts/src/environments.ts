@@ -14,6 +14,15 @@ export const LinkedEnvironment = Schema.Struct({
 });
 export type LinkedEnvironment = typeof LinkedEnvironment.Type;
 
+export const PairingRequest = Schema.Struct({
+  id: Schema.String,
+  identity: EnvironmentIdentity,
+  verificationCode: Schema.String,
+  expiresAt: Schema.String,
+});
+export type PairingRequest = typeof PairingRequest.Type;
+export const PairingRequests = Schema.Array(PairingRequest);
+
 export const EnvironmentState = Schema.Struct({
   local: EnvironmentIdentity,
   sharing: Schema.Boolean,
@@ -21,6 +30,7 @@ export const EnvironmentState = Schema.Struct({
   addresses: Schema.Array(Schema.String),
   linked: Schema.Array(LinkedEnvironment),
   connections: Schema.Array(EnvironmentIdentity),
+  pendingPairings: Schema.optional(PairingRequests),
   discoveryError: Schema.NullOr(Schema.String),
 });
 export type EnvironmentState = typeof EnvironmentState.Type;

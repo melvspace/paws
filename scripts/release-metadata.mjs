@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 const files = [
   "package.json",
   "apps/desktop/package.json",
-  "apps/mobile/app/build.gradle",
+  "apps/mobile/app.json",
   ".release-please-manifest.json",
   "CHANGELOG.md",
 ];
@@ -42,16 +42,16 @@ export function releaseMetadataOnly(before, after) {
 
   if (!isDeepStrictEqual(previous, next)) return false;
 
-  const gradle = "apps/mobile/app/build.gradle";
-  const marker =
-    /^(\s*versionName ")[0-9]+\.[0-9]+\.[0-9]+(" \/\/ x-release-please-version)$/m;
+  const mobile = "apps/mobile/app.json";
+  const previousMobile = JSON.parse(before[mobile]);
+  const nextMobile = JSON.parse(after[mobile]);
 
-  return (
-    (after[gradle].match(marker)?.[0].includes(`"${version}"`) &&
-      marker.test(before[gradle]) &&
-      before[gradle].replace(marker, "$1VERSION$2") ===
-        after[gradle].replace(marker, "$1VERSION$2")) === true
-  );
+  if (nextMobile.expo.version !== version) return false;
+
+  delete previousMobile.expo.version;
+  delete nextMobile.expo.version;
+
+  return isDeepStrictEqual(previousMobile, nextMobile);
 }
 
 if (

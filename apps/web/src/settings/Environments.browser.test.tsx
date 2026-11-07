@@ -440,3 +440,53 @@ it("restores focus to the discovered machine and keeps manual addition separate"
     )
     .not.toBeInTheDocument();
 });
+
+it("shows a scannable QR and approves a nearby phone without exposing its claim secret", async () => {
+  let state = {
+    ...initial,
+    sharing: true,
+    pendingPairings: [
+      {
+        id: "request",
+        identity: { id: "phone", name: "Pixel", platform: "android" },
+        verificationCode: "123456",
+        expiresAt: new Date(Date.now() + 120000).toISOString(),
+      },
+    ],
+  };
+  const requests = vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith("/pairing"))
+      return Response.json({
+        code: "one-use-code",
+        expiresAt: new Date(Date.now() + 300000).toISOString(),
+      });
+
+    if (url.endsWith("/requests") && options?.method === "POST") {
+      expect(JSON.parse(String(options.body))).toEqual({
+        id: "request",
+        decision: "approve",
+      });
+      state = { ...state, pendingPairings: [] };
+
+      return Response.json([]);
+    }
+
+    return Response.json(state);
+  });
+  vi.stubGlobal("fetch", requests);
+  await using _screen = await render(
+    <AppSettingsDialog initialPage="Sharing & access" onDismiss={() => {}} />,
+  );
+  await expect
+    .element(page.getByRole("button", { name: "Allow Pixel" }))
+    .toBeVisible();
+  await expect.element(page.getByText(/123456/)).toBeVisible();
+  await page.getByRole("button", { name: "Create pairing code" }).click();
+  await expect
+    .element(page.getByRole("img", { name: "Scan to pair with this computer" }))
+    .toBeVisible();
+  await page.getByRole("button", { name: "Allow Pixel" }).click();
+  await expect
+    .element(page.getByRole("button", { name: "Allow Pixel" }))
+    .not.toBeInTheDocument();
+});

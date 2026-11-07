@@ -17,7 +17,9 @@
     "runtime:build": "docker build -f packages/runtime/docker/Dockerfile.team -t paws-team-runtime:1 packages/runtime/docker",
     "build:desktop": "pnpm build && pnpm --filter @paws/desktop package",
     "build:server": "node scripts/build-server.mjs",
-    "build:image": "docker build -t paws:local ."
+    "build:image": "docker build -t paws:local .",
+    "dev:mobile": "pnpm --filter @paws/mobile dev",
+    "build:android": "pnpm --filter @paws/mobile prebuild && cd apps/mobile/android && ./gradlew assembleDebug"
   },
   "devDependencies": {
     "@types/node": "catalog:",

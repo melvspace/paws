@@ -3,7 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./remote": "./src/remote.ts",
+    "./conversations": "./src/conversations.ts",
+    "./pairing": "./src/pairing.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

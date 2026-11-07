@@ -1,3 +1,4 @@
+import { DevicePairing } from "./DevicePairing.tsx";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog.tsx";
 import { RenameEnvironmentDialog } from "./RenameEnvironmentDialog.tsx";
 import { EnvironmentRow } from "./EnvironmentRow.tsx";
@@ -406,16 +407,23 @@ export function EnvironmentSettings({
                         );
                       }}
                     >
-                      {pairing ? "New code" : "Create code"}
+                      {pairing ? "New QR code" : "Show pairing QR"}
                     </Button>
                   </div>
                 </div>
               </>
             )}
           </div>
+          {state.sharing && (
+            <DevicePairing
+              state={state}
+              pairing={pairing}
+              onChange={setState}
+            />
+          )}
           {!!state.connections.length && (
             <>
-              <h3>Allowed computers</h3>
+              <h3>Allowed devices</h3>
               <div className="environment-rows">
                 {state.connections.map((peer) => (
                   <div className="environment-row" key={peer.id}>

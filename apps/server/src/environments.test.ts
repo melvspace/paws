@@ -315,3 +315,79 @@ it("pauses saved connections, closes their streams, rejects disabled requests, a
   const [data] = await once(resumed, "message");
   expect(JSON.parse(String(data))).toMatchObject({ agents: [] });
 });
+
+it("pairs a discovered phone only after local approval, retries claims, and revokes its live stream", async () => {
+  const local = await machine();
+  const shared = await (
+    await local.request("/api/environments", "PATCH", { sharing: true })
+  ).json();
+  const gateway = `http://127.0.0.1:${shared.port}`;
+  const phone = { id: "phone", name: "Pixel", platform: "android" };
+  const post = (path: string, input: unknown) =>
+    fetch(gateway + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  expect(
+    (await post("/pair/request", { identity: phone, expectedId: "wrong" }))
+      .status,
+  ).toBe(400);
+  const ticket = await (
+    await post("/pair/request", {
+      identity: phone,
+      expectedId: shared.local.id,
+    })
+  ).json();
+  const claim = { id: ticket.id, secret: ticket.secret };
+  expect(await (await post("/pair/claim", claim)).json()).toEqual({
+    status: "pending",
+  });
+  expect(
+    (await post("/pair/claim", { ...claim, secret: "wrong" })).status,
+  ).toBe(400);
+  const state = await (await local.request("/api/environments")).json();
+  expect(state.pendingPairings).toHaveLength(1);
+  expect(JSON.stringify(state)).not.toContain(ticket.secret);
+  const unauthorizedApproval = await post("/api/environments/requests", {
+    id: ticket.id,
+    decision: "approve",
+  });
+  expect(unauthorizedApproval.status).toBe(401);
+  await local.request("/api/environments/requests", "POST", {
+    id: ticket.id,
+    decision: "approve",
+  });
+  const granted = await (await post("/pair/claim", claim)).json();
+  expect(granted).toMatchObject({ status: "approved", identity: shared.local });
+  expect(await (await post("/pair/claim", claim)).json()).toEqual(granted);
+  const headers = {
+    Authorization: `Bearer ${granted.token}`,
+    "X-Paws-Client": "native",
+  };
+  expect((await fetch(gateway + "/api/agents", { headers })).status).toBe(200);
+  const socket = new WebSocket(gateway.replace("http:", "ws:") + "/ws", {
+    origin: gateway,
+    headers,
+  });
+  cleanups.push(async () => {
+    socket.terminate();
+  });
+  await once(socket, "message");
+  const closed = once(socket, "close");
+  await local.request(`/api/environments/connections/${phone.id}`, "DELETE");
+  await closed;
+  expect((await fetch(gateway + "/api/agents", { headers })).status).toBe(401);
+  const another = await (
+    await post("/pair/request", {
+      identity: phone,
+      expectedId: shared.local.id,
+    })
+  ).json();
+  await local.request("/api/environments", "PATCH", { sharing: false });
+  await local.request("/api/environments", "PATCH", { sharing: true });
+  expect(
+    (await post("/pair/claim", { id: another.id, secret: another.secret }))
+      .status,
+  ).toBe(400);
+});

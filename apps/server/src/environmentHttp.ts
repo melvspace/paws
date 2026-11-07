@@ -1,3 +1,4 @@
+import { makePairingRequests } from "./pairingRequests.ts";
 import {
   createServer,
   type IncomingMessage,
@@ -30,6 +31,11 @@ const identityInput = Schema.Struct({
   code: Schema.String,
   identity: EnvironmentIdentity,
   expectedId: Schema.String,
+});
+const claimInput = Schema.Struct({ id: Schema.String, secret: Schema.String });
+const approvalInput = Schema.Struct({
+  id: Schema.String,
+  decision: Schema.Literals(["approve", "deny"]),
 });
 const configInput = Schema.Struct({
   name: Schema.optional(Schema.String),
@@ -73,6 +79,7 @@ export function makeEnvironmentHttp(
   options: { port?: number; networking?: boolean } = {},
 ) {
   const service = makeEnvironmentService(root);
+  const pairingRequests = makePairingRequests();
   let gateway: Server | undefined;
   let closing = false;
   let sharedPort = options.port ?? 4312;
@@ -160,6 +167,7 @@ export function makeEnvironmentHttp(
     proxy.web(request, response, { target: localTarget() });
 
   const stopSharing = () => {
+    pairingRequests.clear();
     const current = gateway;
     gateway = undefined;
     for (const session of sessions) {
@@ -192,6 +200,57 @@ export function makeEnvironmentHttp(
         try {
           if (request.url === "/identity" && request.method === "GET") {
             response.end(JSON.stringify(service.identity()));
+
+            return;
+          }
+
+          if (request.url === "/pair/request" && request.method === "POST") {
+            const input = Schema.decodeUnknownSync(
+              Schema.Struct({
+                identity: EnvironmentIdentity,
+                expectedId: Schema.String,
+              }),
+            )(await body(request));
+
+            if (
+              input.expectedId !== service.identity().id ||
+              input.identity.id === service.identity().id
+            )
+              throw new Error("Environment identity changed.");
+
+            response.end(
+              JSON.stringify(pairingRequests.create(input.identity)),
+            );
+
+            return;
+          }
+
+          if (
+            ["/pair/claim", "/pair/cancel"].includes(request.url ?? "") &&
+            request.method === "POST"
+          ) {
+            const input = Schema.decodeUnknownSync(claimInput)(
+              await body(request),
+            );
+
+            if (request.url === "/pair/cancel") {
+              pairingRequests.cancel(input.id, input.secret);
+              response.end(JSON.stringify({ cancelled: true }));
+            } else {
+              const claimed = await pairingRequests.claim(
+                input.id,
+                input.secret,
+                async (identity) => {
+                  const paired = await Effect.runPromise(
+                    service.grant(identity),
+                  );
+                  disconnect(identity.id);
+
+                  return paired;
+                },
+              );
+              response.end(JSON.stringify(claimed));
+            }
 
             return;
           }
@@ -248,7 +307,8 @@ export function makeEnvironmentHttp(
 
         if (
           !service.authorize(bearer) ||
-          request.headers.origin ||
+          (request.headers.origin &&
+            request.headers["x-paws-client"] !== "native") ||
           !allowedPath(request.url ?? "")
         ) {
           socket.destroy();
@@ -293,6 +353,7 @@ export function makeEnvironmentHttp(
     addresses: localEnvironmentAddresses(sharedPort),
     linked: service.list().map(({ token: _token, ...link }) => link),
     connections: service.connections(),
+    pendingPairings: pairingRequests.list(),
     discoveryError: discovery.error(),
   });
 
@@ -349,6 +410,20 @@ export function makeEnvironmentHttp(
         await pending;
 
         response.end(JSON.stringify(state()));
+      } else if (
+        path === "/api/environments/requests" &&
+        request.method === "GET"
+      ) {
+        response.end(JSON.stringify(pairingRequests.list()));
+      } else if (
+        path === "/api/environments/requests" &&
+        request.method === "POST"
+      ) {
+        const input = Schema.decodeUnknownSync(approvalInput)(
+          await body(request),
+        );
+        pairingRequests.decide(input.id, input.decision);
+        response.end(JSON.stringify(pairingRequests.list()));
       } else if (
         path === "/api/environments/discover" &&
         request.method === "POST"

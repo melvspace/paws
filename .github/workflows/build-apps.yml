@@ -96,18 +96,25 @@ jobs:
   android:
     needs: check
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.check.outputs.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @paws/mobile prebuild
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
       - uses: android-actions/setup-android@v3
         with:
-          packages: platform-tools platforms;android-36 build-tools;36.0.0
+          packages: platform-tools platforms;android-37.0 build-tools;37.0.0
       - uses: gradle/actions/setup-gradle@v4
       - name: Prepare debug signing
         if: inputs.release-tag == '' && github.event_name != 'pull_request'
@@ -146,7 +153,7 @@ jobs:
           printf '%s' "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/paws.jks"
           echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/paws.jks" >> "$GITHUB_ENV"
       - name: Build APK
-        working-directory: apps/mobile
+        working-directory: apps/mobile/android
         env:
           RELEASE_TAG: ${{ inputs.release-tag }}
           ANDROID_KEYSTORE_PASSWORD: ${{ inputs.release-tag != '' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
@@ -168,7 +175,7 @@ jobs:
         with:
           name: android
           if-no-files-found: error
-          path: apps/mobile/app/build/outputs/apk/**/*.apk
+          path: apps/mobile/android/app/build/outputs/apk/**/*.apk
 
   container:
     needs: [check, desktop, android]

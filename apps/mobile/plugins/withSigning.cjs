@@ -1,20 +1,24 @@
-plugins {
-    id 'com.android.application'
-}
+const { withAppBuildGradle } = require("expo/config-plugins");
 
-android {
-    namespace 'dev.paws.companion'
-    compileSdk 36
+module.exports = (config) =>
+  withAppBuildGradle(config, (mod) => {
+    // Keep the existing application ID and signing keys so installed apps update.
+    const start = "// paws-signing-start";
+    const end = "// paws-signing-end";
+    const existing = mod.modResults.contents.indexOf(start);
 
-    defaultConfig {
-        applicationId 'dev.paws.companion'
-        minSdk 26
-        targetSdk 36
-        versionName "0.2.0" // x-release-please-version
-        def parts = versionName.split('\\.').collect { it.toInteger() }
-        versionCode parts[0] * 1000000 + parts[1] * 1000 + parts[2]
+    if (existing !== -1) {
+      const tail = mod.modResults.contents.indexOf(end, existing);
+      mod.modResults.contents =
+        mod.modResults.contents.slice(0, existing) +
+        mod.modResults.contents.slice(tail + end.length);
     }
 
+    mod.modResults.contents =
+      mod.modResults.contents.trimEnd() +
+      `
+${start}
+android {
     signingConfigs {
         debug {
             if (System.getenv('ANDROID_DEBUG_KEYSTORE_FILE')) {
@@ -24,7 +28,6 @@ android {
                 keyPassword System.getenv('ANDROID_DEBUG_KEY_PASSWORD')
             }
         }
-
         release {
             if (System.getenv('ANDROID_KEYSTORE_FILE')) {
                 storeFile file(System.getenv('ANDROID_KEYSTORE_FILE'))
@@ -34,10 +37,16 @@ android {
             }
         }
     }
-
     buildTypes {
         release {
             signingConfig signingConfigs.release
         }
     }
 }
+// Test APKs also include JavaScript and run without Metro.
+react { debuggableVariants = [] }
+${end}
+`;
+
+    return mod;
+  });

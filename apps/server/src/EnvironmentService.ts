@@ -113,6 +113,23 @@ export function makeEnvironmentService(root: string, now = Date.now) {
     }),
   );
 
+  const grant = Effect.fn("EnvironmentService.grant")(
+    (peer: EnvironmentIdentity) =>
+      Effect.sync(() => {
+        if (!sharing()) throw new Error("Environment sharing is disabled.");
+        if (peer.id === id) throw new Error("This is the current environment.");
+
+        const token = randomBytes(32).toString("base64url");
+        db.prepare("INSERT OR REPLACE INTO connections VALUES (?, ?, ?)").run(
+          peer.id,
+          JSON.stringify(peer),
+          hash(token).toString("hex"),
+        );
+
+        return { identity: identity(), token };
+      }),
+  );
+
   const pair = Effect.fn("EnvironmentService.pair")(
     (code: string, peer: EnvironmentIdentity) =>
       Effect.sync(() => {
@@ -127,15 +144,9 @@ export function makeEnvironmentService(root: string, now = Date.now) {
           );
         if (peer.id === id) throw new Error("This is the current environment.");
 
-        const token = randomBytes(32).toString("base64url");
-        db.prepare("INSERT OR REPLACE INTO connections VALUES (?, ?, ?)").run(
-          peer.id,
-          JSON.stringify(peer),
-          hash(token).toString("hex"),
-        );
         pairing = undefined;
 
-        return { identity: identity(), token };
+        return Effect.runSync(grant(peer));
       }),
   );
 
@@ -195,6 +206,7 @@ export function makeEnvironmentService(root: string, now = Date.now) {
     configure,
     createPairing,
     pair,
+    grant,
     authorize,
     remember,
     setEnabled,
