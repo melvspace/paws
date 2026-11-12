@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/melvspace/paws/compare/v0.2.0...v0.3.0) (2026-11-12)
+
+
+### Features
+
+* add linked environments and LAN/Tailscale discovery ([#10](https://github.com/melvspace/paws/issues/10)) ([e319410](https://github.com/melvspace/paws/commit/e319410660294be889c045fbfed100f2070a87c1))
+* **chat:** dismiss obsolete conversation controls ([e0866be](https://github.com/melvspace/paws/commit/e0866be8914836eb22519844ed4b4e7a768b0bdc))
+* **mobile:** add native app with device pairing ([57c8628](https://github.com/melvspace/paws/commit/57c8628d1fd33e6e3456036edacb7d31c8eda91e))
+* **profiles:** infer agent profiles from activity ([1b41b65](https://github.com/melvspace/paws/commit/1b41b6519715ee9deeded2b91932e09af0619478))
+* **runtime:** provision managed container runtimes ([36ab94e](https://github.com/melvspace/paws/commit/36ab94efa5769b0b312e114018876a1982690fd2))
+
 ## [0.2.0](https://github.com/melvspace/paws/compare/v0.1.0...v0.2.0) (2026-11-05)
 
 
