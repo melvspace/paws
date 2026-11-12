@@ -87,6 +87,7 @@ export function resolveInteraction(
 
   if (
     !card ||
+    message.dismissed ||
     message.response ||
     (message.interaction && message.interaction.delivery !== "cancelled")
   )
@@ -1133,6 +1134,44 @@ export function makeChatService(
                     text: value.slice(0, 128000),
                     streaming: !complete,
                   }),
+                dismissControlsTool: async (input) => {
+                  abort.signal.throwIfAborted();
+                  const { messageIds } = Schema.decodeUnknownSync(
+                    Schema.Struct({
+                      messageIds: Schema.Array(Schema.String),
+                    }),
+                  )(input);
+                  const selected = new Set(messageIds);
+                  const dismissed: string[] = [];
+
+                  patch(id, (state) => ({
+                    ...state,
+                    conversation: {
+                      ...state.conversation,
+                      messages: state.conversation.messages.map((message) => {
+                        if (
+                          message.role !== "assistant" ||
+                          !message.card ||
+                          message.card.secretRequest ||
+                          (!message.card.actions.length &&
+                            !message.card.fields.length) ||
+                          message.dismissed ||
+                          message.response ||
+                          (message.interaction &&
+                            message.interaction.delivery !== "cancelled") ||
+                          (selected.size > 0 && !selected.has(message.id))
+                        )
+                          return message;
+
+                        dismissed.push(message.id);
+
+                        return { ...message, dismissed: true };
+                      }),
+                    },
+                  }));
+
+                  return { dismissed };
+                },
                 onMessage: async (nativeId, card, files) => {
                   if (abort.signal.aborted || silent) return;
 

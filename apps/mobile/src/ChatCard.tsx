@@ -18,12 +18,15 @@ export function ChatCard({
   const [secret, setSecret] = useState("");
   const [error, setError] = useState<string | null>(null);
   const card = message.card;
+  disabled ||= !!message.dismissed;
 
   if (!card) return null;
 
   if (message.response) return <Label>{message.response}</Label>;
 
   async function submit(actionId: string, secretValue?: string) {
+    if (disabled) return;
+
     if (
       card?.fields.some((field) => field.required && !values[field.id]?.trim())
     ) {

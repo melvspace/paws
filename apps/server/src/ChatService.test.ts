@@ -2020,3 +2020,44 @@ it("keeps streaming replies unread until completed and preserves replies newer t
     finish!();
   }
 });
+
+it("persists dismissed controls, rejects stale replies, and leaves other cards active", async () => {
+  await using fixture = await setup(async (turn) => {
+    if (turn.requestId === "first") {
+      for (const nativeId of ["old", "current"]) {
+        await turn.onMessage(nativeId, {
+          text: nativeId,
+          actions: [{ id: "go", label: "Go" }],
+          fields: [],
+        });
+      }
+    } else {
+      expect(
+        await turn.dismissControlsTool?.({
+          messageIds: ["first:old"],
+        }),
+      ).toEqual({ dismissed: ["first:old"] });
+    }
+  });
+  const id = fixture.agent.id;
+  await Effect.runPromise(fixture.chat.send(id, input("first")));
+  await expect.poll(() => fixture.chat.get(id).status).toBe("idle");
+  await Effect.runPromise(fixture.chat.send(id, input("dismiss")));
+  await expect.poll(() => fixture.chat.get(id).status).toBe("idle");
+  await fixture.reopen();
+  const messages = fixture.chat.get(id).messages;
+  expect(
+    messages.find((message) => message.id === "first:old")?.dismissed,
+  ).toBe(true);
+  expect(
+    messages.find((message) => message.id === "first:current")?.dismissed,
+  ).toBeUndefined();
+  await expect(
+    Effect.runPromise(
+      fixture.chat.send(id, {
+        ...input("stale"),
+        reply: { messageId: "first:old", actionId: "go", values: {} },
+      }),
+    ),
+  ).rejects.toThrow();
+});

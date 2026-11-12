@@ -25,6 +25,18 @@ export const toolText = (text: string) => ({
 export function chatTools(turn: ChatTurn, runtime: ChatToolRuntime) {
   const entries = [
     {
+      name: "paws_dismiss_controls",
+      description:
+        "Disable obsolete action buttons and forms in this conversation. Supply messageIds, or [] to dismiss all unanswered controls. Keep controls that still need a response active.",
+      schema: z.object({ messageIds: z.array(z.string()).max(100) }),
+      async execute(value: unknown) {
+        if (!turn.dismissControlsTool)
+          throw new ChatToolError("Controls unavailable.");
+
+        return toolText(JSON.stringify(await turn.dismissControlsTool(value)));
+      },
+    },
+    {
       name: browserTool.name,
       description: browserTool.description,
       schema: z.object({

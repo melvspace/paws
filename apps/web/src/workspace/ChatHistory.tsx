@@ -110,6 +110,7 @@ function MessageControls({
   const [values, setValues] = useState<Record<string, string>>({});
   const [validationError, setValidationError] = useState<string | null>(null);
   const card = message.card;
+  disabled ||= !!message.dismissed;
 
   if (
     !card ||
@@ -136,6 +137,9 @@ function MessageControls({
       className="chat-card-form"
       onSubmit={(event) => {
         event.preventDefault();
+
+        if (disabled) return;
+
         const missing = card.fields.find(
           (field) => field.required && !values[field.id]?.trim(),
         );

@@ -34,6 +34,7 @@ export interface ChatTurn {
   agentTool?(input: unknown): Promise<unknown>;
   routineTool?(input: unknown): Promise<unknown>;
   memoryTool?(input: unknown): Promise<unknown>;
+  dismissControlsTool?(input: unknown): Promise<unknown>;
   teamTool?(input: unknown): Promise<unknown>;
   conversationId?: string;
   requestId?: string;

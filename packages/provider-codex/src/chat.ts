@@ -116,6 +116,21 @@ export const messageTool = {
   },
 };
 
+const dismissControlsTool = {
+  type: "function",
+  name: "paws_dismiss_controls",
+  description:
+    "Disable obsolete action buttons and forms in this conversation. Supply messageIds, or [] to dismiss all unanswered controls. Keep controls that still need a response active.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      messageIds: { type: "array", maxItems: 100, items: { type: "string" } },
+    },
+    required: ["messageIds"],
+  },
+};
+
 const SecretRequest = Schema.Struct({
   label: Schema.String,
   reason: Schema.String,
@@ -436,6 +451,7 @@ async function runCodexTurnWithConnection(
                     : {
                         dynamicTools: [
                           messageTool,
+                          dismissControlsTool,
                           browserTool,
                           secretTool,
                           readAttachmentTool,
@@ -691,6 +707,7 @@ async function runCodexTurnWithConnection(
         ![
           "paws_browser",
           "paws_send_message",
+          "paws_dismiss_controls",
           "request_secret",
           "paws_read_attachment",
           "paws_mcp",
@@ -739,6 +756,7 @@ async function runCodexTurnWithConnection(
         }
 
         if (
+          call.tool === "paws_dismiss_controls" ||
           call.tool === "paws_memory" ||
           call.tool === "paws_mcp" ||
           call.tool === "paws_routine" ||
@@ -755,15 +773,17 @@ async function runCodexTurnWithConnection(
             };
 
           const execute =
-            call.tool === "paws_agents"
-              ? turn.agentTool
-              : call.tool === "paws_teamwork"
-                ? turn.teamworkTool
-                : call.tool === "paws_routine"
-                  ? turn.routineTool
-                  : call.tool === "paws_memory"
-                    ? turn.memoryTool
-                    : turn.teamTool;
+            call.tool === "paws_dismiss_controls"
+              ? turn.dismissControlsTool
+              : call.tool === "paws_agents"
+                ? turn.agentTool
+                : call.tool === "paws_teamwork"
+                  ? turn.teamworkTool
+                  : call.tool === "paws_routine"
+                    ? turn.routineTool
+                    : call.tool === "paws_memory"
+                      ? turn.memoryTool
+                      : turn.teamTool;
 
           if (!execute) throw new Error("Team resource unavailable.");
 
@@ -893,6 +913,7 @@ async function runCodexTurnWithConnection(
         }
 
         if (
+          call.tool === "paws_dismiss_controls" ||
           call.tool === "paws_memory" ||
           call.tool === "paws_mcp" ||
           call.tool === "paws_routine" ||

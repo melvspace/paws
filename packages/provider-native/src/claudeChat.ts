@@ -47,6 +47,7 @@ export async function runClaudeTurn(
     "paws_mcp",
     "paws_memory",
     "paws_send_message",
+    "paws_dismiss_controls",
     "paws_finish_turn",
     "request_secret",
     "paws_read_attachment",

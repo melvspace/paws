@@ -130,6 +130,7 @@ export const ChatMessage = Schema.Struct({
   streaming: Schema.optional(Schema.Boolean),
   card: Schema.optional(ChatCard),
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  dismissed: Schema.optional(Schema.Boolean),
   response: Schema.optional(Schema.String),
   delivery: Schema.optional(ChatDelivery),
   interaction: Schema.optional(ChatInteraction),
