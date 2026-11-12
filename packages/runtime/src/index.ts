@@ -25,9 +25,14 @@ export function resolveWorkspaceDirectory(
 ) {
   const layout = workspaceLayout(root, agentId);
   const alias = SyncFs.lstatSync(layout.base).isSymbolicLink()
-    ? Path.resolve(Path.dirname(layout.base), SyncFs.readlinkSync(layout.base))
+    ? Path.resolve(
+        Path.dirname(layout.base),
+        SyncFs.readlinkSync(layout.base).replace(/^\\\\\?\\/, ""),
+      )
     : layout.base;
-  const relative = Path.relative(Path.resolve(root), alias);
+  const relative = Path.relative(Path.resolve(root), alias)
+    .split(Path.sep)
+    .join("/");
   const team = /^teams\/([^/]+)\/agents\/([^/]+)$/.exec(relative);
 
   if (
@@ -44,7 +49,7 @@ export function resolveWorkspaceDirectory(
 
   if (
     base !== alias ||
-    (directory !== base && !directory.startsWith(`${base}/`))
+    (directory !== base && !directory.startsWith(`${base}${Path.sep}`))
   ) {
     throw new Error("Workspace directory escaped its environment.");
   }
@@ -54,10 +59,32 @@ export function resolveWorkspaceDirectory(
 
 // Hold each parent directory open so a concurrent replacement cannot redirect a
 // move through a link supplied by a team container.
-function workspaceParent(root: string, relative: string) {
+function workspaceParent(
+  root: string,
+  relative: string,
+  locks = new Map<string, { descriptor: number; uses: number }>(),
+) {
   const descriptors: number[] = [];
+  const windows = process.platform === "win32";
   const descriptorRoot =
     process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";
+  // libuv's Windows UV_FS_O_EXLOCK disables FILE_SHARE_DELETE (and other
+  // sharing). Unlike Unix descriptor paths, this pins the directory's name.
+  const exclusiveSharing = 0x10000000;
+
+  function release() {
+    for (const descriptor of descriptors.reverse()) {
+      const entry = [...locks].find(
+        ([, lock]) => lock.descriptor === descriptor,
+      );
+
+      if (entry && --entry[1].uses > 0) continue;
+
+      SyncFs.closeSync(descriptor);
+
+      if (entry) locks.delete(entry[0]);
+    }
+  }
 
   try {
     let directory = root;
@@ -80,26 +107,52 @@ function workspaceParent(root: string, relative: string) {
         }
       }
 
-      const descriptor = SyncFs.openSync(
-        directory,
-        SyncFs.constants.O_RDONLY |
-          SyncFs.constants.O_DIRECTORY |
-          SyncFs.constants.O_NOFOLLOW,
-      );
+      const before = windows ? SyncFs.lstatSync(directory) : undefined;
+
+      if (before && (!before.isDirectory() || before.isSymbolicLink()))
+        throw new Error("Workspace parent must be a real directory.");
+
+      const held = windows ? locks.get(directory) : undefined;
+      const descriptor =
+        held?.descriptor ??
+        SyncFs.openSync(
+          directory,
+          SyncFs.constants.O_RDONLY |
+            (windows
+              ? exclusiveSharing
+              : SyncFs.constants.O_DIRECTORY | SyncFs.constants.O_NOFOLLOW),
+        );
       descriptors.push(descriptor);
-      directory = Path.join(descriptorRoot, String(descriptor));
+
+      if (windows) {
+        if (held) held.uses++;
+        else locks.set(directory, { descriptor, uses: 1 });
+      }
+
+      if (before) {
+        const opened = SyncFs.fstatSync(descriptor);
+        const after = SyncFs.lstatSync(directory);
+
+        if (
+          !opened.isDirectory() ||
+          after.isSymbolicLink() ||
+          opened.dev !== before.dev ||
+          opened.ino !== before.ino ||
+          after.dev !== opened.dev ||
+          after.ino !== opened.ino
+        )
+          throw new Error("Workspace parent changed during relocation.");
+      }
+
+      if (!windows) directory = Path.join(descriptorRoot, String(descriptor));
     }
 
     return {
       directory,
-      close() {
-        for (const descriptor of descriptors.reverse())
-          SyncFs.closeSync(descriptor);
-      },
+      close: release,
     };
   } catch (error) {
-    for (const descriptor of descriptors.reverse())
-      SyncFs.closeSync(descriptor);
+    release();
 
     throw error;
   }
@@ -126,9 +179,11 @@ export function placeWorkspace(
 
   const wasAlias =
     existing !== undefined && SyncFs.lstatSync(layout.base).isSymbolicLink();
+  const locks = new Map<string, { descriptor: number; uses: number }>();
   const parent = workspaceParent(
     root,
     Path.relative(root, Path.dirname(destination)),
+    locks,
   );
   let source: ReturnType<typeof workspaceParent> | undefined;
 
@@ -149,6 +204,7 @@ export function placeWorkspace(
       source = workspaceParent(
         root,
         Path.relative(root, Path.dirname(existing)),
+        locks,
       );
 
     const original = source ? Path.join(source.directory, agentId) : undefined;
@@ -162,7 +218,11 @@ export function placeWorkspace(
 
       if (wasAlias) SyncFs.unlinkSync(layout.base);
 
-      SyncFs.symlinkSync(destination, layout.base, "dir");
+      SyncFs.symlinkSync(
+        destination,
+        layout.base,
+        process.platform === "win32" ? "junction" : "dir",
+      );
       resolveWorkspaceDirectory(root, agentId, ".");
     } catch (error) {
       if (
@@ -175,7 +235,12 @@ export function placeWorkspace(
       if (original) {
         SyncFs.renameSync(target, original);
 
-        if (wasAlias) SyncFs.symlinkSync(existing!, layout.base, "dir");
+        if (wasAlias)
+          SyncFs.symlinkSync(
+            existing!,
+            layout.base,
+            process.platform === "win32" ? "junction" : "dir",
+          );
       } else SyncFs.rmdirSync(target);
 
       throw error;
@@ -241,3 +306,9 @@ export {
   environmentName,
   stopEnvironment,
 } from "./persistent.ts";
+
+export { getContainerEngine, ContainerRuntimeError } from "./engine.ts";
+
+export { RuntimeSetupError } from "./errors.ts";
+
+export { prepareRuntimeImage } from "./engine.ts";

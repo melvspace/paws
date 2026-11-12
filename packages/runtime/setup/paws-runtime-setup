@@ -1,0 +1,45 @@
+#!/bin/sh
+set -eu
+
+if [ "$(id -u)" != 0 ]; then
+  echo "Paws runtime setup requires OS authorization." >&2
+  exit 1
+fi
+
+rootlesskit=$(realpath -- "$1")
+
+if [ ! -f "$rootlesskit" ] || [ ! -x "$rootlesskit" ]; then
+  echo "The bundled Paws runtime is missing." >&2
+  exit 1
+fi
+
+# Refuse policy syntax in a user-controlled attachment path.
+case "$rootlesskit" in
+  *'"'*|*'\'*|*'['*|*']'*|*'{'*|*'}'*|*'*'*|*'?'*|*'
+'*)
+    echo "The Paws installation path is unsupported." >&2
+    exit 1
+    ;;
+esac
+
+if ! command -v newuidmap >/dev/null || ! command -v newgidmap >/dev/null; then
+  if ! command -v apt-get >/dev/null; then
+    echo "This Linux distribution needs a native Paws installer." >&2
+    exit 1
+  fi
+
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y uidmap
+fi
+
+if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ] &&
+   [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1 ]; then
+  policy=$(printf '%s' "$rootlesskit" | sha256sum | cut -c 1-16)
+  profile="/etc/apparmor.d/paws-rootlesskit-$policy"
+  temporary=$(mktemp /etc/apparmor.d/.paws-rootlesskit.XXXXXX)
+  trap 'rm -f "$temporary"' EXIT HUP INT TERM
+  printf 'abi <abi/4.0>,\ninclude <tunables/global>\n\n"%s" flags=(unconfined) {\n  userns,\n}\n' "$rootlesskit" > "$temporary"
+  chmod 644 "$temporary"
+  mv -f "$temporary" "$profile"
+  apparmor_parser -r "$profile"
+fi

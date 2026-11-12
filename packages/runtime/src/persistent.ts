@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 import { mkdir, rm, writeFile, readFile, access } from "node:fs/promises";
 import { join, resolve, basename, dirname } from "node:path";
 import { assertAgentId } from "@paws/shared";
@@ -10,8 +9,7 @@ import {
   type RuntimeLease,
 } from "./index.ts";
 import { resolveExecutable, writeRuntimeSecret } from "./container.ts";
-
-const exec = promisify(execFile);
+import { getContainerEngine } from "./engine.ts";
 const preparations = new Map<string, Promise<string>>();
 const template = "paws-team-runtime:1";
 
@@ -25,18 +23,63 @@ function executeHost(
   signal: AbortSignal,
   timeoutMs: number,
 ) {
+  const windows = process.platform === "win32";
+  const executionSignal = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(timeoutMs),
+  ]);
+  executionSignal.throwIfAborted();
+
   return new Promise<string>((resolve, reject) => {
-    const child = spawn("/bin/bash", ["-lc", command], {
-      cwd: workspace,
-      env: { PATH: process.env.PATH, HOME: home, CODEX_HOME: `${home}/.codex` },
-      detached: true,
-      signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = spawn(
+      windows ? "powershell.exe" : "/bin/bash",
+      windows
+        ? ["-NoProfile", "-NonInteractive", "-Command", command]
+        : ["-lc", command],
+      {
+        cwd: workspace,
+        env: {
+          PATH: process.env.PATH,
+          HOME: home,
+          CODEX_HOME: `${home}/.codex`,
+          ...(windows
+            ? {
+                SystemRoot: process.env.SystemRoot,
+                USERPROFILE: home,
+                TEMP: process.env.TEMP,
+                TMP: process.env.TMP,
+              }
+            : {}),
+        },
+        detached: !windows,
+        ...(windows ? {} : { signal: executionSignal }),
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
     let output = "";
     let failure: Error | undefined;
+    let killing = false;
     const kill = () => {
       if (!child.pid) return;
+
+      if (windows) {
+        if (killing || child.exitCode !== null || child.signalCode !== null)
+          return;
+
+        killing = true;
+        const cleanup = spawn(
+          "taskkill.exe",
+          ["/PID", String(child.pid), "/T", "/F"],
+          {
+            stdio: "ignore",
+            windowsHide: true,
+          },
+        );
+        cleanup.on("error", () => {});
+
+        return;
+      }
 
       try {
         process.kill(-child.pid, "SIGKILL");
@@ -44,6 +87,14 @@ function executeHost(
         /* Process already exited. */
       }
     };
+    const cancel = () => {
+      failure = new Error("Command cancelled.");
+      kill();
+    };
+
+    if (windows)
+      executionSignal.addEventListener("abort", cancel, { once: true });
+
     const capture = (chunk: Buffer) => {
       output += chunk.toString("utf8");
 
@@ -59,6 +110,8 @@ function executeHost(
       kill();
     });
     child.on("close", (code) => {
+      executionSignal.removeEventListener("abort", cancel);
+
       if (failure || code !== 0) {
         kill();
         reject(failure ?? new Error("Command failed."));
@@ -95,6 +148,7 @@ export async function ensureEnvironment(
   agentId: string,
   environment: Environment,
 ) {
+  const engine = await getContainerEngine(root);
   const teamId = environment.teamId;
   const name = environmentName(
     root,
@@ -111,7 +165,7 @@ export async function ensureEnvironment(
 
     try {
       try {
-        await exec("docker", ["container", "inspect", name], {
+        await engine.execute(["container", "inspect", name], {
           timeout: 10_000,
         });
       } catch (error) {
@@ -133,8 +187,7 @@ export async function ensureEnvironment(
           ? join(root, "teams", teamId)
           : join(root, "standalone", agentId);
         await mkdir(source, { recursive: true, mode: 0o700 });
-        await exec(
-          "docker",
+        await engine.execute(
           [
             "create",
             "--name",
@@ -181,11 +234,10 @@ export async function ensureEnvironment(
         });
       }
 
-      await exec("docker", ["start", name], { timeout: 30_000 });
+      await engine.execute(["start", name], { timeout: 30_000 });
       // Older committed team images predate these runtime dependencies. Install
       // missing tools in the retained writable layer before starting a provider.
-      await exec(
-        "docker",
+      await engine.execute(
         [
           "exec",
           "--user=0:0",
@@ -201,8 +253,7 @@ export async function ensureEnvironment(
       );
       // Ordinary files use the server's uid; sudo grants full control inside this
       // environment without making every private home/file host-root-owned.
-      await exec(
-        "docker",
+      await engine.execute(
         [
           "exec",
           "--user=0:0",
@@ -220,7 +271,7 @@ export async function ensureEnvironment(
       return name;
     } catch (error) {
       if (environment.ephemeral && created)
-        await exec("docker", ["rm", "--force", name], { timeout: 30_000 });
+        await engine.execute(["rm", "--force", name], { timeout: 30_000 });
 
       throw error;
     }
@@ -248,8 +299,10 @@ export async function stopEnvironment(
     return;
   }
 
+  const engine = await getContainerEngine(root);
+
   try {
-    await exec("docker", ["stop", name], { timeout: 30_000 });
+    await engine.execute(["stop", name], { timeout: 30_000 });
   } catch (error) {
     if (
       !error ||
@@ -277,15 +330,18 @@ export async function leaseToolRuntime(
   const name = isolated
     ? await ensureEnvironment(root, agentId, environment)
     : null;
+  const engine = isolated ? await getContainerEngine(root) : undefined;
   const secrets: string[] = [];
   const processes: string[] = [];
 
   async function cleanupSecrets() {
     for (const path of secrets.splice(0)) {
       if (name)
-        await exec("docker", ["exec", name, "rm", "-f", "--", path], {
-          timeout: 10_000,
-        }).catch(() => {});
+        await engine!
+          .execute(["exec", name, "rm", "-f", "--", path], {
+            timeout: 10_000,
+          })
+          .catch(() => {});
       else await rm(path, { force: true });
     }
   }
@@ -294,7 +350,8 @@ export async function leaseToolRuntime(
     agentId,
     isolation: isolated ? "container" : "host",
     ...paths,
-    shell: "/bin/bash",
+    shell:
+      !name && process.platform === "win32" ? "powershell.exe" : "/bin/bash",
     tools: ["paws_exec", "paws_send_message", "request_secret"],
     container: name,
     async deliverSecret(reference: string, value: string) {
@@ -302,7 +359,13 @@ export async function leaseToolRuntime(
         throw new Error("Invalid secret reference.");
 
       const path = name
-        ? await writeRuntimeSecret(name, reference, value, identity())
+        ? await writeRuntimeSecret(
+            name,
+            reference,
+            value,
+            engine?.user ?? identity(),
+            engine,
+          )
         : join(layout.base, `.paws-secret-${reference}`);
 
       if (!name) await writeFile(path, value, { mode: 0o600, flag: "wx" });
@@ -322,11 +385,10 @@ export async function leaseToolRuntime(
       processes.push(marker);
 
       return {
-        command: "docker",
-        args: [
+        ...engine!.launch([
           "exec",
           "--user",
-          identity(),
+          engine!.user ?? identity(),
           "--interactive",
           "--workdir",
           context.workspace,
@@ -344,7 +406,7 @@ export async function leaseToolRuntime(
           marker,
           command,
           ...args,
-        ],
+        ]),
       };
     },
     async execute(
@@ -367,12 +429,11 @@ export async function leaseToolRuntime(
       let completed = false;
 
       try {
-        const result = await exec(
-          "docker",
+        const result = await engine!.execute(
           [
             "exec",
             "--user",
-            identity(),
+            engine!.user ?? identity(),
             "--workdir",
             paths.workspace,
             "--env",
@@ -406,45 +467,47 @@ export async function leaseToolRuntime(
       } finally {
         if (name) {
           // Only cancel this invocation, never another teammate's processes.
-          await exec(
-            "docker",
-            [
-              "exec",
-              name,
-              "/bin/sh",
-              "-c",
-              'if [ -f "$1" ]; then if [ "$2" != completed ]; then pid=$(cat "$1"); kill -KILL -"$pid" 2>/dev/null || true; fi; rm -f "$1"; fi',
-              "paws-cleanup",
-              taskPath,
-              completed ? "completed" : "failed",
-            ],
-            { timeout: 10_000 },
-          ).catch(() => {});
+          await engine!
+            .execute(
+              [
+                "exec",
+                name,
+                "/bin/sh",
+                "-c",
+                'if [ -f "$1" ]; then if [ "$2" != completed ]; then pid=$(cat "$1"); kill -KILL -"$pid" 2>/dev/null || true; fi; rm -f "$1"; fi',
+                "paws-cleanup",
+                taskPath,
+                completed ? "completed" : "failed",
+              ],
+              { timeout: 10_000 },
+            )
+            .catch(() => {});
         }
       }
     },
     cleanupSecrets,
     async dispose() {
       for (const marker of processes) {
-        await exec(
-          "docker",
-          [
-            "exec",
-            name!,
-            "/bin/sh",
-            "-c",
-            'if [ -f "$1" ]; then pid=$(cat "$1"); kill -KILL -"$pid" 2>/dev/null || true; rm -f "$1"; fi',
-            "paws-cleanup",
-            marker,
-          ],
-          { timeout: 10_000 },
-        ).catch(() => {});
+        await engine!
+          .execute(
+            [
+              "exec",
+              name!,
+              "/bin/sh",
+              "-c",
+              'if [ -f "$1" ]; then pid=$(cat "$1"); kill -KILL -"$pid" 2>/dev/null || true; rm -f "$1"; fi',
+              "paws-cleanup",
+              marker,
+            ],
+            { timeout: 10_000 },
+          )
+          .catch(() => {});
       }
 
       await cleanupSecrets();
 
       if (name && environment.ephemeral)
-        await exec("docker", ["rm", "--force", name], { timeout: 30_000 });
+        await engine!.execute(["rm", "--force", name], { timeout: 30_000 });
     },
   } satisfies RuntimeLease & Record<string, unknown>;
 }
@@ -458,17 +521,22 @@ export async function leaseCodexRuntime(
   const lease = await leaseToolRuntime(root, agentId, environment);
 
   try {
-    const binary = await resolveExecutable(binaryPath || "codex");
+    const bundled = process.env.PAWS_RUNTIME_ASSETS;
+    const binary = await resolveExecutable(
+      lease.container && bundled && (!binaryPath || binaryPath === "codex")
+        ? join(bundled, "codex-linux", "codex")
+        : binaryPath || "codex",
+    );
     let executable = binary;
 
     if (lease.container) {
+      const engine = await getContainerEngine(root);
       // Content addressing avoids replacing a binary another agent is executing.
       const directory = `/opt/paws/harness/${createHash("sha256")
         .update(await readFile(binary))
         .digest("hex")
         .slice(0, 16)}`;
-      await exec(
-        "docker",
+      await engine.execute(
         ["exec", lease.container, "mkdir", "-p", directory],
         {
           timeout: 10_000,
@@ -488,15 +556,13 @@ export async function leaseCodexRuntime(
         }
 
         const temporary = `${directory}/copy-${randomUUID()}`;
-        await exec(
-          "docker",
+        await engine.execute(
           ["cp", source, `${lease.container}:${temporary}`],
           {
             timeout: 30_000,
           },
         );
-        await exec(
-          "docker",
+        await engine.execute(
           [
             "exec",
             lease.container,

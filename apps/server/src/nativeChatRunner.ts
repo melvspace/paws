@@ -12,7 +12,7 @@ import {
   providerLaunch,
 } from "@paws/provider-native";
 import { ChatExecutionError, type RunChatTurn } from "@paws/provider-core";
-import { leaseToolRuntime } from "@paws/runtime";
+import { leaseToolRuntime, ContainerRuntimeError } from "@paws/runtime";
 import type { makeProviderService } from "./ProviderService.ts";
 import { guardChatTools } from "./chatToolGuard.ts";
 
@@ -45,9 +45,12 @@ export function makeNativeChatRunner(
       root,
       turn.agentId,
       agentContext(root, turn.agentId),
-    ).catch(() => {
+    ).catch((error: unknown) => {
+      if (error instanceof ContainerRuntimeError)
+        throw new ChatExecutionError(error.message);
+
       throw new ChatExecutionError(
-        "Chat runtime unavailable. Run pnpm runtime:build with Docker running.",
+        "Chat runtime unavailable. Check the container engine and retry.",
       );
     });
 

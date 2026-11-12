@@ -1,3 +1,4 @@
+import { containerEngine, type ContainerEngine } from "./engine.ts";
 import { spawn } from "node:child_process";
 import { realpath, access } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -9,27 +10,28 @@ export async function writeRuntimeSecret(
   reference: string,
   value: string,
   user?: string,
+  engine: ContainerEngine = containerEngine(),
 ) {
   if (!/^[a-f0-9-]{36}$/.test(reference))
     throw new Error("Invalid secret reference.");
 
   const path = `/tmp/paws-secrets/${reference}`;
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      "docker",
-      [
-        "exec",
-        ...(user ? ["--user", user] : []),
-        "--interactive",
-        container,
-        "/bin/sh",
-        "-c",
-        'set -euC; umask 077; mkdir -p /tmp/paws-secrets; cat > "$1"',
-        "paws-secret",
-        path,
-      ],
-      { stdio: ["pipe", "ignore", "ignore"], timeout: 10000 },
-    );
+    const launch = engine.launch([
+      "exec",
+      ...(user ? ["--user", user] : []),
+      "--interactive",
+      container,
+      "/bin/sh",
+      "-c",
+      'set -euC; umask 077; mkdir -p /tmp/paws-secrets; cat > "$1"',
+      "paws-secret",
+      path,
+    ]);
+    const child = spawn(launch.command, launch.args, {
+      stdio: ["pipe", "ignore", "ignore"],
+      timeout: 10000,
+    });
     const fail = () =>
       reject(new Error("Could not deliver the secret to the agent runtime."));
     child.on("error", fail);
@@ -46,7 +48,12 @@ export async function resolveExecutable(command: string) {
     ? [command]
     : (process.env.PATH ?? "")
         .split(delimiter)
-        .map((dir) => join(dir, command));
+        .flatMap((dir) =>
+          process.platform === "win32" &&
+          !command.toLowerCase().endsWith(".exe")
+            ? [join(dir, command), join(dir, `${command}.exe`)]
+            : [join(dir, command)],
+        );
 
   for (const candidate of candidates) {
     try {

@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
 const unpacked =
@@ -17,9 +18,21 @@ database.exec(
   "CREATE TABLE providers (id TEXT PRIMARY KEY, data TEXT NOT NULL)",
 );
 database.close();
+// Smoke-test packaged transports independently of host virtualization policy.
+// Runtime readiness and setup behavior have separate boundary tests.
+const entrypoint = join(home, "smoke.mjs");
+await writeFile(
+  entrypoint,
+  `
+import { createServer } from ${JSON.stringify(pathToFileURL(join(runtime, "server/src/main.js")).href)};
+const app = createServer(process.env.PAWS_HOME, { webRoot: process.env.PAWS_WEB_ROOT });
+app.server.listen(4310, "127.0.0.1", () => process.send({type: "ready"}));
+process.once("disconnect", () => { void app.close(); });
+`,
+);
 const child = spawn(
   join(runtime, process.platform === "win32" ? "node.exe" : "node"),
-  [join(runtime, "server/src/main.js")],
+  [entrypoint],
   {
     cwd: runtime,
     env: {

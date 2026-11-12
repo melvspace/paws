@@ -1,0 +1,159 @@
+[
+  {
+    "url": "https://download.docker.com/linux/static/stable/x86_64/docker-29.9.3.tgz",
+    "sha256": "3fb5d1f13014c18cc54945bc177c58a9056a482dada031e17d12cf2e6922c973"
+  },
+  {
+    "url": "https://download.docker.com/linux/static/stable/aarch64/docker-29.9.3.tgz",
+    "sha256": "1b27fd739378ef938401e81ce5afb73b7ad7432d4f598814a9ff5f826bb464d2"
+  },
+  {
+    "url": "https://download.docker.com/mac/static/stable/x86_64/docker-29.9.3.tgz",
+    "sha256": "f7d8f835391cd0a8c676d9a8d2547f909da6a2d029595943b0ce8d5f169abe47"
+  },
+  {
+    "url": "https://download.docker.com/mac/static/stable/aarch64/docker-29.9.3.tgz",
+    "sha256": "79145e169bca0b9571d02de8e1cd311a36e0e8fdb4599b6661a87b1bb3afbe13"
+  },
+  {
+    "url": "https://download.docker.com/linux/static/stable/x86_64/docker-rootless-extras-29.9.3.tgz",
+    "sha256": "c41b7194dca722fe929bc0225fc87f3166c97e67d50a521533b0b23f3c79a466"
+  },
+  {
+    "url": "https://download.docker.com/linux/static/stable/aarch64/docker-rootless-extras-29.9.3.tgz",
+    "sha256": "867bbb01a3df1566681ccf53da8255434d4ca2cc84a304111604b6ee6130c349"
+  },
+  {
+    "url": "https://github.com/lima-vm/lima/releases/download/v2.3.0/lima-2.3.0-Darwin-arm64.tar.gz",
+    "sha256": "b7af444bd8f91d3c307477e562f2cf3bd7595d62b9429185e4fa841563578cfc"
+  },
+  {
+    "url": "https://github.com/lima-vm/lima/releases/download/v2.3.0/lima-2.3.0-Darwin-x86_64.tar.gz",
+    "sha256": "d58bc7d6b8158d638720d8c8fdb17eb58527dfead6a29a5b60f48a35ee4a65a6"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-aarch64-apple-darwin.tar.gz",
+    "sha256": "7511163b7a0152bcf0e1229092bd2545fdccff64fc8d92ad7c6e01f0ca4681df"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-aarch64-unknown-linux-musl.tar.gz",
+    "sha256": "ed81fa2c7d209689af061b6f305ed554218de92a1c2c4019142b28f66fa64add"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-code-mode-host-aarch64-apple-darwin.tar.gz",
+    "sha256": "515e841702f034a79bfaf00c4ccf6ca46ea2032689d608edbd17f4bc32940cce"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz",
+    "sha256": "3c8843f105cb75a267e05057fc841cdf4a00ff4a68510c0f9f7eb8fb129f82ce"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-code-mode-host-x86_64-apple-darwin.tar.gz",
+    "sha256": "2f6955caa2a629bb680a74a592a28d1ec0b53f048f3581b4ea5aa5737215aec6"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz",
+    "sha256": "189475a654d82ca776e08dfef22734106d3e5b2cf21da6e84ec3d974d02c39a6"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-exec-server-aarch64-apple-darwin.tar.gz",
+    "sha256": "429d3477ecbced4d79557870178ae5c982e6078365dcf5b477778f6c124ac0c1"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-exec-server-aarch64-unknown-linux-musl.tar.gz",
+    "sha256": "5022cbbdcfc0d96b81b93b35322a0a3ef0ec33f5fbe0bede39eb90c60b79b57b"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-exec-server-x86_64-apple-darwin.tar.gz",
+    "sha256": "1a902f2e429e6bf47c041be2c661210c4eac2d1fc9a40aede8cd1b1e9be348b3"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-exec-server-x86_64-unknown-linux-musl.tar.gz",
+    "sha256": "1fd60bfd118549fa5cef2919582ac8282e4ade56c4fbd668dfe170fd59b534ae"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-x86_64-apple-darwin.tar.gz",
+    "sha256": "0cf771e76a587059f0ee00c731b0b765b586355e6bd04cde490ebb05963bd68a"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-x86_64-unknown-linux-musl.tar.gz",
+    "sha256": "8246e846c550ea21197fcc4067bc270dca895e94ea42ed6a282e6f4e0125b15f"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-code-mode-host-x86_64-pc-windows-msvc.exe",
+    "sha256": "afbef638bb034a0f65a109aa2009edc9b8f9dbcc18edbc38f888aa51a32baba2"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-exec-server-x86_64-pc-windows-msvc.exe",
+    "sha256": "f02e104e1b2a779f594e98b32ed4ba377f409db5184a27674e6c7081c99f1e29"
+  },
+  {
+    "url": "https://github.com/openai/codex/releases/download/rust-v0.167.2/codex-x86_64-pc-windows-msvc.exe",
+    "sha256": "6f65c42e3769209976cce097a400720b5d877e1d24ec8bb6272bf0f02d5e0fd7"
+  },
+  {
+    "url": "https://releases.ubuntu.com/24.04.4/ubuntu-24.04.4-wsl-amd64.wsl",
+    "sha256": "9b2f7730dc68227dd04a9f3e5eab86ad85caf556b8606ad94f1f29ff5c4fd3f5"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/docker/cli/v29.9.3/LICENSE",
+    "sha256": "2d81ea060825006fc8f3fe28aa5dc0ffeb80faf325b612c955229157b8c10dc0",
+    "license": "docker-cli"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/rootless-containers/rootlesskit/v3.3.0/LICENSE",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "license": "rootlesskit"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/lima-vm/lima/v2.3.0/LICENSE",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "license": "lima"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/openai/codex/rust-v0.167.2/LICENSE",
+    "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
+    "license": "codex"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/containerd/containerd/v2.4.2/LICENSE",
+    "sha256": "4bbe3b885e8cd1907ab4cf9a41e862e74e24b5422297a4f2fe524e6a30ada2b4",
+    "license": "containerd"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/opencontainers/runc/v1.5.2/LICENSE",
+    "sha256": "552a739c3b25792263f731542238b92f6f8d07e9a488eae27e6c4690038a8243",
+    "license": "runc"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/krallin/tini/v0.19.0/LICENSE",
+    "sha256": "e5f46bca81266bdd511cf08018d66866870531794569c04f9b45f50dd23c28b0",
+    "license": "tini"
+  },
+  {
+    "url": "https://github.com/docker/buildx/releases/download/v0.39.0/buildx-v0.39.0.darwin-amd64",
+    "sha256": "dda7fe88c8ac15ebc4fd57c452ee3ba44336967c74221a0b229b6cff68bec538"
+  },
+  {
+    "url": "https://github.com/docker/buildx/releases/download/v0.39.0/buildx-v0.39.0.darwin-arm64",
+    "sha256": "0190e4b9c85510974290f9a597e86c4d8200be782aeaa3df7d756ab4423d6b2d"
+  },
+  {
+    "url": "https://github.com/docker/buildx/releases/download/v0.39.0/buildx-v0.39.0.linux-amd64",
+    "sha256": "5fb31a097304fbf6dd4038649a0decf32c2b9510e4047acd7d68b9d700c46194"
+  },
+  {
+    "url": "https://github.com/docker/buildx/releases/download/v0.39.0/buildx-v0.39.0.linux-arm64",
+    "sha256": "722cdcdfdd6f3fb943fa1ba75102d057feb18ba72aab93b1b0a8cf2b2b48a25f"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/docker/buildx/v0.39.0/LICENSE",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "license": "buildx"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/moby/moby/70efc0e/LICENSE",
+    "sha256": "7c87873291f289713ac5df48b1f2010eb6963752bbd6b530416ab99fc37914a8",
+    "license": "moby"
+  }
+]

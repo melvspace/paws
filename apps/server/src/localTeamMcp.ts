@@ -1,16 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { join } from "node:path";
 import * as Fs from "node:fs";
 import type { Team, TeamIntegration, TeamToolRequest } from "@paws/contracts";
 import { ChatToolError } from "@paws/provider-core";
-import { leaseToolRuntime } from "@paws/runtime";
+import { leaseToolRuntime, getContainerEngine } from "@paws/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { withMcpLock } from "./teamMcpAuth.ts";
-
-const exec = promisify(execFile);
 
 export function localTeamMcp(
   root: string,
@@ -34,7 +30,7 @@ export function localTeamMcp(
     const home = `/opt/paws/integrations/${integration.id}/home`;
 
     try {
-      await prepareContext(lease.container!, directory, home, timeout);
+      await prepareContext(root, lease.container!, directory, home, timeout);
       const launch = lease.launch(
         "/usr/bin/timeout",
         [
@@ -92,12 +88,14 @@ export function localTeamMcp(
 }
 
 async function prepareContext(
+  root: string,
   container: string,
   directory: string,
   home: string,
   signal: AbortSignal,
 ) {
-  const run = (args: string[]) => exec("docker", args, { signal });
+  const engine = await getContainerEngine(root);
+  const run = (args: string[]) => engine.execute(args, { signal });
   // The compatibility alias is container-local; ordinary agent cwd/home remain
   // personal. Refuse to replace an existing nonempty directory or another link.
   await withMcpLock(container, () =>
@@ -140,11 +138,14 @@ async function prepareContext(
       "paws-integration",
       temporary,
       home,
-      `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
+      engine.user ??
+        `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
     ]);
   } finally {
-    await exec("docker", ["exec", container, "rm", "-rf", "--", temporary], {
-      signal: AbortSignal.timeout(10_000),
-    }).catch(() => {});
+    await engine
+      .execute(["exec", container, "rm", "-rf", "--", temporary], {
+        signal: AbortSignal.timeout(10_000),
+      })
+      .catch(() => {});
   }
 }

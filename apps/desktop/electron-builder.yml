@@ -5,6 +5,7 @@ directories:
   output: ../../release/desktop
 files:
   - src/main.mjs
+  - src/runtimeSetup.mjs
   - package.json
 extraResources:
   - from: dist
@@ -16,6 +17,9 @@ mac:
   identity: "-"
   hardenedRuntime: false
   notarize: false
+  # Preserve Lima's virtualization entitlements when signing the outer app.
+  signIgnore:
+    - /runtime/containers/lima/
   target: dmg
 linux:
   executableName: paws

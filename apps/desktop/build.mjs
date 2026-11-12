@@ -1,5 +1,6 @@
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { bundleRuntimeAssets } from "./runtime-assets.mjs";
 import { buildServer } from "../../scripts/build-server.mjs";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -23,3 +24,5 @@ const license = await fetch(
 if (!license.ok) throw new Error("Unable to obtain the Node runtime license.");
 
 await writeFile(join(stage, "NODE-LICENSE"), await license.text());
+
+await bundleRuntimeAssets(join(stage, "containers"));

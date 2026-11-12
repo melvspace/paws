@@ -6,7 +6,7 @@ import { Schema } from "effect";
 import { createCodexChatSession } from "@paws/provider-codex";
 import { ChatExecutionError, type RunChatTurn } from "@paws/provider-core";
 import { withJsonRpc } from "@paws/provider-core/process";
-import { leaseCodexRuntime } from "@paws/runtime";
+import { leaseCodexRuntime, ContainerRuntimeError } from "@paws/runtime";
 import type { makeProviderService } from "./ProviderService.ts";
 
 const AuthFile = Schema.Struct({
@@ -202,6 +202,9 @@ export function makeCodexChatRunner(
     try {
       await run(turn);
     } catch (error) {
+      if (error instanceof ContainerRuntimeError)
+        throw new ChatExecutionError(error.message);
+
       if (
         error instanceof Error &&
         /^(Chat runtime unavailable|Chat requires a Codex|The agent turn did not complete|Codex executable not found|Generated image could not be delivered)/.test(

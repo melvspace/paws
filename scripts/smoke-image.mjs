@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
@@ -27,6 +28,24 @@ async function ready(origin) {
 }
 
 try {
+  const endpoint =
+    process.env.DOCKER_HOST ||
+    (
+      await docker(
+        "context",
+        "inspect",
+        "--format",
+        "{{.Endpoints.docker.Host}}",
+      )
+    ).stdout.trim();
+
+  if (!endpoint.startsWith("unix://"))
+    throw new Error(
+      "The image integration smoke test requires a local Unix Docker socket.",
+    );
+
+  const socket = endpoint.slice("unix://".length);
+  const group = String((await stat(socket)).gid);
   await docker(
     "run",
     "--detach",
@@ -34,6 +53,12 @@ try {
     name,
     "--publish",
     "127.0.0.1::4310",
+    "--mount",
+    `type=bind,src=${socket},dst=/var/run/docker.sock`,
+    "--group-add",
+    group,
+    "--group-add",
+    "0",
     image,
   );
   const port = (await docker("port", name, "4310/tcp")).stdout.trim();

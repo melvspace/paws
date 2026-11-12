@@ -1,3 +1,8 @@
+import { ContainerRuntimeError } from "@paws/runtime";
+import {
+  initializeRuntime,
+  desktopRuntimeAuthorization,
+} from "./runtimeStartup.ts";
 import { makeTextGenerationService } from "./TextGenerationService.ts";
 import {
   makeAgentProfileService,
@@ -759,7 +764,39 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
+  if (import.meta.url.endsWith(".ts") && !process.env.PAWS_RUNTIME_ASSETS) {
+    const bootstrap = new URL(
+      "../../../scripts/development-runtime.mjs",
+      import.meta.url,
+    );
+    const { prepareDevelopmentRuntime } = await import(bootstrap.href);
+    await prepareDevelopmentRuntime();
+  }
+
   const root = process.env.PAWS_HOME ?? Path.join(homedir(), ".paws");
+  try {
+    await initializeRuntime(
+      root,
+      process.env.PAWS_DESKTOP === "1"
+        ? { authorize: desktopRuntimeAuthorization }
+        : {},
+    );
+  } catch (error) {
+    const message =
+      error instanceof ContainerRuntimeError
+        ? error.message
+        : "Paws could not prepare its runtime. Check the installation and restart Paws.";
+    console.error(message);
+
+    if (process.connected && process.send) {
+      await new Promise<void>((resolve) => {
+        process.send!({ type: "startup-error", message }, () => resolve());
+      });
+    }
+
+    process.exit(1);
+  }
+
   const app = createServer(root, {
     environmentNetworking: true,
     routineLimits: configuredRoutineLimits(process.env.PAWS_ROUTINE_LIMITS),

@@ -75,6 +75,9 @@ jobs:
           architecture: ${{ matrix.arch }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify Windows runtime filesystem and shell
+        if: runner.os == 'Windows'
+        run: pnpm exec vp test run packages/runtime/src/windows.test.ts
       - name: Install Electron runtime
         run: pnpm --filter @paws/desktop exec node node_modules/electron/install.js
       - name: Build installers
