@@ -11,8 +11,6 @@ const origin = app.isPackaged
 
 if (!app.requestSingleInstanceLock()) app.exit();
 
-await app.whenReady();
-
 async function startBackend() {
   let started = false;
   const runtime = join(process.resourcesPath, "runtime");
@@ -101,17 +99,22 @@ app.on("before-quit", () => {
   if (backend?.connected) backend.disconnect();
 });
 
-try {
-  if (app.isPackaged) await startBackend();
+async function start() {
+  await app.whenReady();
 
-  openWindow();
-} catch (error) {
-  dialog.showErrorBox(
-    "Unable to start Paws",
-    error instanceof Error ? error.message : "Restart Paws and try again.",
-  );
-  app.quit();
+  try {
+    if (app.isPackaged) await startBackend();
+
+    openWindow();
+  } catch (error) {
+    dialog.showErrorBox(
+      "Unable to start Paws",
+      error instanceof Error ? error.message : "Restart Paws and try again.",
+    );
+    app.quit();
+  }
 }
+
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     openWindow();
@@ -122,3 +125,5 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+void start();

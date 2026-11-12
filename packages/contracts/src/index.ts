@@ -28,6 +28,12 @@ export const UpdateAgent = Schema.Struct({
 export type UpdateAgent = typeof UpdateAgent.Type;
 
 export const Agent = Schema.Struct({
+  profileOverrides: Schema.optional(
+    Schema.Struct({
+      role: Schema.optional(Schema.Boolean),
+      description: Schema.optional(Schema.Boolean),
+    }),
+  ),
   memories: Schema.optional(Schema.Array(MemoryEntry)),
   id: Schema.String,
   name: Schema.String,
@@ -73,3 +79,5 @@ export * from "./browser.ts";
 export * from "./environments.ts";
 
 export * from "./pairing.ts";
+
+export * from "./textGeneration.ts";

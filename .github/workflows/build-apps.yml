@@ -83,6 +83,9 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
       - name: Smoke test packaged backend
         run: node scripts/smoke-package.mjs
+      - name: Verify macOS app signature
+        if: runner.os == 'macOS'
+        run: codesign --verify --deep --strict --verbose=2 release/desktop/mac*/Paws.app
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.os }}-${{ matrix.arch }}

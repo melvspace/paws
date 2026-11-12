@@ -60,7 +60,7 @@ async function body(request: IncomingMessage) {
 function allowedPath(path: string) {
   if (
     path !== "/ws" &&
-    !/^\/api\/(agents|teams|providers|routine-runs|routine-preview)(\/|\?|$)/.test(
+    !/^\/api\/(agents|teams|providers|text-generation|routine-runs|routine-preview)(\/|\?|$)/.test(
       path,
     )
   )

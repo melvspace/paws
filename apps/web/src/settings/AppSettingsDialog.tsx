@@ -53,7 +53,7 @@ export function AppSettingsDialog({
     {
       name: "Chat" as const,
       keywords:
-        "chat follow-ups queue steer running turn send default behavior composer",
+        "chat text generation model luna profiles follow-ups queue steer running turn send default behavior composer",
       Icon: MessageSquareIcon,
     },
     {
@@ -184,7 +184,7 @@ export function AppSettingsDialog({
                   <ThemeSelect />
                 </section>
               ) : page === "Chat" ? (
-                <ChatSettings />
+                <ChatSettings beforeClose={beforeClose} />
               ) : page === "Environments" || page === "Sharing & access" ? (
                 <EnvironmentSettings
                   page={page}

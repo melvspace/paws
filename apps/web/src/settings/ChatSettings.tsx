@@ -1,3 +1,5 @@
+import type { RefObject } from "react";
+import { TextGenerationSettings } from "./TextGenerationSettings.tsx";
 import { ChevronDownIcon } from "lucide-react";
 import { Button } from "../components/ui/button.tsx";
 import {
@@ -11,12 +13,17 @@ import { useChatPreferences } from "./chatPreferences.ts";
 import { FollowUpModePicker } from "../workspace/FollowUpModePicker.tsx";
 
 // T3 Code places this preference in Settings → Chat → Follow-ups.
-export function ChatSettings() {
+export function ChatSettings({
+  beforeClose,
+}: {
+  beforeClose?: RefObject<(() => Promise<void>) | null> | undefined;
+}) {
   const { followUpMode, setFollowUpMode, messageDisplay, setMessageDisplay } =
     useChatPreferences();
 
   return (
     <>
+      <TextGenerationSettings beforeClose={beforeClose} />
       <section aria-labelledby="messages-heading">
         <h3 id="messages-heading">Messages</h3>
         <div className="chat-settings-row">

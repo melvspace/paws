@@ -119,3 +119,4 @@ export { runPiTurn } from "./piChat.ts";
 
 export { runAcpTurn } from "./acpChat.ts";
 export { runMuseTurn } from "./museChat.ts";
+export { generateClaudeText } from "./textGeneration.ts";

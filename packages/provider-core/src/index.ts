@@ -33,3 +33,5 @@ export {
 export type { McpHarnessClient } from "./mcp.ts";
 
 export * from "./browser.ts";
+
+export type { TextGenerationInput } from "./textGeneration.ts";

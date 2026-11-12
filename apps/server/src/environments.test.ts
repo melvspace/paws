@@ -133,6 +133,19 @@ it("links two servers and routes HTTP, attachments and WebSockets to the selecte
   expect(linked.linked).toEqual([{ ...shared.local, url: gateway }]);
   expect(JSON.stringify(linked)).not.toContain("token");
   const base = `/api/environments/${shared.local.id}/proxy`;
+  const generation = await local.request(base + "/api/text-generation");
+  expect(generation.status).toBe(200);
+  expect(await generation.json()).toMatchObject({
+    selection: null,
+    errors: [],
+  });
+  const configured = await local.request(
+    base + "/api/text-generation",
+    "PATCH",
+    { selection: null },
+  );
+  expect(configured.status).toBe(200);
+
   const created = await local.request(base + "/api/agents", "POST", {
     name: "Remote agent",
   });

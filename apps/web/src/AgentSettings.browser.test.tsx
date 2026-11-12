@@ -156,16 +156,7 @@ it("flushes edits made during an autosave before dismissing the dialog", async (
   }
 });
 
-it("autosaves role and description edits on blur and flushes them before dismissal", async () => {
-  const agent = {
-    id: "specialist",
-    name: "Reviewer",
-    role: "Reviewer",
-    description: "Checks APIs",
-    provider: "codex",
-    status: "configured",
-    createdAt: "2026-11-03",
-  } as const;
+it("autosaves profile tweaks on blur and flushes them before dismissal", async () => {
   const fetchMock = vi
     .spyOn(window, "fetch")
     .mockResolvedValue(new Response(null, { status: 204 }));
@@ -173,11 +164,23 @@ it("autosaves role and description edits on blur and flushes them before dismiss
 
   try {
     await using _screen = await render(
-      <AgentDialog agent={agent} connected onDismiss={dismiss} />,
+      <AgentDialog
+        agent={{
+          id: "specialist",
+          name: "Reviewer",
+          role: "Reviewer",
+          description: "Checks APIs",
+          provider: "codex",
+          status: "configured",
+          createdAt: "2026-11-03",
+        }}
+        connected
+        onDismiss={dismiss}
+      />,
     );
-    await page
-      .getByRole("textbox", { name: "Role", exact: true })
-      .fill("Release reviewer");
+    const role = page.getByRole("textbox", { name: "Role", exact: true });
+    await expect.element(role).toHaveValue("Reviewer");
+    await role.fill("Release reviewer");
     await page
       .getByRole("textbox", { name: "Description", exact: true })
       .click();
@@ -187,12 +190,12 @@ it("autosaves role and description edits on blur and flushes them before dismiss
     ).toMatchObject({ role: "Release reviewer" });
     await page
       .getByRole("textbox", { name: "Description", exact: true })
-      .fill("Checks releases and cleanup");
+      .fill("Checks releases");
     await page.getByRole("button", { name: "Close dialog" }).click();
     await expect.poll(() => dismiss.mock.calls.length).toBe(1);
     expect(
       JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body)),
-    ).toMatchObject({ description: "Checks releases and cleanup" });
+    ).toMatchObject({ description: "Checks releases" });
   } finally {
     fetchMock.mockRestore();
   }

@@ -1,3 +1,8 @@
+import { makeTextGenerationService } from "./TextGenerationService.ts";
+import {
+  makeAgentProfileService,
+  profileInstructions,
+} from "./AgentProfileService.ts";
 import { makeEnvironmentHttp } from "./environmentHttp.ts";
 import { makeBrowserService } from "./BrowserService.ts";
 import { webAssets } from "./webAssets.ts";
@@ -173,6 +178,38 @@ export function createServer(
       void broadcast().catch(() => {});
     },
   );
+  const textGeneration = makeTextGenerationService(root, providers);
+  const profiles = makeAgentProfileService(root, {
+    sources: () =>
+      Effect.runSync(agents.list())
+        .filter(
+          (agent) =>
+            !chat.busy(agent.id) &&
+            !routines.busy(agent.id) &&
+            !agents.changing(agent.id),
+        )
+        .map((agent) => ({
+          agent,
+          instructions: profileInstructions(root, agent.id),
+          routines: routines
+            .list(agent.id)
+            .routines.filter((routine) => routine.enabled),
+          messages: chat
+            .list()
+            .filter((conversation) => conversation.agentId === agent.id)
+            .flatMap((conversation) => conversation.messages)
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+        })),
+    selection: textGeneration.selection,
+    generate: (prompt, signal) =>
+      Effect.runPromise(textGeneration.generate(prompt, signal)),
+    save: async (id, profile) => {
+      await Effect.runPromise(agents.setProfile(id, profile));
+    },
+    changed: () => {
+      void broadcast().catch(() => {});
+    },
+  });
   const snapshot = () =>
     Effect.runPromise(agents.list()).then(async (items) => ({
       agents: items,
@@ -235,6 +272,44 @@ export function createServer(
     }
 
     try {
+      if (request.url === "/api/text-generation") {
+        if (request.method === "PATCH") {
+          if (request.headers["content-type"] !== "application/json") {
+            response.writeHead(415).end();
+
+            return;
+          }
+
+          let body = "";
+
+          for await (const chunk of request) {
+            body += chunk;
+
+            if (Buffer.byteLength(body) > 16384) {
+              response.writeHead(413).end();
+
+              return;
+            }
+          }
+
+          await Effect.runPromise(textGeneration.configure(JSON.parse(body)));
+        } else if (request.method !== "GET") {
+          response.writeHead(405).end();
+
+          return;
+        }
+
+        response.end(
+          JSON.stringify({
+            ...textGeneration.read(),
+            effectiveSelection: textGeneration.selection(),
+            errors: profiles.errors(),
+          }),
+        );
+
+        return;
+      }
+
       if (await environments.http(request, response)) return;
 
       if (await webAssets(request, response, options.webRoot)) return;
@@ -656,6 +731,8 @@ export function createServer(
     routines,
     teamwork,
     close: async () => {
+      await profiles.close();
+      textGeneration.close();
       await environments.close();
 
       for (const client of sockets.clients) {

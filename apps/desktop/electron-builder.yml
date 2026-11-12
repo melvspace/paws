@@ -13,6 +13,9 @@ asar: true
 artifactName: Paws-${version}-${os}-${arch}.${ext}
 mac:
   category: public.app-category.developer-tools
+  identity: "-"
+  hardenedRuntime: false
+  notarize: false
   target: dmg
 linux:
   executableName: paws

@@ -361,3 +361,49 @@ it("imports saved team images once without replacing templates or following file
     await Fs.rm(root, { recursive: true, force: true });
   }
 });
+
+it("preserves manual profile tweaks across inference and restarts", async () => {
+  const root = await temporaryRoot();
+  let service = makeAgentService(root);
+
+  try {
+    const agent = await Effect.runPromise(service.create({ name: "Ada" }));
+    await Effect.runPromise(
+      service.setProfile(agent.id, {
+        role: "Reviewer",
+        description: "Checks APIs",
+      }),
+    );
+    await Effect.runPromise(
+      service.update(agent.id, { name: "Ada", role: "Release reviewer" }),
+    );
+    service.close();
+    service = makeAgentService(root);
+    await Effect.runPromise(
+      service.setProfile(agent.id, {
+        role: "Writer",
+        description: "Checks releases",
+      }),
+    );
+    expect((await Effect.runPromise(service.list()))[0]).toMatchObject({
+      role: "Release reviewer",
+      description: "Checks releases",
+    });
+    await Effect.runPromise(
+      service.update(agent.id, {
+        name: "Ada",
+        description: "Custom description",
+      }),
+    );
+    await Effect.runPromise(
+      service.setProfile(agent.id, { role: "", description: "" }),
+    );
+    expect((await Effect.runPromise(service.list()))[0]).toMatchObject({
+      role: "Release reviewer",
+      description: "Custom description",
+    });
+  } finally {
+    service.close();
+    await Fs.rm(root, { recursive: true, force: true });
+  }
+});

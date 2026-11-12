@@ -3,6 +3,7 @@ import { Switch } from "./components/ui/switch.tsx";
 import { useAtomValue } from "@effect/atom-react";
 import { agentsAtom, conversationsAtom } from "@paws/client-runtime";
 import { Input } from "./components/ui/input.tsx";
+import { Textarea } from "./components/ui/textarea.tsx";
 import { Button } from "./components/ui/button.tsx";
 import {
   useEffect,
@@ -72,8 +73,8 @@ export function AgentDialog({
     );
   const [draft, setDraft] = useState(() => ({
     name: agent?.name ?? "",
-    role: agent?.role ?? "",
-    description: agent?.description ?? "",
+    role: undefined as string | undefined,
+    description: undefined as string | undefined,
     avatar:
       agent?.avatar ??
       defaultAgentAvatar(agent?.id ?? Math.random().toString(36)),
@@ -82,7 +83,7 @@ export function AgentDialog({
   }));
   const draftRef = useRef(draft);
   const saved = useRef(draft);
-  const { name, role, description, avatar, teamId, sandbox } = draft;
+  const { name, avatar, teamId, sandbox } = draft;
 
   function change(patch: Partial<typeof draft>) {
     draftRef.current = { ...draftRef.current, ...patch };
@@ -128,11 +129,14 @@ export function AgentDialog({
         try {
           await updateAgent(agent.id, {
             name: next.name,
-            ...(next.role !== saved.current.role ? { role: next.role } : {}),
-            ...(next.description !== saved.current.description
+            avatar: next.avatar,
+            ...(next.role !== undefined && next.role !== saved.current.role
+              ? { role: next.role }
+              : {}),
+            ...(next.description !== undefined &&
+            next.description !== saved.current.description
               ? { description: next.description }
               : {}),
-            avatar: next.avatar,
             ...(next.sandbox !== saved.current.sandbox
               ? { sandbox: next.sandbox }
               : {}),
@@ -215,8 +219,6 @@ export function AgentDialog({
     try {
       const created = await createAgent({
         name: name.trim(),
-        ...(role.trim() ? { role: role.trim() } : {}),
-        ...(description.trim() ? { description: description.trim() } : {}),
         avatar,
         teamId,
         sandbox,
@@ -334,31 +336,33 @@ export function AgentDialog({
             />
           </div>
 
-          {(["role", "description"] as const).map((field) => (
-            <div key={field} className={agent ? "settings-row" : undefined}>
-              <label htmlFor={`agent-${field}`}>
-                {field === "role" ? "Role" : "Description"}
-              </label>
-              <Input
-                id={`agent-${field}`}
-                name={field}
-                value={draft[field]}
-                maxLength={field === "role" ? 160 : 2000}
-                disabled={
-                  pending === "delete" ||
-                  (!agent && pending !== null) ||
-                  confirmingDelete
-                }
-                onChange={(event) => change({ [field]: event.target.value })}
-                onBlur={() => {
-                  if (agent && !confirmingDelete && pending !== "delete")
-                    void saveAgent();
-                }}
-              />
-            </div>
-          ))}
+          {agent &&
+            (["role", "description"] as const).map((field) => (
+              <div key={field} className="settings-row">
+                <div className="settings-copy">
+                  <label htmlFor={`agent-${field}`}>
+                    {field === "role" ? "Role" : "Description"}
+                  </label>
+                </div>
+                <Textarea
+                  className={`agent-profile-field agent-profile-${field}`}
+                  rows={field === "role" ? 1 : 3}
+                  id={`agent-${field}`}
+                  name={field}
+                  value={draft[field] ?? agent[field] ?? ""}
+                  maxLength={field === "role" ? 160 : 2000}
+                  disabled={pending === "delete" || confirmingDelete}
+                  onChange={(event) => change({ [field]: event.target.value })}
+                  onBlur={() => {
+                    if (!confirmingDelete && pending !== "delete")
+                      void saveAgent();
+                  }}
+                />
+              </div>
+            ))}
+
           {agent && (
-            <div className="settings-row">
+            <div className="settings-row agent-team-row">
               <label htmlFor="agent-team">Team</label>
               <select
                 id="agent-team"
@@ -383,7 +387,11 @@ export function AgentDialog({
             </div>
           )}
           {!teamId && (
-            <div className={agent ? "settings-row" : "agent-sandbox-row"}>
+            <div
+              className={
+                agent ? "settings-row agent-sandbox-row" : "agent-sandbox-row"
+              }
+            >
               <label htmlFor="agent-sandbox">Sandbox</label>
               <Switch
                 id="agent-sandbox"

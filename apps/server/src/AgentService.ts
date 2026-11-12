@@ -1,3 +1,4 @@
+import { AgentProfile } from "@paws/contracts";
 import * as Crypto from "node:crypto";
 import * as Fs from "node:fs";
 import * as Path from "node:path";
@@ -319,6 +320,11 @@ export function makeAgentService(
         const agent = {
           ...existing,
           ...profile,
+          profileOverrides: {
+            ...existing.profileOverrides,
+            ...(input.role !== undefined ? { role: true } : {}),
+            ...(input.description !== undefined ? { description: true } : {}),
+          },
           name,
           avatar,
           ...(input.sandbox !== undefined ? { sandbox: input.sandbox } : {}),
@@ -349,6 +355,16 @@ export function makeAgentService(
 
           const patch = {
             ...profile,
+            ...(input.role !== undefined || input.description !== undefined
+              ? {
+                  profileOverrides: {
+                    ...(input.role !== undefined ? { role: true } : {}),
+                    ...(input.description !== undefined
+                      ? { description: true }
+                      : {}),
+                  },
+                }
+              : {}),
             name: agent.name,
             avatar: agent.avatar,
             ...(input.sandbox !== undefined ? { sandbox: agent.sandbox } : {}),
@@ -451,7 +467,30 @@ export function makeAgentService(
       }),
   );
 
+  const setProfile = Effect.fn("AgentService.setProfile")(
+    (id: string, input: AgentProfile) =>
+      Effect.try(() => {
+        const profile = Schema.decodeUnknownSync(AgentProfile)(input);
+        const row = db.prepare("SELECT data FROM agents WHERE id = ?").get(id);
+
+        if (!row) return;
+
+        const agent = decode(JSON.parse(String(row.data)));
+        db.prepare("UPDATE agents SET data = ? WHERE id = ?").run(
+          JSON.stringify({
+            ...agent,
+            ...(!agent.profileOverrides?.role ? { role: profile.role } : {}),
+            ...(!agent.profileOverrides?.description
+              ? { description: profile.description }
+              : {}),
+          }),
+          id,
+        );
+      }),
+  );
+
   return {
+    setProfile,
     changing: (id: string) => transitions.has(id),
     list,
     create,

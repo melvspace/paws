@@ -672,10 +672,6 @@ select {
   justify-content: flex-end;
 }
 
-.agent-settings-fields > .settings-row + .settings-row {
-  border-top: 1px solid var(--border);
-}
-
 .agent-teams-row {
   align-items: flex-start;
 }

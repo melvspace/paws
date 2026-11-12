@@ -32,3 +32,4 @@ export {
 } from "./chat.ts";
 export { recoverCodexHistory } from "./recoverHistory.ts";
 export { callCodexMcp, authenticateCodexMcp } from "./mcp.ts";
+export { generateCodexText } from "./textGeneration.ts";
